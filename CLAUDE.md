@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the **Go + React rewrite** of [tfbpshiny](https://github.com/BrentLab/tfbpshiny), a dashboard for transcription factor binding and perturbation data from the Brent Lab yeast collection. The original Python Shiny app fails under concurrent load on its `t3.small` deployment (single-process asyncio event loop, single shared DuckDB connection, per-session reactive state). This rewrite replaces the framework/process model — not the SQL or the science.
 
-**Status as of 2026-05-12:** Phase 0 complete — `data_prep/` produces the runtime artifact and the test fixture (committed at `tests/fixtures/tfbp_test.duckdb`). Phase 1 (Go backend), Phase 2 (React frontend), and Phase 3 (deployment) not yet started. The spec at `docs/superpowers/specs/2026-05-12-go-react-rewrite-design.md` remains the source of truth for architecture decisions; read it before proposing changes that contradict it. Per-phase plans live under `docs/superpowers/plans/`.
+**Status as of 2026-05-12:** Phase 0 merged to main. `data_prep/` (Python, Poetry-managed) produces the runtime artifact (`tfbp.duckdb`) via `make data-build` and the committed test fixture via `make data-fixture`. Artifact contract documented in `data_prep/SCHEMA.md` (current `schema_version = 2`). 49 unit tests pass; an integration smoke test is gated behind `HF_TOKEN`. Phase 1 (Go backend), Phase 2 (React frontend), and Phase 3 (deployment) not yet started. The spec at `docs/superpowers/specs/2026-05-12-go-react-rewrite-design.md` remains the source of truth for architecture decisions. Per-phase plans live under `docs/superpowers/plans/`.
 
 ## The `reference/` symlink
 
