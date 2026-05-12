@@ -7,6 +7,8 @@ materialized in materialize.py).
 
 from __future__ import annotations
 
+import re
+
 import duckdb
 
 # Bump when the set of §5.5 tables, or the meaning of their columns,
@@ -142,6 +144,23 @@ def _hidden_for(db_name: str) -> frozenset[str]:
     )
 
 
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_identifier(name: str) -> str:
+    """Return name unchanged if it is a safe SQL identifier; raise ValueError otherwise.
+
+    Defense-in-depth: identifiers passed to filter_level_cache come from the
+    manifest tables (which are populated from trusted YAML), but using this
+    validator on every raw interpolation prevents future contributors from
+    accidentally introducing an injection vector if an untrusted input ever
+    flows here.
+    """
+    if not _IDENTIFIER_RE.match(name):
+        raise ValueError(f"unsafe SQL identifier: {name!r}")
+    return name
+
+
 def _columns_of(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
     rows = conn.execute(
         "SELECT column_name FROM information_schema.columns "
@@ -201,4 +220,72 @@ def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
     if rows:
         conn.executemany(
             "INSERT INTO field_manifest VALUES (?, ?)", rows
+        )
+
+
+# Maximum distinct values for a field to be cached. Above this, the field
+# is treated as high-cardinality (e.g., target_locus_tag has ~6k distinct
+# values) and the runtime falls back to per-request DISTINCT or to a
+# different UI affordance (autocomplete instead of dropdown).
+LEVEL_CACHE_THRESHOLD: int = 50
+
+
+def write_filter_level_cache(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create or replace filter_level_cache.
+
+    For each (db_name, field) in field_manifest where the column lives in
+    `{db_name}_meta` (or `{db_name}` if absent from meta) and has at most
+    LEVEL_CACHE_THRESHOLD distinct non-null values, insert one row per
+    distinct value.
+    """
+    pairs = conn.execute(
+        "SELECT db_name, field FROM field_manifest ORDER BY db_name, field"
+    ).fetchall()
+
+    conn.execute("DROP TABLE IF EXISTS filter_level_cache")
+    conn.execute(
+        """
+        CREATE TABLE filter_level_cache (
+            db_name VARCHAR NOT NULL,
+            field   VARCHAR NOT NULL,
+            level   VARCHAR NOT NULL
+        )
+        """
+    )
+
+    for db_name, field in pairs:
+        # Validate identifiers before any string interpolation.
+        safe_db = _validate_identifier(db_name)
+        safe_field = _validate_identifier(field)
+
+        # Prefer meta table; fall back to data table.
+        candidate_tables = [f"{safe_db}_meta", safe_db]
+        source_table: str | None = None
+        for t in candidate_tables:
+            cols = _columns_of(conn, t)
+            if safe_field in cols:
+                source_table = t
+                break
+        if source_table is None:
+            continue
+
+        n_distinct = conn.execute(
+            f'SELECT COUNT(DISTINCT "{safe_field}") FROM "{source_table}" '
+            f'WHERE "{safe_field}" IS NOT NULL'
+        ).fetchone()[0]
+        if n_distinct == 0 or n_distinct > LEVEL_CACHE_THRESHOLD:
+            continue
+
+        conn.execute(
+            f"""
+            INSERT INTO filter_level_cache
+            SELECT
+                ?::VARCHAR AS db_name,
+                ?::VARCHAR AS field,
+                CAST("{safe_field}" AS VARCHAR) AS level
+            FROM "{source_table}"
+            WHERE "{safe_field}" IS NOT NULL
+            GROUP BY "{safe_field}"
+            """,
+            [db_name, field],
         )

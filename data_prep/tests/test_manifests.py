@@ -9,10 +9,12 @@ import yaml
 
 from data_prep.manifests import (
     HIDDEN_FILTER_FIELDS,
+    LEVEL_CACHE_THRESHOLD,
     SCHEMA_VERSION,
     write_artifact_manifest,
     write_dataset_manifest,
     write_field_manifest,
+    write_filter_level_cache,
 )
 
 
@@ -247,3 +249,84 @@ def test_field_manifest_db_name_field_unique(
         "SELECT COUNT(DISTINCT (db_name, field)) FROM field_manifest"
     ).fetchone()[0]
     assert n == n_distinct
+
+
+def _seed_low_cardinality(conn: duckdb.DuckDBPyConnection) -> None:
+    """Tables where condition has 2 distinct values, score has many."""
+    conn.execute(
+        "CREATE TABLE callingcards (gm_id VARCHAR, target_locus_tag VARCHAR, "
+        "score DOUBLE)"
+    )
+    conn.execute(
+        "CREATE TABLE callingcards_meta (gm_id VARCHAR, "
+        "regulator_locus_tag VARCHAR, condition VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO callingcards_meta VALUES "
+        "('cc_0', 'YBR289W', 'YPD'), "
+        "('cc_1', 'YML007W', 'SC'), "
+        "('cc_2', 'YGL073W', 'YPD')"
+    )
+    # field_manifest must exist; populate with the legal fields.
+    conn.execute(
+        "CREATE TABLE field_manifest (db_name VARCHAR, field VARCHAR, "
+        "PRIMARY KEY (db_name, field))"
+    )
+    conn.execute(
+        "INSERT INTO field_manifest VALUES "
+        "('callingcards', 'condition'), "
+        "('callingcards', 'target_locus_tag'), "
+        "('callingcards', 'score')"
+    )
+
+
+def test_filter_level_cache_includes_low_cardinality_field(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    _seed_low_cardinality(fresh_duckdb)
+    write_filter_level_cache(fresh_duckdb)
+
+    levels = sorted(
+        row[0]
+        for row in fresh_duckdb.execute(
+            "SELECT level FROM filter_level_cache "
+            "WHERE db_name = 'callingcards' AND field = 'condition' "
+            "ORDER BY level"
+        ).fetchall()
+    )
+    assert levels == ["SC", "YPD"]
+
+
+def test_filter_level_cache_excludes_high_cardinality(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """target_locus_tag will have one distinct value per row inserted via
+    the test seed; in real data it has thousands. We verify the threshold
+    is applied by inserting > LEVEL_CACHE_THRESHOLD rows and checking the
+    field is omitted."""
+    _seed_low_cardinality(fresh_duckdb)
+    # Add many distinct target rows so target_locus_tag exceeds the threshold
+    targets = [(f"cc_t_{i}", f"YAL{i:03d}C", 0.1) for i in range(LEVEL_CACHE_THRESHOLD + 5)]
+    fresh_duckdb.executemany(
+        "INSERT INTO callingcards VALUES (?, ?, ?)", targets
+    )
+    write_filter_level_cache(fresh_duckdb)
+    n = fresh_duckdb.execute(
+        "SELECT COUNT(*) FROM filter_level_cache "
+        "WHERE db_name = 'callingcards' AND field = 'target_locus_tag'"
+    ).fetchone()[0]
+    assert n == 0
+
+
+def test_filter_level_cache_only_caches_field_manifest_entries(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """A column present in the data but absent from field_manifest (e.g.,
+    regulator_locus_tag, which is hidden) must not appear in the cache."""
+    _seed_low_cardinality(fresh_duckdb)
+    write_filter_level_cache(fresh_duckdb)
+    n = fresh_duckdb.execute(
+        "SELECT COUNT(*) FROM filter_level_cache "
+        "WHERE field = 'regulator_locus_tag'"
+    ).fetchone()[0]
+    assert n == 0
