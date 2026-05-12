@@ -104,3 +104,101 @@ def write_dataset_manifest(
     conn.executemany(
         "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?)", rows
     )
+
+
+# Mirrors HIDDEN_FILTER_FIELDS from
+# reference/tfbpshiny/utils/vdb_init.py:20-36. Update both together if
+# this set changes; the runtime Go service consults field_manifest, not
+# this constant, so the table is the source of truth at runtime.
+HIDDEN_FILTER_FIELDS: dict[str, frozenset[str]] = {
+    "*": frozenset({
+        "regulator_locus_tag",
+        "regulator_symbol",
+        "Regulator locus tag",
+        "Regulator symbol",
+    }),
+    "callingcards": frozenset({"background_total_hops", "experiment_total_hops"}),
+    "harbison": frozenset({"condition"}),
+    "chec_m2025": frozenset({"condition", "mahendrawada_symbol"}),
+    "degron": frozenset({"env_condition", "timepoint"}),
+    "rossi": frozenset({"antibody", "growth_media"}),
+    "hackett": frozenset({"date", "mechanism", "restriction", "strain"}),
+    "hu_reimand": frozenset({"average_od_of_replicates", "heat_shock"}),
+    "hughes_overexpression": frozenset({"del_passed_qc", "sgd_description"}),
+    "hughes_knockout": frozenset({"oe_passed_qc", "sgd_description"}),
+}
+
+# Always-excluded structural columns (not user-selectable filters/sorts).
+# Note: per-dataset sample_id field names (gm_id for callingcards, etc.)
+# are also excluded by the introspection rule below — any column named
+# `sample_id` OR appearing in both the data table and the meta table as
+# the join key is treated as structural.
+_STRUCTURAL_FIELDS: frozenset[str] = frozenset({"sample_id"})
+
+
+def _hidden_for(db_name: str) -> frozenset[str]:
+    return HIDDEN_FILTER_FIELDS.get("*", frozenset()) | HIDDEN_FILTER_FIELDS.get(
+        db_name, frozenset()
+    )
+
+
+def _columns_of(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'main' AND table_name = ? "
+        "ORDER BY ordinal_position",
+        [table],
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create or replace field_manifest by introspecting per-dataset tables.
+
+    Requires dataset_manifest to exist. For each db_name in dataset_manifest,
+    union the columns of `{db_name}` and `{db_name}_meta`, subtract the
+    hidden fields and structural columns, and emit one row per remaining
+    field.
+
+    The shared join key between `{db_name}` and `{db_name}_meta` (whatever
+    its actual name — `sample_id`, `gm_id`, etc.) is treated as structural
+    and excluded.
+    """
+    db_names = [
+        r[0]
+        for r in conn.execute(
+            "SELECT db_name FROM dataset_manifest ORDER BY db_name"
+        ).fetchall()
+    ]
+
+    rows: list[tuple[str, str]] = []
+    for db_name in db_names:
+        data_cols = _columns_of(conn, db_name)
+        meta_cols = _columns_of(conn, f"{db_name}_meta")
+        if not data_cols and not meta_cols:
+            continue
+
+        join_keys = set(data_cols) & set(meta_cols)
+        excluded = _hidden_for(db_name) | _STRUCTURAL_FIELDS | join_keys
+
+        seen: set[str] = set()
+        for col in [*data_cols, *meta_cols]:
+            if col in excluded or col in seen:
+                continue
+            seen.add(col)
+            rows.append((db_name, col))
+
+    conn.execute("DROP TABLE IF EXISTS field_manifest")
+    conn.execute(
+        """
+        CREATE TABLE field_manifest (
+            db_name VARCHAR NOT NULL,
+            field   VARCHAR NOT NULL,
+            PRIMARY KEY (db_name, field)
+        )
+        """
+    )
+    if rows:
+        conn.executemany(
+            "INSERT INTO field_manifest VALUES (?, ?)", rows
+        )

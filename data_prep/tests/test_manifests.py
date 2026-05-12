@@ -8,9 +8,11 @@ import duckdb
 import yaml
 
 from data_prep.manifests import (
+    HIDDEN_FILTER_FIELDS,
     SCHEMA_VERSION,
     write_artifact_manifest,
     write_dataset_manifest,
+    write_field_manifest,
 )
 
 
@@ -171,3 +173,77 @@ def test_dataset_manifest_db_name_unique(
         "SELECT COUNT(*) FROM dataset_manifest"
     ).fetchone()[0]
     assert n_distinct == n_total
+
+
+def _seed_two_datasets(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        "CREATE TABLE callingcards (gm_id VARCHAR, regulator_locus_tag VARCHAR, "
+        "target_locus_tag VARCHAR, score DOUBLE)"
+    )
+    conn.execute(
+        "CREATE TABLE callingcards_meta (gm_id VARCHAR, regulator_locus_tag "
+        "VARCHAR, regulator_symbol VARCHAR, condition VARCHAR, "
+        "background_total_hops INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE harbison (sample_id VARCHAR, regulator_locus_tag VARCHAR, "
+        "target_locus_tag VARCHAR, score DOUBLE)"
+    )
+    conn.execute(
+        "CREATE TABLE harbison_meta (sample_id VARCHAR, regulator_locus_tag "
+        "VARCHAR, regulator_symbol VARCHAR, condition VARCHAR)"
+    )
+    conn.execute(
+        "CREATE TABLE dataset_manifest (db_name VARCHAR PRIMARY KEY, "
+        "data_type VARCHAR, assay VARCHAR, display_name VARCHAR, "
+        "source_repo VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO dataset_manifest VALUES "
+        "('callingcards', 'binding', 'CallingCards', 'cc', 'BrentLab/callingcards'), "
+        "('harbison', 'binding', 'ChIP-chip', 'harbison', 'BrentLab/harbison_2004')"
+    )
+
+
+def test_field_manifest_one_row_per_legal_field(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    _seed_two_datasets(fresh_duckdb)
+    write_field_manifest(fresh_duckdb)
+
+    cc_fields = {
+        row[0]
+        for row in fresh_duckdb.execute(
+            "SELECT field FROM field_manifest WHERE db_name = 'callingcards'"
+        ).fetchall()
+    }
+    # Allowed: target_locus_tag, score (data) + condition (meta)
+    # Disallowed: regulator_locus_tag, regulator_symbol (global hidden);
+    #             gm_id (sample_id alias — see Step 3 logic);
+    #             background_total_hops (callingcards-specific hidden)
+    assert cc_fields == {"target_locus_tag", "score", "condition"}
+
+
+def test_field_manifest_excludes_globally_hidden(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    _seed_two_datasets(fresh_duckdb)
+    write_field_manifest(fresh_duckdb)
+    forbidden = HIDDEN_FILTER_FIELDS["*"]
+    rows = fresh_duckdb.execute(
+        "SELECT field FROM field_manifest"
+    ).fetchall()
+    for (field,) in rows:
+        assert field not in forbidden
+
+
+def test_field_manifest_db_name_field_unique(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    _seed_two_datasets(fresh_duckdb)
+    write_field_manifest(fresh_duckdb)
+    n = fresh_duckdb.execute("SELECT COUNT(*) FROM field_manifest").fetchone()[0]
+    n_distinct = fresh_duckdb.execute(
+        "SELECT COUNT(DISTINCT (db_name, field)) FROM field_manifest"
+    ).fetchone()[0]
+    assert n == n_distinct
