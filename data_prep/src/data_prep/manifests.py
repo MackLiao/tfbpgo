@@ -7,9 +7,9 @@ materialized in materialize.py).
 
 from __future__ import annotations
 
-import re
-
 import duckdb
+
+from data_prep._sql import columns_of, validate_identifier
 
 # Bump when the set of §5.5 tables, or the meaning of their columns,
 # changes. The Go binary embeds the compatible range and refuses to
@@ -144,33 +144,6 @@ def _hidden_for(db_name: str) -> frozenset[str]:
     )
 
 
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _validate_identifier(name: str) -> str:
-    """Return name unchanged if it is a safe SQL identifier; raise ValueError otherwise.
-
-    Defense-in-depth: identifiers passed to filter_level_cache come from the
-    manifest tables (which are populated from trusted YAML), but using this
-    validator on every raw interpolation prevents future contributors from
-    accidentally introducing an injection vector if an untrusted input ever
-    flows here.
-    """
-    if not _IDENTIFIER_RE.match(name):
-        raise ValueError(f"unsafe SQL identifier: {name!r}")
-    return name
-
-
-def _columns_of(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
-    rows = conn.execute(
-        "SELECT column_name FROM information_schema.columns "
-        "WHERE table_schema = 'main' AND table_name = ? "
-        "ORDER BY ordinal_position",
-        [table],
-    ).fetchall()
-    return [r[0] for r in rows]
-
-
 def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
     """Create or replace field_manifest by introspecting per-dataset tables.
 
@@ -192,8 +165,8 @@ def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
 
     rows: list[tuple[str, str]] = []
     for db_name in db_names:
-        data_cols = _columns_of(conn, db_name)
-        meta_cols = _columns_of(conn, f"{db_name}_meta")
+        data_cols = columns_of(conn, db_name)
+        meta_cols = columns_of(conn, f"{db_name}_meta")
         if not data_cols and not meta_cols:
             continue
 
@@ -255,14 +228,14 @@ def write_filter_level_cache(conn: duckdb.DuckDBPyConnection) -> None:
 
     for db_name, field in pairs:
         # Validate identifiers before any string interpolation.
-        safe_db = _validate_identifier(db_name)
-        safe_field = _validate_identifier(field)
+        safe_db = validate_identifier(db_name)
+        safe_field = validate_identifier(field)
 
         # Prefer meta table; fall back to data table.
         candidate_tables = [f"{safe_db}_meta", safe_db]
         source_table: str | None = None
         for t in candidate_tables:
-            cols = _columns_of(conn, t)
+            cols = columns_of(conn, t)
             if safe_field in cols:
                 source_table = t
                 break

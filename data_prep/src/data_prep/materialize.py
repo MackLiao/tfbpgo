@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import duckdb
 
+from data_prep._sql import validate_identifier
+
 
 # Verbatim port of _HACKETT_ANALYSIS_SET_SQL from
 # reference/tfbpshiny/utils/vdb_init.py:75-117. Update both together if
@@ -87,12 +89,13 @@ def materialize_views_as_tables(
     (typically: every dataset's `{db_name}` and `{db_name}_meta`, plus
     `{db_name}_expanded` for comparative datasets like dto)."""
     for view in view_names:
+        safe_view = validate_identifier(view)
         # Capture rows into a temp staging table to avoid the view referring
         # to itself during DROP/CREATE.
-        staging = f"_materialize_stage_{view}"
-        conn.execute(f'CREATE TABLE "{staging}" AS SELECT * FROM "{view}"')
-        conn.execute(f'DROP VIEW "{view}"')
-        conn.execute(f'ALTER TABLE "{staging}" RENAME TO "{view}"')
+        staging = f"_materialize_stage_{safe_view}"
+        conn.execute(f'CREATE TABLE "{staging}" AS SELECT * FROM "{safe_view}"')
+        conn.execute(f'DROP VIEW "{safe_view}"')
+        conn.execute(f'ALTER TABLE "{staging}" RENAME TO "{safe_view}"')
 
 
 def build_hackett_analysis_set(conn: duckdb.DuckDBPyConnection) -> None:
@@ -110,6 +113,7 @@ def build_regulator_display_names(
     table lacks `regulator_locus_tag` are skipped silently."""
     eligible: list[str] = []
     for db in db_names:
+        validate_identifier(db)  # raise on unsafe input
         cols = {
             r[0]
             for r in conn.execute(
