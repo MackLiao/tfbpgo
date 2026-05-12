@@ -83,6 +83,29 @@ func bootstrappedFixturePath(t *testing.T) string {
 			field   VARCHAR NOT NULL,
 			level   VARCHAR NOT NULL
 		)`,
+		// Derived tables required by RunStartupChecks (Task 6).
+		// Empty is fine; the contract only checks presence.
+		`CREATE TABLE hackett_analysis_set (
+			sample_id           VARCHAR,
+			regulator_locus_tag VARCHAR,
+			regulator_symbol    VARCHAR,
+			mechanism           VARCHAR,
+			restriction         VARCHAR,
+			time                DOUBLE,
+			date                VARCHAR,
+			strain              VARCHAR
+		)`,
+		`CREATE TABLE regulator_display_names (
+			regulator_locus_tag VARCHAR,
+			regulator_symbol    VARCHAR,
+			display_name        VARCHAR
+		)`,
+		`CREATE TABLE dto_expanded (
+			binding_id          VARCHAR,
+			perturbation_id     VARCHAR,
+			dto_empirical_pvalue DOUBLE,
+			dto_fdr             DOUBLE
+		)`,
 	}
 	for _, s := range stmts {
 		_, err := conn.ExecContext(ctx, s)
