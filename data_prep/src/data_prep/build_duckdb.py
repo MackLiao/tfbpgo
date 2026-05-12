@@ -116,6 +116,9 @@ def build_full(
     """Run the real labretriever pipeline against HuggingFace and write the
     materialized artifact to out_path. Requires HF_TOKEN unless every
     referenced repo is already in the labretriever cache.
+
+    On failure, removes the partially-built out_path so callers cannot
+    mistake a half-built file for valid output.
     """
     # Lazy import: keeps unit test path free of labretriever (and its
     # transitive HF dependency) so tests run with no network.
@@ -130,60 +133,51 @@ def build_full(
 
     conn = duckdb.connect(str(out_path))
     try:
-        # 1. labretriever registers `{db_name}` and `{db_name}_meta` views
-        #    on the connection, plus `{db_name}_expanded` for comparative
-        #    datasets. Note: VirtualDB(local_files_only=False) attempts
-        #    network calls; pass token only when present.
-        VirtualDB(
-            str(yaml_config_path),
-            duckdb_connection=conn,
-            token=hf_token,
-            local_files_only=hf_token is None,
-        )
+        try:
+            # 1. labretriever registers `{db_name}` and `{db_name}_meta` views
+            #    on the connection, plus `{db_name}_expanded` for comparative
+            #    datasets. Pass token only when present.
+            VirtualDB(
+                str(yaml_config_path),
+                duckdb_connection=conn,
+                token=hf_token,
+                local_files_only=hf_token is None,
+            )
 
-        # 2. Discover every view and materialize it as a table.
-        view_names = [
-            r[0]
-            for r in conn.execute(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'main' AND table_type = 'VIEW'"
-            ).fetchall()
-        ]
-        materialize_views_as_tables(conn, view_names=view_names)
+            # 2. Materialize every view as a real table so the artifact has
+            #    no parquet/HF dependency at runtime.
+            view_names = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'main' AND table_type = 'VIEW'"
+                ).fetchall()
+            ]
+            materialize_views_as_tables(conn, view_names=view_names)
 
-        # 3. Build derived tables (must run BEFORE manifests so
-        #    field_manifest/filter_level_cache see them).
-        if any(
-            r[0] == "hackett_meta"
-            for r in conn.execute(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'main' AND table_name = 'hackett_meta'"
-            ).fetchall()
-        ):
-            build_hackett_analysis_set(conn)
+            # 3. _run_manifests handles the rest: it builds dataset_manifest
+            #    from YAML, then calls build_hackett_analysis_set and
+            #    build_regulator_display_names against the canonical db_names
+            #    from dataset_manifest, then field_manifest / filter_level_cache /
+            #    artifact_manifest. parity_tests_passed is False here; a CI step
+            #    flips it to True after Phase 1's parity suite passes against
+            #    this artifact.
+            _run_manifests(
+                conn,
+                yaml_config_path=yaml_config_path,
+                artifact_version=artifact_version,
+                parity_tests_passed=False,
+            )
 
-        all_db_names = [
-            r[0]
-            for r in conn.execute(
-                "SELECT REPLACE(table_name, '_meta', '') FROM information_schema.tables "
-                "WHERE table_schema = 'main' AND table_name LIKE '%_meta'"
-            ).fetchall()
-        ]
-        build_regulator_display_names(conn, db_names=all_db_names)
-
-        # 4. Build the four manifest tables.
-        _run_manifests(
-            conn,
-            yaml_config_path=yaml_config_path,
-            artifact_version=artifact_version,
-            # parity_tests_passed is False here; CI flips it to True after
-            # Phase 1's parity suite passes against this artifact (a
-            # follow-up plan automates that signal).
-            parity_tests_passed=False,
-        )
-
-        conn.execute("CHECKPOINT")
+            conn.execute("CHECKPOINT")
+        except Exception:
+            # Don't leave a half-built file on disk that callers might
+            # mistake for valid output.
+            conn.close()
+            out_path.unlink(missing_ok=True)
+            raise
     finally:
+        # Idempotent: close() after a previous close() is a no-op.
         conn.close()
 
 
