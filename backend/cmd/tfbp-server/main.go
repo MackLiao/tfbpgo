@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,8 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/api"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/config"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
 )
@@ -49,13 +47,14 @@ func main() {
 		"storage_version", report.StorageVersion,
 	)
 
-	r := chi.NewRouter()
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]bool{"alive": true})
-	})
+	srv := &api.Server{
+		ArtifactVersion: report.Manifests.Artifact.ArtifactVersion,
+		Pool:            pool,
+		Manifests:       report.Manifests,
+	}
+	r := srv.Routes()
 
-	srv := &http.Server{
+	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -65,8 +64,8 @@ func main() {
 	defer stop()
 
 	go func() {
-		slog.Info("startup_listen", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Info("startup_listen", "addr", httpSrv.Addr)
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("listen_failed", "err", err)
 			os.Exit(1)
 		}
@@ -75,5 +74,5 @@ func main() {
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	_ = httpSrv.Shutdown(shutdownCtx)
 }
