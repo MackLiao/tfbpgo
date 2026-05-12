@@ -4,9 +4,18 @@ Build-time pipeline. Produces `tfbp.duckdb` (the runtime artifact) and `tests/fi
 
 ## Setup
 
+For unit tests and the synthetic fixture (no HF, no labretriever):
+
 ```bash
 cd data_prep
 poetry install
+```
+
+For the full pipeline (`build-duckdb` real mode, integration tests):
+
+```bash
+cd data_prep
+poetry install -E full
 ```
 
 ## Commands
