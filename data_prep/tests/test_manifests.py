@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
-
 import duckdb
-import pytest
 
 from data_prep.manifests import (
     SCHEMA_VERSION,
