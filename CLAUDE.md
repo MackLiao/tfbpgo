@@ -83,9 +83,9 @@ cd frontend && npm run dev   # Vite proxies /api → :8080
 ```
 
 Three ways to get a `.duckdb` locally:
-- `make data-pull` — pulls latest `tfbp.duckdb` from S3 (~30s, needs AWS creds)
-- `make data-build` — runs `poetry run python data_prep/build_duckdb.py` (5–10 min, needs `HF_TOKEN`)
-- Tests use `tests/fixtures/tfbp_test.duckdb` (committed, instant)
+- `make data-pull` — pulls latest `tfbp.duckdb` from S3. **Not implemented in Phase 0** (see follow-up plan after Phase 1).
+- `make data-build` — runs the labretriever pipeline (5–10 min first time, needs `HF_TOKEN` and `poetry install -E full` in `data_prep/`). See `data_prep/README.md`.
+- `make data-fixture` — rebuilds `tests/fixtures/tfbp_test.duckdb` from `data_prep/build_fixture.py` (instant, no HF). Tests run against this.
 
 Tests must never hit S3 or HuggingFace — always run against the committed fixture.
 
