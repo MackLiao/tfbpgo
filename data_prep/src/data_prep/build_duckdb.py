@@ -113,13 +113,78 @@ def build_full(
     artifact_version: str,
     hf_token: str | None,
 ) -> None:
-    """Real pipeline: labretriever populates views from HF, then we
-    materialize them and build manifests. Implemented in Task 9 alongside
-    its integration test, to keep the labretriever import out of the unit
-    test path."""
-    raise NotImplementedError(
-        "build_full is implemented in Task 9 (see test_build_duckdb_smoke.py)"
-    )
+    """Run the real labretriever pipeline against HuggingFace and write the
+    materialized artifact to out_path. Requires HF_TOKEN unless every
+    referenced repo is already in the labretriever cache.
+    """
+    # Lazy import: keeps unit test path free of labretriever (and its
+    # transitive HF dependency) so tests run with no network.
+    from labretriever import VirtualDB  # type: ignore[import-not-found]
+
+    from data_prep.materialize import materialize_views_as_tables
+
+    out_path = Path(out_path)
+    if out_path.exists():
+        out_path.unlink()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = duckdb.connect(str(out_path))
+    try:
+        # 1. labretriever registers `{db_name}` and `{db_name}_meta` views
+        #    on the connection, plus `{db_name}_expanded` for comparative
+        #    datasets. Note: VirtualDB(local_files_only=False) attempts
+        #    network calls; pass token only when present.
+        VirtualDB(
+            str(yaml_config_path),
+            duckdb_connection=conn,
+            token=hf_token,
+            local_files_only=hf_token is None,
+        )
+
+        # 2. Discover every view and materialize it as a table.
+        view_names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main' AND table_type = 'VIEW'"
+            ).fetchall()
+        ]
+        materialize_views_as_tables(conn, view_names=view_names)
+
+        # 3. Build derived tables (must run BEFORE manifests so
+        #    field_manifest/filter_level_cache see them).
+        if any(
+            r[0] == "hackett_meta"
+            for r in conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main' AND table_name = 'hackett_meta'"
+            ).fetchall()
+        ):
+            build_hackett_analysis_set(conn)
+
+        all_db_names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT REPLACE(table_name, '_meta', '') FROM information_schema.tables "
+                "WHERE table_schema = 'main' AND table_name LIKE '%_meta'"
+            ).fetchall()
+        ]
+        build_regulator_display_names(conn, db_names=all_db_names)
+
+        # 4. Build the four manifest tables.
+        _run_manifests(
+            conn,
+            yaml_config_path=yaml_config_path,
+            artifact_version=artifact_version,
+            # parity_tests_passed is False here; CI flips it to True after
+            # Phase 1's parity suite passes against this artifact (a
+            # follow-up plan automates that signal).
+            parity_tests_passed=False,
+        )
+
+        conn.execute("CHECKPOINT")
+    finally:
+        conn.close()
 
 
 def main() -> None:
