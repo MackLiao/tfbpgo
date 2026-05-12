@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the **Go + React rewrite** of [tfbpshiny](https://github.com/BrentLab/tfbpshiny), a dashboard for transcription factor binding and perturbation data from the Brent Lab yeast collection. The original Python Shiny app fails under concurrent load on its `t3.small` deployment (single-process asyncio event loop, single shared DuckDB connection, per-session reactive state). This rewrite replaces the framework/process model — not the SQL or the science.
 
-**Status as of 2026-05-12:** design only. The repo contains the spec at `docs/superpowers/specs/2026-05-12-go-react-rewrite-design.md` and nothing else. Treat that spec as the source of truth for architecture decisions; read it before proposing changes that contradict it.
+**Status as of 2026-05-12:** Phase 0 complete — `data_prep/` produces the runtime artifact and the test fixture (committed at `tests/fixtures/tfbp_test.duckdb`). Phase 1 (Go backend), Phase 2 (React frontend), and Phase 3 (deployment) not yet started. The spec at `docs/superpowers/specs/2026-05-12-go-react-rewrite-design.md` remains the source of truth for architecture decisions; read it before proposing changes that contradict it. Per-phase plans live under `docs/superpowers/plans/`.
 
 ## The `reference/` symlink
 
@@ -19,7 +19,7 @@ This is the **Go + React rewrite** of [tfbpshiny](https://github.com/BrentLab/tf
 
 When in doubt about what a feature should do, run the reference app or read its source — do not guess.
 
-## Planned layout (not yet created)
+## Layout (`backend/` and `frontend/` not yet created)
 
 Three peer top-level directories, **not** a Go monorepo:
 
@@ -85,7 +85,7 @@ cd frontend && npm run dev   # Vite proxies /api → :8080
 Three ways to get a `.duckdb` locally:
 - `make data-pull` — pulls latest `tfbp.duckdb` from S3. **Not implemented in Phase 0** (see follow-up plan after Phase 1).
 - `make data-build` — runs the labretriever pipeline (5–10 min first time, needs `HF_TOKEN` and `poetry install -E full` in `data_prep/`). See `data_prep/README.md`.
-- `make data-fixture` — rebuilds `tests/fixtures/tfbp_test.duckdb` from `data_prep/build_fixture.py` (instant, no HF). Tests run against this.
+- `make data-fixture` — rebuilds `tests/fixtures/tfbp_test.duckdb` from `data_prep/build_fixture.py` (instant, no HF; needs `poetry install` in `data_prep/` once). Tests run against this.
 
 Tests must never hit S3 or HuggingFace — always run against the committed fixture.
 
