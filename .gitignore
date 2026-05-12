@@ -1,1 +1,22 @@
+# Reference symlink to the original Python project
 /reference
+
+# Runtime artifact (built by data_prep, never committed)
+/tfbp.duckdb
+/tfbp.duckdb.wal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Secrets
+.env
+.env.local
+
+# OS
+.DS_Store

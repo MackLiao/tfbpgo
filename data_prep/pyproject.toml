@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "tfbp-data-prep"
+version = "0.1.0"
+description = "Build-time pipeline that produces tfbp.duckdb from HuggingFace datasets"
+authors = ["BrentLab"]
+packages = [{ include = "data_prep", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+duckdb = "^1.0"
+pyyaml = "^6.0"
+pandas = "^2.2"
+labretriever = { git = "https://github.com/BrentLab/labretriever.git", branch = "main" }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-cov = "^5.0"
+ruff = "^0.6"
+black = "^24.0"
+mypy = "^1.10"
+
+[tool.poetry.scripts]
+build-duckdb = "data_prep.build_duckdb:main"
+build-fixture = "data_prep.build_fixture:main"
+
+[tool.pytest.ini_options]
+markers = ["integration: requires network/HF_TOKEN"]
+addopts = "-m 'not integration'"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
