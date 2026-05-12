@@ -86,6 +86,9 @@ def build_from_fixture(
     it. Used in tests and to bootstrap Phase 1 development without HF
     access. The result has the same table set as a real artifact (modulo
     the synthetic vs. real row content).
+
+    On failure, removes the partially-built out_path so callers cannot
+    mistake a half-built file for valid output.
     """
     out_path = Path(out_path)
     if out_path.exists():
@@ -95,13 +98,18 @@ def build_from_fixture(
 
     conn = duckdb.connect(str(out_path))
     try:
-        _run_manifests(
-            conn,
-            yaml_config_path=yaml_config_path,
-            artifact_version=artifact_version,
-            parity_tests_passed=False,
-        )
-        conn.execute("CHECKPOINT")
+        try:
+            _run_manifests(
+                conn,
+                yaml_config_path=yaml_config_path,
+                artifact_version=artifact_version,
+                parity_tests_passed=False,
+            )
+            conn.execute("CHECKPOINT")
+        except Exception:
+            conn.close()
+            out_path.unlink(missing_ok=True)
+            raise
     finally:
         conn.close()
 

@@ -127,3 +127,28 @@ def test_build_from_fixture_overwrites_existing_out(
     finally:
         conn.close()
     assert n == 1
+
+
+def test_build_from_fixture_cleans_up_on_failure(
+    tmp_path: Path,
+    yaml_path: Path,
+    fixture_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If _run_manifests raises mid-build, out_path must not exist afterward
+    so callers can't mistake a half-built file for valid output."""
+    out = tmp_path / "out.duckdb"
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated mid-pipeline failure")
+
+    monkeypatch.setattr("data_prep.build_duckdb._run_manifests", boom)
+
+    with pytest.raises(RuntimeError, match="simulated mid-pipeline failure"):
+        build_from_fixture(
+            fixture_path=fixture_db,
+            yaml_config_path=yaml_path,
+            out_path=out,
+            artifact_version="x",
+        )
+    assert not out.exists()
