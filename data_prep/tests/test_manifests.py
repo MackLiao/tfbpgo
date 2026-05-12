@@ -5,6 +5,7 @@ from __future__ import annotations
 import textwrap
 
 import duckdb
+import pytest
 import yaml
 
 from data_prep.manifests import (
@@ -135,16 +136,40 @@ def test_dataset_manifest_emits_one_row_per_tagged_dataset(
     write_dataset_manifest(fresh_duckdb, config)
 
     rows = fresh_duckdb.execute(
-        "SELECT db_name, data_type, assay, display_name, source_repo "
+        "SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field "
         "FROM dataset_manifest ORDER BY db_name"
     ).fetchall()
 
     assert rows == [
         ("callingcards", "binding", "CallingCards", "2026 Calling Cards",
-         "BrentLab/callingcards"),
+         "BrentLab/callingcards", "gm_id"),
         ("hackett", "perturbation", "overexpression",
-         "2020 Overexpression (Hackett)", "BrentLab/hackett_2020"),
+         "2020 Overexpression (Hackett)", "BrentLab/hackett_2020", "sample_id"),
     ]
+
+
+def test_dataset_manifest_raises_when_sample_id_field_missing(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    config = {
+        "repositories": {
+            "BrentLab/x": {
+                "dataset": {
+                    "x": {
+                        "tags": {
+                            "data_type": "binding",
+                            "assay": "X",
+                            "display_name": "X",
+                        },
+                        "db_name": "x",
+                        # sample_id block missing
+                    },
+                },
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="missing required sample_id.field"):
+        write_dataset_manifest(fresh_duckdb, config)
 
 
 def test_dataset_manifest_skips_untagged_dto_entry(
@@ -198,12 +223,12 @@ def _seed_two_datasets(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         "CREATE TABLE dataset_manifest (db_name VARCHAR PRIMARY KEY, "
         "data_type VARCHAR, assay VARCHAR, display_name VARCHAR, "
-        "source_repo VARCHAR)"
+        "source_repo VARCHAR, sample_id_field VARCHAR)"
     )
     conn.execute(
         "INSERT INTO dataset_manifest VALUES "
-        "('callingcards', 'binding', 'CallingCards', 'cc', 'BrentLab/callingcards'), "
-        "('harbison', 'binding', 'ChIP-chip', 'harbison', 'BrentLab/harbison_2004')"
+        "('callingcards', 'binding', 'CallingCards', 'cc', 'BrentLab/callingcards', 'gm_id'), "
+        "('harbison', 'binding', 'ChIP-chip', 'harbison', 'BrentLab/harbison_2004', 'sample_id')"
     )
 
 

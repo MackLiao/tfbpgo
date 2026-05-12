@@ -14,7 +14,7 @@ from data_prep._sql import columns_of, validate_identifier
 # Bump when the set of §5.5 tables, or the meaning of their columns,
 # changes. The Go binary embeds the compatible range and refuses to
 # start against an artifact outside it.
-SCHEMA_VERSION: int = 1
+SCHEMA_VERSION: int = 2
 
 
 def write_artifact_manifest(
@@ -68,7 +68,7 @@ def write_dataset_manifest(
     `dto` entry). Those tables still exist in the artifact but are not
     user-selectable datasets.
     """
-    rows: list[tuple[str, str, str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str, str]] = []
     for repo_id, repo_block in (config.get("repositories") or {}).items():
         datasets = (repo_block or {}).get("dataset") or {}
         for _ds_key, ds_cfg in datasets.items():
@@ -76,6 +76,13 @@ def write_dataset_manifest(
             db_name = (ds_cfg or {}).get("db_name")
             if not tags or not db_name:
                 continue
+            sample_id_block = (ds_cfg or {}).get("sample_id") or {}
+            sample_id_field = sample_id_block.get("field")
+            if not sample_id_field:
+                raise ValueError(
+                    f"dataset {db_name!r} (repo {repo_id}) "
+                    "missing required sample_id.field in YAML"
+                )
             rows.append(
                 (
                     db_name,
@@ -83,6 +90,7 @@ def write_dataset_manifest(
                     tags.get("assay", ""),
                     tags.get("display_name", ""),
                     repo_id,
+                    sample_id_field,
                 )
             )
 
@@ -95,16 +103,17 @@ def write_dataset_manifest(
     conn.execute(
         """
         CREATE TABLE dataset_manifest (
-            db_name      VARCHAR PRIMARY KEY,
-            data_type    VARCHAR NOT NULL,
-            assay        VARCHAR NOT NULL,
-            display_name VARCHAR NOT NULL,
-            source_repo  VARCHAR NOT NULL
+            db_name         VARCHAR PRIMARY KEY,
+            data_type       VARCHAR NOT NULL,
+            assay           VARCHAR NOT NULL,
+            display_name    VARCHAR NOT NULL,
+            source_repo     VARCHAR NOT NULL,
+            sample_id_field VARCHAR NOT NULL
         )
         """
     )
     conn.executemany(
-        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?)", rows
+        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?)", rows
     )
 
 
