@@ -81,6 +81,63 @@ def test_build_regulator_display_names_uses_symbol_when_present(
     assert row == ("SNF5", "SNF5 (YBR289W)")
 
 
+def test_build_regulator_display_names_is_deterministic_with_multiple_symbols() -> None:
+    """When the same locus_tag has multiple distinct symbol values across
+    rows, the chosen symbol must be deterministic (MIN, not arbitrary)."""
+    conn = duckdb.connect(":memory:")
+    try:
+        # Two rows, same locus_tag, different symbols.
+        conn.execute(
+            "CREATE TABLE foo_meta (regulator_locus_tag VARCHAR, "
+            "regulator_symbol VARCHAR)"
+        )
+        conn.execute(
+            "INSERT INTO foo_meta VALUES "
+            "('YBR289W', 'SNF5'), "
+            "('YBR289W', 'AAA'), "
+            "('YBR289W', 'ZZZ')"
+        )
+        build_regulator_display_names(conn, db_names=["foo"])
+        sym = conn.execute(
+            "SELECT regulator_symbol FROM regulator_display_names "
+            "WHERE regulator_locus_tag = 'YBR289W'"
+        ).fetchone()[0]
+        # MIN of {'SNF5', 'AAA', 'ZZZ'} is 'AAA'.
+        assert sym == "AAA"
+    finally:
+        conn.close()
+
+
+def test_build_regulator_display_names_creates_empty_when_no_eligible() -> None:
+    """When no supplied dataset has both regulator_locus_tag and
+    regulator_symbol columns in its meta table, the function still
+    creates an empty table to satisfy Phase 1's startup contract."""
+    conn = duckdb.connect(":memory:")
+    try:
+        # Meta table without regulator_locus_tag — not eligible.
+        conn.execute("CREATE TABLE foo_meta (sample_id VARCHAR, condition VARCHAR)")
+        build_regulator_display_names(conn, db_names=["foo"])
+        kind = conn.execute(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_name = 'regulator_display_names'"
+        ).fetchone()[0]
+        assert kind == "BASE TABLE"
+        n = conn.execute(
+            "SELECT COUNT(*) FROM regulator_display_names"
+        ).fetchone()[0]
+        assert n == 0
+        cols = {
+            r[0]
+            for r in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'regulator_display_names'"
+            ).fetchall()
+        }
+        assert cols == {"regulator_locus_tag", "regulator_symbol", "display_name"}
+    finally:
+        conn.close()
+
+
 def test_build_hackett_analysis_set_filters_by_tier() -> None:
     """Use a fresh in-memory DB seeded just for this test (the build_hackett
     function expects a `hackett_meta` table, not the callingcards fixture)."""

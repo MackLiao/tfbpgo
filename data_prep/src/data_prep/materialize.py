@@ -65,12 +65,12 @@ _DISPLAY_NAMES_SQL = """
 CREATE OR REPLACE TABLE regulator_display_names AS
 SELECT
     regulator_locus_tag,
-    FIRST(regulator_symbol) AS regulator_symbol,
+    MIN(regulator_symbol) AS regulator_symbol,
     CASE
-        WHEN FIRST(regulator_symbol) IS NOT NULL
-             AND FIRST(regulator_symbol) != ''
-             AND FIRST(regulator_symbol) != FIRST(regulator_locus_tag)
-        THEN FIRST(regulator_symbol) || ' (' || regulator_locus_tag || ')'
+        WHEN MIN(regulator_symbol) IS NOT NULL
+             AND MIN(regulator_symbol) != ''
+             AND MIN(regulator_symbol) != regulator_locus_tag
+        THEN MIN(regulator_symbol) || ' (' || regulator_locus_tag || ')'
         ELSE regulator_locus_tag
     END AS display_name
 FROM ({union_sql}) __all
