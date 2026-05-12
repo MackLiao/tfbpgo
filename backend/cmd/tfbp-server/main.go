@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,11 +13,19 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/config"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+
+	cfg, err := config.Load(os.Args[1:])
+	if err != nil {
+		slog.Error("config_load_failed", "err", err)
+		os.Exit(1)
+	}
 
 	r := chi.NewRouter()
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -25,7 +34,7 @@ func main() {
 	})
 
 	srv := &http.Server{
-		Addr:              ":8080",
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
