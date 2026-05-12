@@ -18,6 +18,12 @@ cd data_prep
 poetry install -E full
 ```
 
+## What the artifact contains
+
+See [SCHEMA.md](SCHEMA.md) for the table-by-table contract. The Phase 1
+Go service depends on this shape; bumps to `SCHEMA_VERSION` are coordinated
+through the rules described there.
+
 ## Commands
 
 | Goal | Command |
