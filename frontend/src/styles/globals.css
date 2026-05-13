@@ -1,3 +1,13 @@
-/* Tailwind directives added in Task 7. */
-:root { color-scheme: light; }
-html, body, #root { height: 100%; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
