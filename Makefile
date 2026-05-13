@@ -1,8 +1,22 @@
-.PHONY: data-fixture data-build data-pull test test-data-prep \
-        frontend-build backend-build backend-test backend-run build \
+.PHONY: data-fixture data-build data-pull data-pull-latest data-publish test test-data-prep \
+        frontend-build backend-build backend-build-only backend-test backend-run build \
         test-parity data-fixture-bootstrap parity-record \
         parity parity-snapshot-record \
-        loadtest-profile loadtest-cold-burst
+        loadtest-profile loadtest-cold-burst \
+        docker-build docker-run
+
+# ----- docker (Phase 3) ------------------------------------------------------
+
+DOCKER_TAG ?= tfbp-local
+
+docker-build:
+	docker build -t $(DOCKER_TAG) --build-arg VERSION=$$(git rev-parse --short HEAD) .
+
+docker-run: docker-build
+	docker run --rm \
+		-v "$$PWD/tests/fixtures/tfbp_test.duckdb:/data/tfbp.duckdb:ro" \
+		-p 8080:8080 \
+		$(DOCKER_TAG)
 
 # ----- data_prep (Phase 0) ---------------------------------------------------
 
@@ -15,8 +29,36 @@ data-build:
 	    --out ../tfbp.duckdb
 
 data-pull:
-	@echo "Not implemented in Phase 0; see future plan for S3 publish/pull."
-	@exit 1
+	@command -v aws >/dev/null || { echo "aws CLI required"; exit 1; }
+	@: "$${ARTIFACT_BUCKET:?ARTIFACT_BUCKET env var required}"
+	@: "$${ARTIFACT_KEY:?ARTIFACT_KEY env var required}"
+	@: "$${ARTIFACT_SHA256:?ARTIFACT_SHA256 env var required}"
+	aws s3 cp "s3://$$ARTIFACT_BUCKET/$$ARTIFACT_KEY" ./tfbp.duckdb.new
+	@if command -v sha256sum >/dev/null; then \
+		echo "$$ARTIFACT_SHA256  ./tfbp.duckdb.new" | sha256sum -c -; \
+	else \
+		actual=$$(shasum -a 256 ./tfbp.duckdb.new | awk '{print $$1}'); \
+		[ "$$actual" = "$$ARTIFACT_SHA256" ] || { echo "SHA mismatch: $$actual"; exit 1; }; \
+	fi
+	mv ./tfbp.duckdb.new ./tfbp.duckdb
+	@echo "Pulled artifact to ./tfbp.duckdb"
+
+# Resolve the latest.json pointer in S3 and forward to data-pull.
+# Requires `aws` and `jq`. Only ARTIFACT_BUCKET need be set; key + sha are
+# read from the s3://${ARTIFACT_BUCKET}/tfbp/latest.json pointer that
+# deploy/s3-upload.sh maintains on every publish.
+data-pull-latest:
+	@command -v aws >/dev/null || { echo "aws CLI required"; exit 1; }
+	@command -v jq  >/dev/null || { echo "jq required"; exit 1; }
+	@: "$${ARTIFACT_BUCKET:?ARTIFACT_BUCKET env var required}"
+	@aws s3 cp "s3://$$ARTIFACT_BUCKET/tfbp/latest.json" /tmp/tfbp-latest.json
+	$(eval ARTIFACT_KEY := $(shell jq -r .key    /tmp/tfbp-latest.json))
+	$(eval ARTIFACT_SHA256 := $(shell jq -r .sha256 /tmp/tfbp-latest.json))
+	@echo "Fetched pointer: key=$(ARTIFACT_KEY) sha=$(ARTIFACT_SHA256)"
+	$(MAKE) data-pull ARTIFACT_KEY=$(ARTIFACT_KEY) ARTIFACT_SHA256=$(ARTIFACT_SHA256)
+
+data-publish: data-build
+	bash deploy/s3-upload.sh
 
 test-data-prep:
 	cd data_prep && poetry run pytest
@@ -29,6 +71,10 @@ frontend-build:
 # ----- backend (Phase 1) -----------------------------------------------------
 
 backend-build: frontend-build
+	cd backend && go build -o tfbp-server ./cmd/tfbp-server
+
+# Skips frontend rebuild; only safe when backend/static/dist/ is already populated.
+backend-build-only:
 	cd backend && go build -o tfbp-server ./cmd/tfbp-server
 
 # Top-level "build everything" target: frontend assets first (embedded into

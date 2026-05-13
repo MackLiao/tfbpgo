@@ -1,0 +1,16 @@
+.git
+.gitignore
+node_modules
+frontend/node_modules
+frontend/dist
+backend/static/dist
+backend/tfbp-server
+*.duckdb
+tests/fixtures
+tests/parity/snapshots
+docs
+reference
+data_prep/.venv
+*.md
+.env
+.env.*
