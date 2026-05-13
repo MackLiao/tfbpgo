@@ -49,8 +49,8 @@ cp .env.example .env
 
 # 4. Pull images, download the artifact, start the stack.
 docker compose pull
-docker compose up tfbp-data-init                # one-shot; downloads + verifies
-docker compose up -d tfbp shinyapp
+docker compose --profile init up tfbp-data-init # one-shot; downloads + verifies
+docker compose up -d                            # brings up tfbp + shinyapp (init is profile-gated, not re-run)
 
 # 5. Smoke.
 curl -sf https://tfbindingandperturbation.com/healthz
@@ -87,9 +87,10 @@ curl -sf https://tfbindingandperturbation.com/api/version | jq .
 ```
 
 `tfbp-data-init` does **not** re-run on a routine deploy — the artifact is
-unchanged. Skip it explicitly with `docker compose up -d tfbp` (do not pass
-`--scale` or use `docker compose up -d` without a service arg, since that
-would re-run the init container against the current `.env`).
+unchanged. It is gated behind the `init` Compose profile (see
+`docker-compose.yml`), so `docker compose up -d` never re-runs it; you must
+opt in explicitly via `docker compose --profile init up tfbp-data-init` when
+refreshing the artifact.
 
 ## Artifact refresh
 
@@ -107,8 +108,8 @@ cd /opt/tfbp
 sed -i "s|^ARTIFACT_KEY=.*|ARTIFACT_KEY=tfbp/YYYY-MM-DD/tfbp.duckdb|" .env
 sed -i "s|^ARTIFACT_SHA256=.*|ARTIFACT_SHA256=<new-hex>|"             .env
 
-# Run init container; it overwrites the named volume.
-docker compose up tfbp-data-init                 # exits 0 on success
+# Run init container (opt-in via profile); it overwrites the named volume.
+docker compose --profile init up tfbp-data-init  # exits 0 on success
 # Restart so the running binary reopens the file and re-reads artifact_manifest.
 docker compose restart tfbp
 curl -sf https://tfbindingandperturbation.com/api/version | jq .artifactVersion
@@ -137,7 +138,7 @@ curl -sf https://tfbindingandperturbation.com/readyz
 cd /opt/tfbp
 sed -i "s|^ARTIFACT_KEY=.*|ARTIFACT_KEY=<previous-good-key>|" .env
 sed -i "s|^ARTIFACT_SHA256=.*|ARTIFACT_SHA256=<previous-good-sha>|" .env
-docker compose up tfbp-data-init
+docker compose --profile init up tfbp-data-init
 docker compose restart tfbp
 ```
 

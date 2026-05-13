@@ -34,7 +34,12 @@ data-pull:
 	@: "$${ARTIFACT_KEY:?ARTIFACT_KEY env var required}"
 	@: "$${ARTIFACT_SHA256:?ARTIFACT_SHA256 env var required}"
 	aws s3 cp "s3://$$ARTIFACT_BUCKET/$$ARTIFACT_KEY" ./tfbp.duckdb.new
-	echo "$$ARTIFACT_SHA256  ./tfbp.duckdb.new" | sha256sum -c -
+	@if command -v sha256sum >/dev/null; then \
+		echo "$$ARTIFACT_SHA256  ./tfbp.duckdb.new" | sha256sum -c -; \
+	else \
+		actual=$$(shasum -a 256 ./tfbp.duckdb.new | awk '{print $$1}'); \
+		[ "$$actual" = "$$ARTIFACT_SHA256" ] || { echo "SHA mismatch: $$actual"; exit 1; }; \
+	fi
 	mv ./tfbp.duckdb.new ./tfbp.duckdb
 	@echo "Pulled artifact to ./tfbp.duckdb"
 

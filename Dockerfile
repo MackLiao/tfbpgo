@@ -4,7 +4,9 @@
 FROM node:20-bookworm-slim AS spa-builder
 WORKDIR /src
 COPY frontend/package.json frontend/pnpm-lock.yaml ./frontend/
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Pin pnpm to match the lockfile's pnpm-lock.yaml version (9.x). Avoid
+# `pnpm@latest` so image rebuilds are reproducible across pnpm major bumps.
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /src/frontend
 RUN pnpm install --frozen-lockfile
 WORKDIR /src

@@ -34,9 +34,10 @@ services:
   tfbp:
     image: ghcr.io/brentlab/tfbpshiny-go:${TAG:-latest}
     restart: unless-stopped
-    depends_on:
-      tfbp-data-init:
-        condition: service_completed_successfully
+    # tfbp-data-init is opt-in via profile `init`; run it explicitly to
+    # download/refresh the artifact into the named volume before bringing
+    # this service up. There is no depends_on because Compose refuses to
+    # start a service whose required dependency is in an inactive profile.
     environment:
       DUCKDB_PATH: /data/tfbp.duckdb
       DUCKDB_TEMP_DIR: /tmp/duckdb
@@ -60,6 +61,11 @@ services:
   tfbp-data-init:
     image: amazon/aws-cli:2
     restart: "no"
+    # Opt-in service: run explicitly via `docker compose --profile init up
+    # tfbp-data-init`. A plain `docker compose up -d` (no profile) brings up
+    # only the steady-state services (tfbp + shinyapp) and does not re-run
+    # the init container — see deploy/README.md "Artifact refresh".
+    profiles: ["init"]
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -67,7 +73,7 @@ services:
         aws s3 cp "s3://${ARTIFACT_BUCKET}/${ARTIFACT_KEY}" /data/tfbp.duckdb.new
         echo "${ARTIFACT_SHA256}  /data/tfbp.duckdb.new" | sha256sum -c -
         mv /data/tfbp.duckdb.new /data/tfbp.duckdb
-        echo "artifact installed: $$(stat -c '%s' /data/tfbp.duckdb) bytes"
+        echo "artifact installed: $$(wc -c < /data/tfbp.duckdb) bytes"
     environment:
       AWS_REGION: ${AWS_REGION:-us-east-2}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
