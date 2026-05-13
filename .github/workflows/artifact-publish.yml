@@ -1,0 +1,35 @@
+name: artifact-publish
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Date version (default: today UTC)"
+        required: false
+  schedule:
+    - cron: '0 5 * * 0'   # Sunday 05:00 UTC
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install poetry==1.8.3
+      - working-directory: data_prep
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: poetry install --no-interaction
+      - run: make data-build
+      - run: make data-publish
+        env:
+          ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          AWS_REGION: us-east-2
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifact-manifest
+          path: deploy/artifact-manifest.*.json
