@@ -4,8 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/observability"
+	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
@@ -28,7 +31,10 @@ func AddDBMillis(ctx context.Context, ms int64) {
 	}
 }
 
-func RequestLogger(artifactVersion string) func(http.Handler) http.Handler {
+// RequestLogger emits the structured per-request log line plus, when metrics
+// is non-nil, observes HTTP duration / request size / response size keyed by
+// the chi route pattern (low cardinality).
+func RequestLogger(artifactVersion string, metrics *observability.Metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -41,10 +47,22 @@ func RequestLogger(artifactVersion string) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(ww, r.WithContext(ctx))
 
+			elapsed := time.Since(start)
+			route := chiRoutePattern(r)
+
+			if metrics != nil {
+				metrics.HTTPDuration.WithLabelValues(route, strconv.Itoa(ww.Status())).Observe(elapsed.Seconds())
+				metrics.HTTPResponseSize.WithLabelValues(route).Observe(float64(ww.BytesWritten()))
+				if r.ContentLength > 0 {
+					metrics.HTTPRequestSize.WithLabelValues(route).Observe(float64(r.ContentLength))
+				}
+			}
+
 			slog.Info("http_request",
-				"route", r.URL.Path,
+				"route", route,
+				"path", r.URL.Path,
 				"status", ww.Status(),
-				"latency_ms", time.Since(start).Milliseconds(),
+				"latency_ms", elapsed.Milliseconds(),
 				"cache_hit", cacheHit,
 				"db_ms", dbMs,
 				"bytes", ww.BytesWritten(),
@@ -52,4 +70,15 @@ func RequestLogger(artifactVersion string) func(http.Handler) http.Handler {
 			)
 		})
 	}
+}
+
+// chiRoutePattern returns the matched chi route template (low cardinality)
+// or falls back to the raw path if no route matched.
+func chiRoutePattern(r *http.Request) string {
+	if rctx := chi.RouteContext(r.Context()); rctx != nil {
+		if p := rctx.RoutePattern(); p != "" {
+			return p
+		}
+	}
+	return r.URL.Path
 }

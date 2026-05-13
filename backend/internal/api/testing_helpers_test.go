@@ -12,6 +12,7 @@ import (
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/observability"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	"github.com/stretchr/testify/require"
 )
@@ -81,5 +82,6 @@ func newTestServer(t *testing.T) *Server {
 		Cache:           c,
 		Whitelist:       db.NewWhitelist(mfs),
 		Manifests:       mfs,
+		Metrics:         observability.New(),
 	}
 }
