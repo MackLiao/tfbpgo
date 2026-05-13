@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -16,9 +17,19 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// respondInternalError logs the underlying error with route context and
+// returns a sanitized JSON 500 response so internal details (file paths,
+// SQL fragments, stack frames) never leak to clients.
+func respondInternalError(w http.ResponseWriter, r *http.Request, err error) {
+	slog.Error("handler_failed", "route", r.URL.Path, "err", err.Error())
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+	_, _ = w.Write([]byte(`{"error":"internal error"}`))
+}
+
 func (s *Server) writeCachedJSON(w http.ResponseWriter, r *http.Request, body []byte, hit bool, err error) {
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternalError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

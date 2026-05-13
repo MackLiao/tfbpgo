@@ -36,7 +36,7 @@ func (s *Server) RefView(w http.ResponseWriter, r *http.Request) {
 	case "datasets":
 		body, err := s.buildDatasetsResponse()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			respondInternalError(w, r, err)
 			return
 		}
 		_ = refTpl.ExecuteTemplate(w, "datasets.html", string(body))
