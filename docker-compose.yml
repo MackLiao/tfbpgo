@@ -1,0 +1,109 @@
+# Production docker-compose for tfbindingandperturbation.com.
+#
+# Prerequisites (one-time on the host):
+#   1. Traefik must already be running on the external `web` network
+#      (see reference/compose/production/traefik/). This compose file does
+#      NOT manage Traefik — it only attaches services to the existing one.
+#   2. Create the external network once:
+#         docker network create web
+#   3. Copy `.env.example` to `.env` and fill in every value (S3 creds,
+#      artifact SHA256, LEGACY_TAG, HF_TOKEN, etc.). The stack will not
+#      start cleanly without it.
+#
+# Bring-up order:
+#   docker compose pull
+#   docker compose up -d
+# The `tfbp-data-init` container runs once, downloads `tfbp.duckdb` from S3
+# into the `tfbp_data` volume, verifies SHA256, and exits 0. `tfbp` waits
+# for it via `depends_on: { condition: service_completed_successfully }`.
+#
+# 410 routing for stale `/api/v/{v}/*` URLs is handled INSIDE the Go
+# service (Phase 1 `RequireArtifactVersion` middleware returns 410 +
+# `Location: /api/version`). Traefik needs no rule for this.
+#
+# Volume access:
+#   - tfbp_data is mounted :ro into the runtime `tfbp` service (read-only DB)
+#   - tfbp_data is mounted rw into `tfbp-data-init` (writes the artifact)
+#
+# Legacy grace period: `shinyapp` keeps serving the old Python Shiny app on
+# legacy.tfbindingandperturbation.com for 30 days post-cutover (spec §11.1).
+# The image must already be published to GHCR — see .env.example for the
+# tagging convention.
+
+services:
+  tfbp:
+    image: ghcr.io/brentlab/tfbpshiny-go:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      tfbp-data-init:
+        condition: service_completed_successfully
+    environment:
+      DUCKDB_PATH: /data/tfbp.duckdb
+      DUCKDB_TEMP_DIR: /tmp/duckdb
+      CACHE_SIZE_BYTES: "134217728"
+      LOG_LEVEL: info
+      PORT: "8080"
+    volumes:
+      - tfbp_data:/data:ro
+      - tfbp_tmp:/tmp/duckdb
+    networks: [web]
+    mem_limit: 1.6g
+    memswap_limit: 1.6g
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.tfbp.rule=Host(`tfbindingandperturbation.com`)
+      - traefik.http.routers.tfbp.entrypoints=web-secure
+      - traefik.http.routers.tfbp.tls.certresolver=letsencrypt
+      - traefik.http.services.tfbp.loadbalancer.server.port=8080
+
+  tfbp-data-init:
+    image: amazon/aws-cli:2
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        aws s3 cp "s3://${ARTIFACT_BUCKET}/${ARTIFACT_KEY}" /data/tfbp.duckdb.new
+        echo "${ARTIFACT_SHA256}  /data/tfbp.duckdb.new" | sha256sum -c -
+        mv /data/tfbp.duckdb.new /data/tfbp.duckdb
+        echo "artifact installed: $$(stat -c '%s' /data/tfbp.duckdb) bytes"
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      ARTIFACT_BUCKET: ${ARTIFACT_BUCKET}
+      ARTIFACT_KEY: ${ARTIFACT_KEY}
+      ARTIFACT_SHA256: ${ARTIFACT_SHA256}
+    volumes:
+      - tfbp_data:/data
+
+  # Legacy Shiny app on legacy.tfbindingandperturbation.com — 30-day grace.
+  # Inherits its image/build from reference/compose/production/shiny/Dockerfile;
+  # this entry only swaps the routing rule. The image must be published to
+  # GHCR before cutover (tag the pre-cutover main of the legacy Python repo
+  # and push as ghcr.io/brentlab/tfbpshiny:${LEGACY_TAG}).
+  shinyapp:
+    image: ghcr.io/brentlab/tfbpshiny:${LEGACY_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+    volumes:
+      - hf_cache:/hf-cache
+    networks: [web]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.legacy-shiny.rule=Host(`legacy.tfbindingandperturbation.com`)
+      - traefik.http.routers.legacy-shiny.entrypoints=web-secure
+      - traefik.http.routers.legacy-shiny.tls.certresolver=letsencrypt
+      - traefik.http.services.legacy-shiny.loadbalancer.server.port=8000
+
+volumes:
+  tfbp_data:
+  tfbp_tmp:
+  hf_cache:
+
+networks:
+  web:
+    external: true
