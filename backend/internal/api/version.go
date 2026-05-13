@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
@@ -11,12 +10,17 @@ import (
 func (s *Server) Version(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(domain.VersionInfo{
+	body, err := jsonMarshal(domain.VersionInfo{
 		ArtifactVersion: s.Manifests.Artifact.ArtifactVersion,
 		SchemaVersion:   s.Manifests.Artifact.SchemaVersion,
 		BuiltAt:         s.Manifests.Artifact.BuiltAt,
 		DuckDBVersion:   s.Manifests.Artifact.DuckDBVersion,
 	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(body)
 }
 
 func (s *Server) RequireArtifactVersion(next http.Handler) http.Handler {
