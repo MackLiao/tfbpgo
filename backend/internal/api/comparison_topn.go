@@ -201,6 +201,13 @@ func (s *Server) buildOnePair(
 		rankDir = "DESC"
 	}
 
+	// SQL placeholder order in topn.sql:
+	//   1. binding-CTE args (already appended above)
+	//   2. ? for `WHERE rnk <= ?` (top_n_binding CTE)
+	//   3. ? placeholders inside {{responsive_expr}}
+	//   4. ? placeholders in {{pert_filter_where}}
+	args = append(args, topN)
+
 	// responsive expression — depends on perturbation dataset's effect/pvalue cols
 	respExpr := buildResponsiveExpr(pDB, effectThr, pvalThr, &args)
 
@@ -213,17 +220,13 @@ func (s *Server) buildOnePair(
 	if pWhere != "" {
 		pertWhereStr = "WHERE " + pWhere
 	}
+	if len(pArgs) > 0 {
+		args = append(args, pArgs...)
+	}
 
 	pertJoin := ""
 	if pcfg.HackettTimeFilter {
 		pertJoin = "JOIN hackett_analysis_set has ON CAST(p.sample_id AS VARCHAR) = CAST(has.sample_id AS VARCHAR) AND has.time = 45"
-	}
-
-	// top_n is the only ? not yet appended
-	args = append(args, topN)
-	// then the bound args from the pert WHERE
-	if len(pArgs) > 0 {
-		args = append(args, pArgs...)
 	}
 
 	pairKey := bDB + "__" + pDB
