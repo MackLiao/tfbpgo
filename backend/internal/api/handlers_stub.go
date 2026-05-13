@@ -2,7 +2,6 @@ package api
 
 import "net/http"
 
-func (s *Server) Datasets(w http.ResponseWriter, r *http.Request)       { http.NotFound(w, r) }
 func (s *Server) Regulators(w http.ResponseWriter, r *http.Request)     { http.NotFound(w, r) }
 func (s *Server) Binding(w http.ResponseWriter, r *http.Request)        { http.NotFound(w, r) }
 func (s *Server) Perturbation(w http.ResponseWriter, r *http.Request)   { http.NotFound(w, r) }
