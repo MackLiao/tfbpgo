@@ -100,7 +100,11 @@ func (s *Server) buildBindingResponse(ctx context.Context, reg string, datasets 
 		rows := []domain.BindingRow{}
 		err = s.Pool.DB.SelectContext(dbCtx, &rows, sqlStr, append([]any{reg}, args...)...)
 		cancel()
-		AddDBMillis(ctx, time.Since(t0).Milliseconds())
+		elapsed := time.Since(t0)
+		AddDBMillis(ctx, elapsed.Milliseconds())
+		if s.Metrics != nil {
+			s.Metrics.DBDuration.WithLabelValues("binding/data").Observe(elapsed.Seconds())
+		}
 		if err != nil {
 			return nil, err
 		}

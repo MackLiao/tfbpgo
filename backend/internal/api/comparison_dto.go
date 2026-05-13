@@ -22,7 +22,11 @@ func (s *Server) ComparisonDTO(w http.ResponseWriter, r *http.Request) {
 		if err := s.Pool.DB.SelectContext(ctx, &rows, queries.Get("comparison/dto.sql")); err != nil {
 			return nil, err
 		}
-		AddDBMillis(r.Context(), time.Since(t0).Milliseconds())
+		elapsed := time.Since(t0)
+		AddDBMillis(r.Context(), elapsed.Milliseconds())
+		if s.Metrics != nil {
+			s.Metrics.DBDuration.WithLabelValues("comparison/dto").Observe(elapsed.Seconds())
+		}
 		return json.Marshal(domain.DTOResponse{Rows: rows})
 	})
 	MarkCacheHit(r.Context(), hit)

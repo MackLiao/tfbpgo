@@ -162,7 +162,11 @@ func (s *Server) buildTopNResponse(
 	if err := s.Pool.DB.SelectContext(dbCtx, &rows, full, args...); err != nil {
 		return nil, err
 	}
-	AddDBMillis(ctx, time.Since(t0).Milliseconds())
+	elapsed := time.Since(t0)
+	AddDBMillis(ctx, elapsed.Milliseconds())
+	if s.Metrics != nil {
+		s.Metrics.DBDuration.WithLabelValues("comparison/topn").Observe(elapsed.Seconds())
+	}
 	return json.Marshal(domain.TopNResponse{
 		TopN: topN, EffectThreshold: effectThr, PValueThreshold: pvalThr, Rows: rows,
 	})

@@ -32,7 +32,11 @@ func (s *Server) Regulators(w http.ResponseWriter, r *http.Request) {
 		if err := s.Pool.DB.SelectContext(ctx, &rows, queries.Get("regulators/search.sql"), search, search, limit); err != nil {
 			return nil, err
 		}
-		AddDBMillis(r.Context(), time.Since(t0).Milliseconds())
+		elapsed := time.Since(t0)
+		AddDBMillis(r.Context(), elapsed.Milliseconds())
+		if s.Metrics != nil {
+			s.Metrics.DBDuration.WithLabelValues("regulators/search").Observe(elapsed.Seconds())
+		}
 		return jsonMarshal(domain.RegulatorsResponse{Regulators: rows})
 	})
 	MarkCacheHit(r.Context(), hit)

@@ -98,7 +98,11 @@ func (s *Server) buildPerturbationResponse(ctx context.Context, reg string, data
 		rows := []domain.PerturbationRow{}
 		err = s.Pool.DB.SelectContext(dbCtx, &rows, sqlStr, append([]any{reg}, args...)...)
 		cancel()
-		AddDBMillis(ctx, time.Since(t0).Milliseconds())
+		elapsed := time.Since(t0)
+		AddDBMillis(ctx, elapsed.Milliseconds())
+		if s.Metrics != nil {
+			s.Metrics.DBDuration.WithLabelValues("perturbation/data").Observe(elapsed.Seconds())
+		}
 		if err != nil {
 			return nil, err
 		}
