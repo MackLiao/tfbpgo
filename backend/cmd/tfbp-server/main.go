@@ -69,11 +69,17 @@ func main() {
 		report.Manifests.Artifact.DuckDBVersion,
 	)
 
+	wl, err := db.NewWhitelist(report.Manifests)
+	if err != nil {
+		slog.Error("startup_failed", "err", err)
+		os.Exit(1)
+	}
+
 	srv := &api.Server{
 		ArtifactVersion: report.Manifests.Artifact.ArtifactVersion,
 		Pool:            pool,
 		Cache:           c,
-		Whitelist:       db.NewWhitelist(report.Manifests),
+		Whitelist:       wl,
 		Manifests:       report.Manifests,
 		Metrics:         metrics,
 		StaticFS:        static.FS(),

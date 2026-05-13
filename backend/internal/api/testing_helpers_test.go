@@ -76,11 +76,14 @@ func newTestServer(t *testing.T) *Server {
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
 
+	wl, err := db.NewWhitelist(mfs)
+	require.NoError(t, err)
+
 	return &Server{
 		ArtifactVersion: mfs.Artifact.ArtifactVersion,
 		Pool:            pool,
 		Cache:           c,
-		Whitelist:       db.NewWhitelist(mfs),
+		Whitelist:       wl,
 		Manifests:       mfs,
 		Metrics:         observability.New(),
 	}
