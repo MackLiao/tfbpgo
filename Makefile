@@ -2,7 +2,21 @@
         frontend-build backend-build backend-build-only backend-test backend-run build \
         test-parity data-fixture-bootstrap parity-record \
         parity parity-snapshot-record \
-        loadtest-profile loadtest-cold-burst
+        loadtest-profile loadtest-cold-burst \
+        docker-build docker-run
+
+# ----- docker (Phase 3) ------------------------------------------------------
+
+DOCKER_TAG ?= tfbp-local
+
+docker-build:
+	docker build -t $(DOCKER_TAG) --build-arg VERSION=$$(git rev-parse --short HEAD) .
+
+docker-run: docker-build
+	docker run --rm \
+		-v "$$PWD/tests/fixtures/tfbp_test.duckdb:/data/tfbp.duckdb:ro" \
+		-p 8080:8080 \
+		$(DOCKER_TAG)
 
 # ----- data_prep (Phase 0) ---------------------------------------------------
 
