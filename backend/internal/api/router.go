@@ -3,6 +3,7 @@ package api
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
@@ -21,17 +22,23 @@ type Server struct {
 	Whitelist       *db.Whitelist
 	Manifests       *db.Manifests
 	Metrics         *observability.Metrics
-	// EnableReferenceViews mounts the /_ref/* parity-aid HTML pages when true.
-	// Disabled by default; enable in dev/test via ENABLE_REFERENCE_VIEWS=true.
-	EnableReferenceViews bool
 	// StaticFS, when non-nil, is mounted as a fallback http.FileServer for
-	// any unmatched routes. Phase 2 will populate this with the React bundle.
+	// any unmatched routes. Phase 2 populates this with the embedded React bundle.
 	StaticFS fs.FS
 }
 
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	// Set X-Content-Type-Options on every response (defense-in-depth against
+	// MIME sniffing on any handler — JSON, HTML, /metrics, etc.). Other
+	// security headers are applied only to the SPA shell where they matter.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			next.ServeHTTP(w, req)
+		})
+	})
 	r.Use(middleware.Compress(5))
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(RequestLogger(s.ArtifactVersion, s.Metrics))
@@ -47,6 +54,7 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/v/{v}", func(r chi.Router) {
 		r.Use(s.RequireArtifactVersion)
 		r.Get("/datasets", s.Datasets)
+		r.Get("/regulators/resolve", s.RegulatorsResolve)
 		r.Get("/regulators", s.Regulators)
 		r.Get("/binding", s.Binding)
 		r.Get("/perturbation", s.Perturbation)
@@ -54,15 +62,47 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/comparison/dto", s.ComparisonDTO)
 	})
 
-	if s.EnableReferenceViews {
-		r.Get("/_ref", s.RefIndex)
-		r.Get("/_ref/{view}", s.RefView)
-	}
-
-	// Static SPA placeholder mounted last so /api/*, /_ref/*, /healthz,
-	// /readyz, /metrics, and /api/version all take precedence.
+	// SPA mounted last so /api/*, /healthz, /readyz, /metrics,
+	// and /api/version all take precedence. Real files under dist/ are
+	// served verbatim; any other unmatched path falls back to index.html
+	// so React Router can resolve client-side routes (e.g. /binding).
 	if s.StaticFS != nil {
-		r.Handle("/*", http.FileServer(http.FS(s.StaticFS)))
+		fileServer := http.FileServer(http.FS(s.StaticFS))
+		r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			p := strings.TrimPrefix(req.URL.Path, "/")
+			// Reject reserved API/ops paths so an unmatched typo like
+			// /api/v/X/typo doesn't get HTML-shimmed by the SPA fallback.
+			// These prefixes have their own real routes; anything that
+			// reaches the fallback is by definition a 404.
+			for _, prefix := range []string{"api/", "healthz", "readyz", "metrics", "_ref/"} {
+				if p == prefix || strings.HasPrefix(p, prefix) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+			}
+			if p == "" {
+				p = "index.html"
+			}
+			if info, err := fs.Stat(s.StaticFS, p); err == nil && !info.IsDir() {
+				fileServer.ServeHTTP(w, req)
+				return
+			}
+			// SPA fallback: serve index.html so React Router owns the path.
+			index, err := fs.ReadFile(s.StaticFS, "index.html")
+			if err != nil {
+				http.NotFound(w, req)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			w.Header().Set("X-Frame-Options", "DENY")
+			_, _ = w.Write(index)
+		}))
 	}
 
 	return r

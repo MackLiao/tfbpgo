@@ -27,3 +27,8 @@ backend/static/dist
 *.test
 coverage.out
 *.out
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+backend/static/dist/

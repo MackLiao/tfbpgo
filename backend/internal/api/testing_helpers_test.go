@@ -80,12 +80,11 @@ func newTestServer(t *testing.T) *Server {
 	require.NoError(t, err)
 
 	return &Server{
-		ArtifactVersion:      mfs.Artifact.ArtifactVersion,
-		Pool:                 pool,
-		Cache:                c,
-		Whitelist:            wl,
-		Manifests:            mfs,
-		Metrics:              observability.New(),
-		EnableReferenceViews: true,
+		ArtifactVersion: mfs.Artifact.ArtifactVersion,
+		Pool:            pool,
+		Cache:           c,
+		Whitelist:       wl,
+		Manifests:       mfs,
+		Metrics:         observability.New(),
 	}
 }

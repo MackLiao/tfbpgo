@@ -1,6 +1,7 @@
 .PHONY: data-fixture data-build data-pull test test-data-prep \
-        backend-build backend-test backend-run \
+        frontend-build backend-build backend-test backend-run build \
         test-parity data-fixture-bootstrap parity-record \
+        parity parity-snapshot-record \
         loadtest-profile loadtest-cold-burst
 
 # ----- data_prep (Phase 0) ---------------------------------------------------
@@ -20,10 +21,19 @@ data-pull:
 test-data-prep:
 	cd data_prep && poetry run pytest
 
+# ----- frontend (Phase 2) ----------------------------------------------------
+
+frontend-build:
+	cd frontend && pnpm install --frozen-lockfile && pnpm build
+
 # ----- backend (Phase 1) -----------------------------------------------------
 
-backend-build:
+backend-build: frontend-build
 	cd backend && go build -o tfbp-server ./cmd/tfbp-server
+
+# Top-level "build everything" target: frontend assets first (embedded into
+# the Go binary via //go:embed all:dist), then the backend binary.
+build: backend-build
 
 backend-test:
 	cd backend && go test ./...
@@ -42,13 +52,22 @@ data-fixture-bootstrap: data-fixture
 test-parity:
 	cd tests/parity && go test ./...
 
-# Re-record parity fixtures (manual step; requires reference/ symlink +
-# labretriever poetry env).
+# Re-record reference-parity fixtures (manual step; requires reference/
+# symlink + labretriever poetry env).
 parity-record:
 	cd data_prep && poetry run python -m data_prep.record_parity_fixtures \
 	    --fixture ../tests/fixtures/tfbp_test.duckdb \
 	    --golden ../tests/parity/golden_urls.json \
 	    --out ../tests/parity/fixtures
+
+# Snapshot-based parity suite (spec §11.3.1 cutover-gate foundation).
+# Requires a backend already running on $PARITY_BASE_URL (default :8080).
+# See tests/parity/README.md for end-to-end instructions.
+parity:
+	@bash tests/parity/run_parity.sh
+
+parity-snapshot-record:
+	@PARITY_RECORD=1 bash tests/parity/run_parity.sh
 
 # ----- load testing (Phase 3 acceptance) -------------------------------------
 

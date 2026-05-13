@@ -61,16 +61,10 @@ Data (versioned, `Cache-Control: immutable`):
 
 Stale `{v}` values return `410 Gone` with `Location: /api/version`.
 
-Reference HTML view (development only):
+Static SPA:
 
-- `GET /_ref` — index page linking each module
-- `GET /_ref/{datasets|binding|perturbation|comparison}` — raw JSON dump for
-  side-by-side comparison with the Python Shiny reference.
-
-Static SPA placeholder:
-
-- `GET /` — placeholder served from `backend/static/`. Phase 2 replaces it
-  with the React build output.
+- `GET /` and any unmatched non-API path serves the embedded React bundle
+  from `backend/static/dist/` (built by `frontend/`).
 
 ## Tests
 
