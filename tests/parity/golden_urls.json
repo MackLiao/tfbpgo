@@ -1,0 +1,47 @@
+[
+  {
+    "name": "datasets",
+    "url": "/api/v/{v}/datasets",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "regulators_search_Y",
+    "url": "/api/v/{v}/regulators?search=Y&limit=10",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "binding_callingcards",
+    "url": "/api/v/{v}/binding?regulator=YBR289W&datasets=callingcards",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "binding_two_assays",
+    "url": "/api/v/{v}/binding?regulator=YBR289W&datasets=callingcards,harbison",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "perturbation_hackett",
+    "url": "/api/v/{v}/perturbation?regulator=YBR289W&datasets=hackett",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "perturbation_two_assays",
+    "url": "/api/v/{v}/perturbation?regulator=YBR289W&datasets=kemmeren,hackett",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "comparison_topn_basic",
+    "url": "/api/v/{v}/comparison/topn?binding=callingcards&perturbation=hackett&top_n=25",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "comparison_topn_filters",
+    "url": "/api/v/{v}/comparison/topn?binding=callingcards,harbison&perturbation=kemmeren&top_n=10&effect=0.5",
+    "tolerance": 1e-9
+  },
+  {
+    "name": "comparison_dto",
+    "url": "/api/v/{v}/comparison/dto",
+    "tolerance": 1e-9
+  }
+]
