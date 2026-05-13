@@ -18,20 +18,25 @@ export const options = {
   },
 };
 
-let ARTIFACT_VERSION;
 export function setup() {
   const v = http.get(`${BASE}/api/version`).json().artifactVersion;
 
-  // Generate a guaranteed-unique URL: random regulator + datasets choice prefix
-  // so this URL has never been cached.
-  const reg = 'YBR289W';   // pick one that exists in fixture
-  const ds  = 'callingcards';
-  const nonce = Date.now();
-  const url = `${BASE}/api/v/${v}/binding?regulator=${reg}&datasets=${ds}&_nonce=${nonce}`;
-  // _nonce is rejected as unknown param? Then drop it. The actual approach is to
-  // pre-warm everything else and pick this specific (reg,ds) tuple from a known
-  // never-touched pair.
-  return { url };
+  // Pre-flight: snapshot cache_hits_total so teardown can compare deltas.
+  // The operator MUST restart the backend immediately before running this
+  // script (see README) so that ristretto is empty. We pick YML007W to
+  // avoid colliding with profile.js's YBR289W warm-cache priming.
+  const metricsBefore = http.get(`${BASE}/metrics`).body;
+  const cacheHitsLine = (metricsBefore.match(/^cache_hits_total \d+/m) || [''])[0];
+  const cacheHitsCount = parseInt((cacheHitsLine.match(/\d+/) || ['0'])[0], 10);
+  if (cacheHitsCount > 0) {
+    console.warn(
+      `cold_burst: cache_hits_total=${cacheHitsCount} before burst; backend is NOT cold. ` +
+      `Restart the backend before running this script (see tests/loadtest/k6/README.md).`,
+    );
+  }
+
+  const url = `${BASE}/api/v/${v}/binding?regulator=YML007W&datasets=callingcards`;
+  return { url, cacheHitsBefore: cacheHitsLine };
 }
 
 export default function (data) {
@@ -39,18 +44,14 @@ export default function (data) {
   check(res, { '200': (r) => r.status === 200 });
 }
 
-export function teardown() {
-  // After the burst, fetch /metrics and assert singleflight_shared_calls_total
-  // increased by ≥99 for this run window. k6 doesn't have easy stateful asserts
-  // here; emit a marker line for the operator to verify, or do this in a wrapper
-  // bash script.
-  const metrics = http.get(`${BASE}/metrics`).body;
+export function teardown(data) {
+  // After the burst, fetch /metrics and emit the relevant lines for the operator
+  // to verify against tests/loadtest-summary.md.
+  const metricsAfter = http.get(`${BASE}/metrics`).body;
+  console.log('--- pre-burst:', data.cacheHitsBefore);
   console.log('--- post-burst /metrics relevant lines ---');
-  for (const line of metrics.split('\n')) {
-    if (line.includes('singleflight_shared_calls_total') ||
-        line.includes('db_query_duration_seconds') ||
-        line.includes('cache_hits_total') ||
-        line.includes('cache_misses_total')) {
+  for (const line of metricsAfter.split('\n')) {
+    if (line.match(/^(singleflight_shared_calls_total|db_query_duration_seconds_count|cache_hits_total|cache_misses_total)\s/)) {
       console.log(line);
     }
   }

@@ -25,7 +25,6 @@ export const options = {
   thresholds: warmThresholds,
 };
 
-let ARTIFACT_VERSION;
 export function setup() {
   const res = http.get(`${BASE}/api/version`);
   return { v: res.json().artifactVersion };
@@ -35,7 +34,6 @@ const popularLatency = new Trend('popular_latency_ms', true);
 const popularCacheHit = new Rate('popular_cache_hit');
 
 export default function (data) {
-  ARTIFACT_VERSION = data.v;
   const r = Math.random();
 
   if (r < 0.6) {
@@ -44,19 +42,20 @@ export default function (data) {
       const reg = popularRegulator(Math.random());
       const ds  = pickBindingDataset(Math.random());
       const res = http.get(
-        `${BASE}/api/v/${ARTIFACT_VERSION}/binding?regulator=${reg}&datasets=${ds}`,
+        `${BASE}/api/v/${data.v}/binding?regulator=${reg}&datasets=${ds}`,
         { tags: { segment: 'popular' } },
       );
       check(res, { 'popular 200': (x) => x.status === 200 });
       popularLatency.add(res.timings.duration);
-      popularCacheHit.add(res.headers['X-Cache'] === 'hit'); // backend may not emit X-Cache; ok if 0
+      // popular requests should hit cache after warmup; expect Rate > 0.85 in steady state.
+      popularCacheHit.add(res.headers['X-Cache'] === 'HIT');
     });
   } else if (r < 0.9) {
     // 30% varied: stresses cache fill
     group('varied', () => {
       const reg = variedRegulator(Math.random());
       const ds  = pickBindingDataset(Math.random());
-      http.get(`${BASE}/api/v/${ARTIFACT_VERSION}/binding?regulator=${reg}&datasets=${ds}`,
+      http.get(`${BASE}/api/v/${data.v}/binding?regulator=${reg}&datasets=${ds}`,
         { tags: { segment: 'varied' } });
     });
   } else {
@@ -67,7 +66,7 @@ export default function (data) {
       const eff = (Math.random() * 0.5 + 0.1).toFixed(2);
       const pv  = (Math.random() * 0.05).toFixed(4);
       http.get(
-        `${BASE}/api/v/${ARTIFACT_VERSION}/comparison/topn?binding=${b}&perturbation=${p}&top_n=25&effect=${eff}&pvalue=${pv}`,
+        `${BASE}/api/v/${data.v}/comparison/topn?binding=${b}&perturbation=${p}&top_n=25&effect=${eff}&pvalue=${pv}`,
         { tags: { segment: 'topn' } },
       );
     });

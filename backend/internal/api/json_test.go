@@ -51,3 +51,16 @@ func TestUnversionedPathDoesNotSetImmutableCacheControl(t *testing.T) {
 		t.Fatalf("/api/version must not be immutable-cached, got: %q", got)
 	}
 }
+
+// TestVersionedResponseHasXCacheHeader verifies that cached JSON responses
+// expose a HIT/MISS X-Cache header so operators (and the cold_burst k6 gate)
+// can observe coalescing/admission behaviour from the wire alone.
+func TestVersionedResponseHasXCacheHeader(t *testing.T) {
+	srv := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v/"+srv.ArtifactVersion+"/datasets", nil)
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	if got := w.Header().Get("X-Cache"); got != "HIT" && got != "MISS" {
+		t.Fatalf("want HIT|MISS, got %q", got)
+	}
+}

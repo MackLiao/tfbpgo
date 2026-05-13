@@ -61,14 +61,22 @@ make loadtest-cold-burst
 kill %1
 ```
 
+The script's `setup()` snapshots `cache_hits_total` before the burst and
+emits a `console.warn` if it is non-zero (the backend is not cold). The
+target URL uses `regulator=YML007W` so it does not collide with
+`profile.js`'s `YBR289W` warm-cache priming.
+
 After the run, the script prints the relevant `/metrics` lines. Verify:
 
-- `singleflight_shared_calls_total` increased by ≥ 99 during the burst
+- `singleflight_shared_calls_total` increased by ≥ 99 (gate — 99 of the 100
+  concurrent VUs found an in-flight call and waited on it)
 - `db_query_duration_seconds_count{endpoint="binding/data"}` increased by
-  exactly 1
-- `cache_hits_total` increased by ~99 (all but the loader saw the populated
-  cache)
+  exactly 1 (gate — only the singleflight loader ran the SQL)
 - `cache_misses_total` increased by exactly 1
+- `cache_hits_total` did **not** increase during the burst — singleflight
+  waiters receive the shared result and the loader populates the cache once
+  at the end of the burst, so none of the 100 in-burst requests register as
+  hits. Subsequent requests after the burst settles would be hits.
 
 **Do not re-run `cold_burst.js` against a backend that has already served the
 target URL** — the ristretto cache will be warm and the singleflight assertion
