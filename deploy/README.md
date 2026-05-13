@@ -14,6 +14,7 @@ on `legacy.tfbindingandperturbation.com` for a 30-day grace period.
 
 - One-time host setup
 - Routine deploy
+- Security hardening (IAM role, .env permissions)
 - Artifact refresh
 - Rollback
 - Cutover gate checklist
@@ -91,6 +92,71 @@ unchanged. It is gated behind the `init` Compose profile (see
 `docker-compose.yml`), so `docker compose up -d` never re-runs it; you must
 opt in explicitly via `docker compose --profile init up tfbp-data-init` when
 refreshing the artifact.
+
+## Security hardening
+
+### Preferred: instance-profile IAM role (no static keys)
+
+The `tfbp-data-init` container only needs to read the artifact from S3. The
+cleanest way to grant that access is to attach an IAM **instance profile** to
+the EC2 host and let the `amazon/aws-cli:2` image pick up the credentials
+automatically via IMDSv2 — no static keys in `.env`, no rotation schedule.
+
+1. **Create a role** named `tfbp-deploy` (or similar) with the following
+   inline policy, scoped to the artifact prefix only:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "ReadTfbpArtifacts",
+         "Effect": "Allow",
+         "Action": ["s3:GetObject"],
+         "Resource": ["arn:aws:s3:::brentlab-tfbp-artifacts/tfbp/*"]
+       }
+     ]
+   }
+   ```
+
+2. **Attach the role** to the EC2 instance ("Actions → Security → Modify IAM
+   role" in the console, or `aws ec2 associate-iam-instance-profile`).
+
+3. **Remove the static keys** from the `tfbp-data-init` service in
+   `docker-compose.yml`:
+
+   ```yaml
+   tfbp-data-init:
+     # ...
+     environment:
+       AWS_REGION: ${AWS_REGION:-us-east-2}
+       # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY removed - role-based
+       ARTIFACT_BUCKET: ${ARTIFACT_BUCKET}
+       ARTIFACT_KEY: ${ARTIFACT_KEY}
+       ARTIFACT_SHA256: ${ARTIFACT_SHA256}
+   ```
+
+   …and drop the matching `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+   lines from `.env`. The aws-cli image will reach IMDSv2 from inside the
+   container automatically.
+
+4. **Verify** with a dry-run `docker compose --profile init up tfbp-data-init`
+   — it should authenticate and exit 0 without any AWS_* env vars set.
+
+### Fallback: static keys in `.env`
+
+If you cannot attach an instance role (e.g. the host is not EC2), keep the
+static keys but harden the `.env` file:
+
+```bash
+chown <deploy-user>:<deploy-user> /opt/tfbp/.env
+chmod 600 /opt/tfbp/.env
+```
+
+Schedule rotation of `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` every
+**90 days**. The deploy IAM user should be scoped to `s3:GetObject` on
+`arn:aws:s3:::${ARTIFACT_BUCKET}/tfbp/*` only (same policy as the role above)
+— do not reuse a broader credential.
 
 ## Artifact refresh
 

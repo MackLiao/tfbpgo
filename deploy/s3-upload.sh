@@ -40,6 +40,29 @@ cat > "$MANIFEST" <<EOF
 }
 EOF
 echo "Wrote $MANIFEST"
+
+# Write a stable s3://${ARTIFACT_BUCKET}/tfbp/latest.json pointer so that
+# `make data-pull-latest` can resolve the most recent key + sha256 without
+# the operator hand-copying values out of the dated manifest.
+LATEST_JSON=$(cat <<EOF
+{"version":"$VERSION","key":"$KEY","sha256":"$SHA","size_bytes":$SIZE}
+EOF
+)
+echo "$LATEST_JSON" | aws s3 cp --region "$AWS_REGION" - "s3://${ARTIFACT_BUCKET}/tfbp/latest.json" \
+    --content-type "application/json"
+echo "Updated pointer s3://${ARTIFACT_BUCKET}/tfbp/latest.json -> $KEY"
+
+echo
+echo "============================================================"
+echo "Publish summary"
+echo "============================================================"
+echo "  Version:        $VERSION"
+echo "  Key:            $KEY"
+echo "  Size:           $SIZE bytes"
+echo "  SHA256:         $SHA"
+echo "  Pointer:        s3://${ARTIFACT_BUCKET}/tfbp/latest.json"
+echo "  Local manifest: $MANIFEST"
+echo
 echo "Set these in .env for the next deploy:"
 echo "  ARTIFACT_BUCKET=$ARTIFACT_BUCKET"
 echo "  ARTIFACT_KEY=$KEY"

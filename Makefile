@@ -1,4 +1,4 @@
-.PHONY: data-fixture data-build data-pull data-publish test test-data-prep \
+.PHONY: data-fixture data-build data-pull data-pull-latest data-publish test test-data-prep \
         frontend-build backend-build backend-build-only backend-test backend-run build \
         test-parity data-fixture-bootstrap parity-record \
         parity parity-snapshot-record \
@@ -42,6 +42,20 @@ data-pull:
 	fi
 	mv ./tfbp.duckdb.new ./tfbp.duckdb
 	@echo "Pulled artifact to ./tfbp.duckdb"
+
+# Resolve the latest.json pointer in S3 and forward to data-pull.
+# Requires `aws` and `jq`. Only ARTIFACT_BUCKET need be set; key + sha are
+# read from the s3://${ARTIFACT_BUCKET}/tfbp/latest.json pointer that
+# deploy/s3-upload.sh maintains on every publish.
+data-pull-latest:
+	@command -v aws >/dev/null || { echo "aws CLI required"; exit 1; }
+	@command -v jq  >/dev/null || { echo "jq required"; exit 1; }
+	@: "$${ARTIFACT_BUCKET:?ARTIFACT_BUCKET env var required}"
+	@aws s3 cp "s3://$$ARTIFACT_BUCKET/tfbp/latest.json" /tmp/tfbp-latest.json
+	$(eval ARTIFACT_KEY := $(shell jq -r .key    /tmp/tfbp-latest.json))
+	$(eval ARTIFACT_SHA256 := $(shell jq -r .sha256 /tmp/tfbp-latest.json))
+	@echo "Fetched pointer: key=$(ARTIFACT_KEY) sha=$(ARTIFACT_SHA256)"
+	$(MAKE) data-pull ARTIFACT_KEY=$(ARTIFACT_KEY) ARTIFACT_SHA256=$(ARTIFACT_SHA256)
 
 data-publish: data-build
 	bash deploy/s3-upload.sh
