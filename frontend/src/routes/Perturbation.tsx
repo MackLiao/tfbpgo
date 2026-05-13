@@ -10,7 +10,9 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 export function Perturbation() {
   const [params, setParams] = useSearchParams();
   const reg = params.get("regulator");
-  const datasets = (params.get("datasets") ?? "").split(",").filter(Boolean);
+  // URL state uses data-type-keyed names so Binding and Perturbation routes
+  // can share a URL: ?binding=...&perturbation=...&regulator=...
+  const datasets = (params.get("perturbation") ?? "").split(",").filter(Boolean);
   const filters = params.get("filters") ?? "";
 
   const { data, isPending, error } = useQuery({
