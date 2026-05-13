@@ -126,6 +126,8 @@ func main() {
 func samplePoolStats(stop <-chan struct{}, pool *db.Pool, m *observability.Metrics) {
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
+	var prevWait time.Duration
+	var prevCount int64
 	for {
 		select {
 		case <-stop:
@@ -134,6 +136,18 @@ func samplePoolStats(stop <-chan struct{}, pool *db.Pool, m *observability.Metri
 			st := pool.DB.Stats()
 			m.DBPoolOpen.Set(float64(st.OpenConnections))
 			m.DBPoolInUse.Set(float64(st.InUse))
+			// Observe per-tick mean wait time derived from cumulative
+			// WaitDuration / WaitCount deltas. database/sql exposes only
+			// monotonic totals, so the per-tick average is the closest
+			// proxy to per-acquire wait latency we can produce here.
+			waitDelta := st.WaitDuration - prevWait
+			countDelta := st.WaitCount - prevCount
+			if countDelta > 0 {
+				avgWait := waitDelta.Seconds() / float64(countDelta)
+				m.DBPoolWait.Observe(avgWait)
+			}
+			prevWait = st.WaitDuration
+			prevCount = st.WaitCount
 		}
 	}
 }
