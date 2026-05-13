@@ -30,6 +30,15 @@ type Server struct {
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	// Set X-Content-Type-Options on every response (defense-in-depth against
+	// MIME sniffing on any handler — JSON, HTML, /metrics, etc.). Other
+	// security headers are applied only to the SPA shell where they matter.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			next.ServeHTTP(w, req)
+		})
+	})
 	r.Use(middleware.Compress(5))
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(RequestLogger(s.ArtifactVersion, s.Metrics))
@@ -60,11 +69,25 @@ func (s *Server) Routes() http.Handler {
 	if s.StaticFS != nil {
 		fileServer := http.FileServer(http.FS(s.StaticFS))
 		r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			path := strings.TrimPrefix(req.URL.Path, "/")
-			if path == "" {
-				path = "index.html"
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
 			}
-			if _, err := fs.Stat(s.StaticFS, path); err == nil {
+			p := strings.TrimPrefix(req.URL.Path, "/")
+			// Reject reserved API/ops paths so an unmatched typo like
+			// /api/v/X/typo doesn't get HTML-shimmed by the SPA fallback.
+			// These prefixes have their own real routes; anything that
+			// reaches the fallback is by definition a 404.
+			for _, prefix := range []string{"api/", "healthz", "readyz", "metrics", "_ref/"} {
+				if p == prefix || strings.HasPrefix(p, prefix) {
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+			}
+			if p == "" {
+				p = "index.html"
+			}
+			if info, err := fs.Stat(s.StaticFS, p); err == nil && !info.IsDir() {
 				fileServer.ServeHTTP(w, req)
 				return
 			}
@@ -75,7 +98,9 @@ func (s *Server) Routes() http.Handler {
 				return
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			w.Header().Set("X-Frame-Options", "DENY")
 			_, _ = w.Write(index)
 		}))
 	}
