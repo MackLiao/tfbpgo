@@ -1,0 +1,20 @@
+# Golden URLs for the snapshot-based parity suite (run_parity.sh).
+# One URL per line. Lines starting with '#' are comments. Blank lines
+# ignored. The '{V}' placeholder is substituted with the artifact version
+# read from /api/version at run time, so snapshot filenames are stable
+# across artifact bumps (the script hashes the unrendered URL).
+#
+# Keep this list comprehensive across endpoints — the script's exact-byte
+# diff is the regression gate.
+
+/api/version
+/api/v/{V}/datasets
+/api/v/{V}/regulators?search=YOX&limit=10
+/api/v/{V}/regulators/resolve?intersect=callingcards,hackett
+/api/v/{V}/regulators/resolve?common=callingcards:hackett
+/api/v/{V}/regulators/resolve?regulators=YBR289W,YML007W
+/api/v/{V}/binding?regulator=YBR289W&datasets=callingcards
+/api/v/{V}/perturbation?regulator=YBR289W&datasets=hackett
+/api/v/{V}/comparison/topn?binding=callingcards&perturbation=hackett&top_n=10
+/api/v/{V}/comparison/topn?binding=callingcards&perturbation=hackett&top_n=25&effect=0.5
+/api/v/{V}/comparison/dto

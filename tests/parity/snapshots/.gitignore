@@ -1,0 +1,3 @@
+# Only .expected snapshots are the contract; .actual files are scratch
+# output from the most recent run.
+*.actual
