@@ -76,13 +76,14 @@ func main() {
 	}
 
 	srv := &api.Server{
-		ArtifactVersion: report.Manifests.Artifact.ArtifactVersion,
-		Pool:            pool,
-		Cache:           c,
-		Whitelist:       wl,
-		Manifests:       report.Manifests,
-		Metrics:         metrics,
-		StaticFS:        static.FS(),
+		ArtifactVersion:      report.Manifests.Artifact.ArtifactVersion,
+		Pool:                 pool,
+		Cache:                c,
+		Whitelist:            wl,
+		Manifests:            report.Manifests,
+		Metrics:              metrics,
+		EnableReferenceViews: cfg.EnableReferenceViews,
+		StaticFS:             static.FS(),
 	}
 	r := srv.Routes()
 

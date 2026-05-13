@@ -11,11 +11,12 @@ import (
 // Config holds runtime configuration. Env vars are the primary source;
 // CLI flags --port and --duckdb override env if present.
 type Config struct {
-	DuckDBPath     string `env:"DUCKDB_PATH,required"`
-	CacheSizeBytes int64  `env:"CACHE_SIZE_BYTES" envDefault:"134217728"`
-	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
-	Port           int    `env:"PORT" envDefault:"8080"`
-	TempDir        string `env:"DUCKDB_TEMP_DIR" envDefault:"/tmp/duckdb"`
+	DuckDBPath           string `env:"DUCKDB_PATH,required"`
+	CacheSizeBytes       int64  `env:"CACHE_SIZE_BYTES" envDefault:"134217728"`
+	LogLevel             string `env:"LOG_LEVEL" envDefault:"info"`
+	Port                 int    `env:"PORT" envDefault:"8080"`
+	TempDir              string `env:"DUCKDB_TEMP_DIR" envDefault:"/tmp/duckdb"`
+	EnableReferenceViews bool   `env:"ENABLE_REFERENCE_VIEWS" envDefault:"false"`
 }
 
 // Load parses environment variables, then applies CLI flag overrides.
