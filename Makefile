@@ -1,5 +1,5 @@
 .PHONY: data-fixture data-build data-pull test test-data-prep \
-        frontend-build backend-build backend-test backend-run build \
+        frontend-build backend-build backend-build-only backend-test backend-run build \
         test-parity data-fixture-bootstrap parity-record \
         parity parity-snapshot-record \
         loadtest-profile loadtest-cold-burst
@@ -29,6 +29,10 @@ frontend-build:
 # ----- backend (Phase 1) -----------------------------------------------------
 
 backend-build: frontend-build
+	cd backend && go build -o tfbp-server ./cmd/tfbp-server
+
+# Skips frontend rebuild; only safe when backend/static/dist/ is already populated.
+backend-build-only:
 	cd backend && go build -o tfbp-server ./cmd/tfbp-server
 
 # Top-level "build everything" target: frontend assets first (embedded into
