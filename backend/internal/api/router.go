@@ -3,6 +3,7 @@ package api
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
@@ -60,10 +61,31 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/_ref/{view}", s.RefView)
 	}
 
-	// Static SPA placeholder mounted last so /api/*, /_ref/*, /healthz,
-	// /readyz, /metrics, and /api/version all take precedence.
+	// SPA mounted last so /api/*, /_ref/*, /healthz, /readyz, /metrics,
+	// and /api/version all take precedence. Real files under dist/ are
+	// served verbatim; any other unmatched path falls back to index.html
+	// so React Router can resolve client-side routes (e.g. /binding).
 	if s.StaticFS != nil {
-		r.Handle("/*", http.FileServer(http.FS(s.StaticFS)))
+		fileServer := http.FileServer(http.FS(s.StaticFS))
+		r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			path := strings.TrimPrefix(req.URL.Path, "/")
+			if path == "" {
+				path = "index.html"
+			}
+			if _, err := fs.Stat(s.StaticFS, path); err == nil {
+				fileServer.ServeHTTP(w, req)
+				return
+			}
+			// SPA fallback: serve index.html so React Router owns the path.
+			index, err := fs.ReadFile(s.StaticFS, "index.html")
+			if err != nil {
+				http.NotFound(w, req)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			_, _ = w.Write(index)
+		}))
 	}
 
 	return r
