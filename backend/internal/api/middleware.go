@@ -82,3 +82,21 @@ func chiRoutePattern(r *http.Request) string {
 	}
 	return r.URL.Path
 }
+
+// recordCacheOutcome bumps the per-endpoint cache_hits / cache_misses /
+// singleflight_shared counters using the chi route pattern as the label.
+// No-op when metrics is nil (test servers without observability wired).
+func (s *Server) recordCacheOutcome(r *http.Request, hit, shared bool) {
+	if s.Metrics == nil {
+		return
+	}
+	endpoint := chiRoutePattern(r)
+	if hit {
+		s.Metrics.CacheHits.WithLabelValues(endpoint).Inc()
+	} else {
+		s.Metrics.CacheMisses.WithLabelValues(endpoint).Inc()
+	}
+	if shared {
+		s.Metrics.SFShared.WithLabelValues(endpoint).Inc()
+	}
+}

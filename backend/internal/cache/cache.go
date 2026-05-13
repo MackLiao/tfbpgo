@@ -51,11 +51,13 @@ func New(opts Options) (*Cache, error) {
 // Loader produces the JSON bytes for a cache miss.
 type Loader func() ([]byte, error)
 
-// GetOrLoad returns (bytes, hit, err). On miss, calls fn under singleflight.
-func (c *Cache) GetOrLoad(_ context.Context, key string, fn Loader) ([]byte, bool, error) {
+// GetOrLoad returns (bytes, hit, shared, err). On miss, calls fn under
+// singleflight. `shared` is true when this caller's request was coalesced
+// with at least one concurrent in-flight loader for the same key.
+func (c *Cache) GetOrLoad(_ context.Context, key string, fn Loader) ([]byte, bool, bool, error) {
 	if v, ok := c.store.Get(key); ok {
 		c.hitCount.Add(1)
-		return v, true, nil
+		return v, true, false, nil
 	}
 	c.missCount.Add(1)
 
@@ -79,9 +81,9 @@ func (c *Cache) GetOrLoad(_ context.Context, key string, fn Loader) ([]byte, boo
 		c.sharedCount.Add(1)
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, false, shared, err
 	}
-	return v.([]byte), false, nil
+	return v.([]byte), false, shared, nil
 }
 
 // Counters used by the metrics layer.

@@ -58,10 +58,11 @@ func (s *Server) Perturbation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, r.URL.Query())
-	body, hit, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
 		return s.buildPerturbationResponse(r.Context(), regulator, dsList, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
+	s.recordCacheOutcome(r, hit, shared)
 	s.writeCachedJSON(w, r, body, hit, err)
 }
 
