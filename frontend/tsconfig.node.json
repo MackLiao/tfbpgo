@@ -14,5 +14,5 @@
     "resolveJsonModule": true,
     "outDir": "./node_modules/.tmp/node-out"
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "scripts"]
+  "include": ["vite.config.ts", "vitest.config.ts"]
 }
