@@ -22,11 +22,8 @@ type Server struct {
 	Whitelist       *db.Whitelist
 	Manifests       *db.Manifests
 	Metrics         *observability.Metrics
-	// EnableReferenceViews mounts the /_ref/* parity-aid HTML pages when true.
-	// Disabled by default; enable in dev/test via ENABLE_REFERENCE_VIEWS=true.
-	EnableReferenceViews bool
 	// StaticFS, when non-nil, is mounted as a fallback http.FileServer for
-	// any unmatched routes. Phase 2 will populate this with the React bundle.
+	// any unmatched routes. Phase 2 populates this with the embedded React bundle.
 	StaticFS fs.FS
 }
 
@@ -56,12 +53,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/comparison/dto", s.ComparisonDTO)
 	})
 
-	if s.EnableReferenceViews {
-		r.Get("/_ref", s.RefIndex)
-		r.Get("/_ref/{view}", s.RefView)
-	}
-
-	// SPA mounted last so /api/*, /_ref/*, /healthz, /readyz, /metrics,
+	// SPA mounted last so /api/*, /healthz, /readyz, /metrics,
 	// and /api/version all take precedence. Real files under dist/ are
 	// served verbatim; any other unmatched path falls back to index.html
 	// so React Router can resolve client-side routes (e.g. /binding).
