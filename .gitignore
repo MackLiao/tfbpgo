@@ -5,6 +5,9 @@
 /tfbp.duckdb
 /tfbp.duckdb.wal
 
+# Deploy: per-publish manifest JSONs are CI artifacts, not source
+/deploy/artifact-manifest.*.json
+
 # Python
 __pycache__/
 *.py[cod]

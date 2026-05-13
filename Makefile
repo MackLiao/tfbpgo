@@ -1,4 +1,4 @@
-.PHONY: data-fixture data-build data-pull test test-data-prep \
+.PHONY: data-fixture data-build data-pull data-publish test test-data-prep \
         frontend-build backend-build backend-build-only backend-test backend-run build \
         test-parity data-fixture-bootstrap parity-record \
         parity parity-snapshot-record \
@@ -29,8 +29,17 @@ data-build:
 	    --out ../tfbp.duckdb
 
 data-pull:
-	@echo "Not implemented in Phase 0; see future plan for S3 publish/pull."
-	@exit 1
+	@command -v aws >/dev/null || { echo "aws CLI required"; exit 1; }
+	@: "$${ARTIFACT_BUCKET:?ARTIFACT_BUCKET env var required}"
+	@: "$${ARTIFACT_KEY:?ARTIFACT_KEY env var required}"
+	@: "$${ARTIFACT_SHA256:?ARTIFACT_SHA256 env var required}"
+	aws s3 cp "s3://$$ARTIFACT_BUCKET/$$ARTIFACT_KEY" ./tfbp.duckdb.new
+	echo "$$ARTIFACT_SHA256  ./tfbp.duckdb.new" | sha256sum -c -
+	mv ./tfbp.duckdb.new ./tfbp.duckdb
+	@echo "Pulled artifact to ./tfbp.duckdb"
+
+data-publish: data-build
+	bash deploy/s3-upload.sh
 
 test-data-prep:
 	cd data_prep && poetry run pytest
