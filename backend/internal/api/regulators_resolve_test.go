@@ -137,6 +137,65 @@ func TestRegulatorsResolve_BadPrefix(t *testing.T) {
 	require.Contains(t, rr.Body.String(), "unknown dataset prefix")
 }
 
+// TestRegulatorsResolve_OrderInvariantCacheKey verifies that
+// `?intersect=A,B` and `?intersect=B,A` produce byte-identical response
+// bodies (the canonical cache key collapses the two requests).
+func TestRegulatorsResolve_OrderInvariantCacheKey(t *testing.T) {
+	s := newTestServer(t)
+
+	q1 := url.Values{"intersect": []string{"callingcards,hackett"}}
+	rr1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q1.Encode(), nil)
+	s.Routes().ServeHTTP(rr1, req1)
+	require.Equal(t, 200, rr1.Code)
+
+	q2 := url.Values{"intersect": []string{"hackett,callingcards"}}
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q2.Encode(), nil)
+	s.Routes().ServeHTTP(rr2, req2)
+	require.Equal(t, 200, rr2.Code)
+
+	require.Equal(t, rr1.Body.Bytes(), rr2.Body.Bytes())
+}
+
+// TestRegulatorsResolve_CommonAndIntersectSameKey verifies that
+// `?common=A:B` and `?intersect=A,B` produce byte-identical response bodies.
+func TestRegulatorsResolve_CommonAndIntersectSameKey(t *testing.T) {
+	s := newTestServer(t)
+
+	q1 := url.Values{"intersect": []string{"callingcards,hackett"}}
+	rr1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q1.Encode(), nil)
+	s.Routes().ServeHTTP(rr1, req1)
+	require.Equal(t, 200, rr1.Code)
+
+	q2 := url.Values{"common": []string{"callingcards:hackett"}}
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q2.Encode(), nil)
+	s.Routes().ServeHTTP(rr2, req2)
+	require.Equal(t, 200, rr2.Code)
+
+	require.Equal(t, rr1.Body.Bytes(), rr2.Body.Bytes())
+}
+
+// TestRegulatorsResolve_PrefixDataTypeMismatch verifies that a prefix
+// mismatch (binding.<perturbation-dataset>) is rejected with 400 rather
+// than silently re-mapped.
+func TestRegulatorsResolve_PrefixDataTypeMismatch(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{"intersect": []string{"binding.hackett"}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 400, rr.Code, "body=%s", rr.Body.String())
+	require.Contains(t, rr.Body.String(), "does not match dataset")
+}
+
 // TestRegulatorsResolve_DatasetCountCap verifies that more datasets than
 // the manifest contains is rejected with 400 by the dedupe+cap step
 // (mirrors binding/perturbation DoS posture).

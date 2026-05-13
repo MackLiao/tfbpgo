@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -23,21 +24,36 @@ type resolveResponse struct {
 	Truncated  bool     `json:"truncated"`
 }
 
-// stripDataTypePrefix removes the optional "binding." or "perturbation."
+// resolvePrefixedDataset removes the optional "binding." or "perturbation."
 // alias prefix from a dataset name; the raw dataset key is the part after
 // the dot. Spec §7.2 documents `binding.<name>` / `perturbation.<name>` as
 // convenience aliases for compact filter expressions. Any other prefix is
-// rejected with an error.
-func stripDataTypePrefix(name string) (string, error) {
+// rejected with an error. When a prefix is present and the bare name is in
+// the manifest, the method also confirms the prefix matches the dataset's
+// actual DataType — `binding.hackett` (where hackett is a perturbation) is
+// a 400, not a silent re-mapping.
+//
+// If the bare name is not in the manifest, this returns the bare name
+// without error so CheckDataset can produce the canonical "unknown dataset"
+// message downstream.
+func (s *Server) resolvePrefixedDataset(name string) (string, error) {
 	i := strings.IndexByte(name, '.')
 	if i < 0 {
 		return name, nil
 	}
 	prefix := name[:i]
+	bare := name[i+1:]
 	if prefix != "binding" && prefix != "perturbation" {
 		return "", fmt.Errorf("unknown dataset prefix %q (only binding./perturbation. allowed)", prefix)
 	}
-	return name[i+1:], nil
+	row, ok := s.Whitelist.Dataset(bare)
+	if !ok {
+		return bare, nil
+	}
+	if row.DataType != prefix {
+		return "", fmt.Errorf("prefix %q does not match dataset %q (data_type=%q)", prefix, bare, row.DataType)
+	}
+	return bare, nil
 }
 
 // RegulatorsResolve handles GET /api/v/{v}/regulators/resolve.
@@ -64,7 +80,7 @@ func (s *Server) RegulatorsResolve(w http.ResponseWriter, r *http.Request) {
 	rawDS := splitCSV(dsCSV)
 	bareList := make([]string, 0, len(rawDS))
 	for _, d := range rawDS {
-		bare, err := stripDataTypePrefix(d)
+		bare, err := s.resolvePrefixedDataset(d)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
@@ -104,7 +120,21 @@ func (s *Server) RegulatorsResolve(w http.ResponseWriter, r *http.Request) {
 		explicit = append(explicit, x)
 	}
 
-	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, q)
+	// Canonicalize the cache key so semantically identical requests collapse:
+	// `intersect=A,B` and `intersect=B,A` (and `common=A:B` vs `intersect=A,B`)
+	// all hash to the same key. Same for `regulators=B,A`.
+	canon := url.Values{}
+	if len(datasets) > 0 {
+		sorted := append([]string{}, datasets...)
+		sort.Strings(sorted)
+		canon.Set("intersect", strings.Join(sorted, ","))
+	}
+	if len(explicit) > 0 {
+		sortedTags := append([]string{}, explicit...)
+		sort.Strings(sortedTags)
+		canon.Set("regulators", strings.Join(sortedTags, ","))
+	}
+	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
 		return s.buildResolveResponse(r.Context(), datasets, explicit)
 	})
