@@ -5,6 +5,7 @@ import { qk } from "@/lib/query-keys";
 import { RegulatorPicker } from "@/components/RegulatorPicker";
 import { PerturbationVolcano } from "@/plots/PerturbationVolcano";
 import { PlotSkeleton } from "@/components/PlotSkeleton";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export function Perturbation() {
   const [params, setParams] = useSearchParams();
@@ -34,15 +35,17 @@ export function Perturbation() {
         <RegulatorPicker value={reg} onChange={setRegulator} />
       </aside>
       <div>
-        {error && <p className="text-red-600">{(error as Error).message}</p>}
-        {isPending && reg && datasets.length ? <PlotSkeleton /> : null}
-        {!reg || !datasets.length ? (
-          <p className="text-sm text-slate-600">
-            Pick a regulator on the left and select one or more perturbation datasets on
-            the Select page to render a volcano plot.
-          </p>
-        ) : null}
-        {data && <PerturbationVolcano datasets={data.datasets} />}
+        <ErrorBoundary>
+          {error && <p className="text-red-600">{(error as Error).message}</p>}
+          {isPending && reg && datasets.length ? <PlotSkeleton /> : null}
+          {!reg || !datasets.length ? (
+            <p className="text-sm text-slate-600">
+              Pick a regulator on the left and select one or more perturbation datasets on
+              the Select page to render a volcano plot.
+            </p>
+          ) : null}
+          {data && <PerturbationVolcano datasets={data.datasets} />}
+        </ErrorBoundary>
       </div>
     </section>
   );

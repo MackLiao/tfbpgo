@@ -5,6 +5,7 @@ import { qk } from "@/lib/query-keys";
 import { RegulatorPicker } from "@/components/RegulatorPicker";
 import { BindingScatter } from "@/plots/BindingScatter";
 import { PlotSkeleton } from "@/components/PlotSkeleton";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export function Binding() {
   const [params, setParams] = useSearchParams();
@@ -32,15 +33,17 @@ export function Binding() {
         <RegulatorPicker value={reg} onChange={setRegulator} />
       </aside>
       <div>
-        {error && <p className="text-red-600">{(error as Error).message}</p>}
-        {isPending && reg && datasets.length ? <PlotSkeleton /> : null}
-        {!reg || !datasets.length ? (
-          <p className="text-sm text-slate-600">
-            Pick a regulator on the left and select one or more binding datasets on the
-            Select page to render a scatter plot.
-          </p>
-        ) : null}
-        {data && <BindingScatter datasets={data.datasets} />}
+        <ErrorBoundary>
+          {error && <p className="text-red-600">{(error as Error).message}</p>}
+          {isPending && reg && datasets.length ? <PlotSkeleton /> : null}
+          {!reg || !datasets.length ? (
+            <p className="text-sm text-slate-600">
+              Pick a regulator on the left and select one or more binding datasets on the
+              Select page to render a scatter plot.
+            </p>
+          ) : null}
+          {data && <BindingScatter datasets={data.datasets} />}
+        </ErrorBoundary>
       </div>
     </section>
   );
