@@ -33,6 +33,26 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	// Widened in Phase 3 to cover production-only columns referenced by
 	// the binding/perturbation/topn handlers (poisson_pval,
 	// callingcards_enrichment, log2_shrunken_timecourses, time, condition).
-	require.Len(t, m.Fields, 10)
+	// Assert key membership rather than a brittle length: the fixture may
+	// gain additional manifest rows without breaking handler contracts.
+	got := map[string]bool{}
+	for _, f := range m.Fields {
+		got[f.DBName+"."+f.Field] = true
+	}
+	required := []string{
+		"callingcards.target_locus_tag",
+		"callingcards.score",
+		"callingcards.poisson_pval",
+		"callingcards.callingcards_enrichment",
+		"callingcards.condition",
+		"hackett.target_locus_tag",
+		"hackett.effect",
+		"hackett.pvalue",
+		"hackett.log2_shrunken_timecourses",
+		"hackett.time",
+	}
+	for _, k := range required {
+		require.True(t, got[k], "missing field_manifest entry: %s", k)
+	}
 	require.NotEmpty(t, m.Levels)
 }
