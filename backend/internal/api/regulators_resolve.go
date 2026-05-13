@@ -26,12 +26,18 @@ type resolveResponse struct {
 // stripDataTypePrefix removes the optional "binding." or "perturbation."
 // alias prefix from a dataset name; the raw dataset key is the part after
 // the dot. Spec §7.2 documents `binding.<name>` / `perturbation.<name>` as
-// convenience aliases for compact filter expressions.
-func stripDataTypePrefix(name string) string {
-	if i := strings.IndexByte(name, '.'); i >= 0 {
-		return name[i+1:]
+// convenience aliases for compact filter expressions. Any other prefix is
+// rejected with an error.
+func stripDataTypePrefix(name string) (string, error) {
+	i := strings.IndexByte(name, '.')
+	if i < 0 {
+		return name, nil
 	}
-	return name
+	prefix := name[:i]
+	if prefix != "binding" && prefix != "perturbation" {
+		return "", fmt.Errorf("unknown dataset prefix %q (only binding./perturbation. allowed)", prefix)
+	}
+	return name[i+1:], nil
 }
 
 // RegulatorsResolve handles GET /api/v/{v}/regulators/resolve.
@@ -53,15 +59,28 @@ func (s *Server) RegulatorsResolve(w http.ResponseWriter, r *http.Request) {
 	if c := q.Get("common"); c != "" {
 		dsCSV = strings.ReplaceAll(c, ":", ",")
 	}
-	raw := splitCSV(dsCSV)
-	datasets := make([]string, 0, len(raw))
-	for _, d := range raw {
-		bare := stripDataTypePrefix(d)
-		if err := s.Whitelist.CheckDataset(bare); err != nil {
+	// Strip optional binding./perturbation. alias prefixes before dedupe+cap so
+	// the count cap is enforced against canonical bare names.
+	rawDS := splitCSV(dsCSV)
+	bareList := make([]string, 0, len(rawDS))
+	for _, d := range rawDS {
+		bare, err := stripDataTypePrefix(d)
+		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		datasets = append(datasets, bare)
+		bareList = append(bareList, bare)
+	}
+	datasets, err := dedupeAndCapCSV("datasets", bareList, len(s.Whitelist.AllDatasets()))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	for _, d := range datasets {
+		if err := s.Whitelist.CheckDataset(d); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Explicit tag list (<=30 by raw count, then deduped + uppercased).

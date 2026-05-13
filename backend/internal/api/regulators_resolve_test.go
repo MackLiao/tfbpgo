@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -43,14 +44,10 @@ func TestRegulatorsResolve_BadDataset(t *testing.T) {
 
 func TestRegulatorsResolve_TooManyExplicit(t *testing.T) {
 	s := newTestServer(t)
-	tags := make([]string, 0, 31)
-	for i := 0; i < 31; i++ {
-		tags = append(tags, "YBR000W")
-	}
 	// Use distinct tags to avoid dedup hiding the cap (handler caps on raw split count).
 	distinct := make([]string, 0, 31)
 	for i := 0; i < 31; i++ {
-		distinct = append(distinct, "YBR"+padLeft(i, 3)+"W")
+		distinct = append(distinct, fmt.Sprintf("YBR%03dW", i))
 	}
 	q := url.Values{"regulators": []string{strings.Join(distinct, ",")}}
 	rr := httptest.NewRecorder()
@@ -86,18 +83,75 @@ func TestRegulatorsResolve_CommonAlias(t *testing.T) {
 	require.Equal(t, resp1.Truncated, resp2.Truncated)
 }
 
-// padLeft renders n as a base-10 string left-padded with zeros to width.
-func padLeft(n, width int) string {
-	s := ""
-	if n == 0 {
-		s = "0"
+// TestRegulatorsResolve_ExplicitOnly verifies that the explicit `regulators=`
+// list is case-normalized to upper case and deduplicated, and that the
+// response is sorted.
+func TestRegulatorsResolve_ExplicitOnly(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{"regulators": []string{"ybr289w,YBR289W,YML007W"}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, "body=%s", rr.Body.String())
+
+	var resp resolveResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.False(t, resp.Truncated)
+	// Case-normalized + deduped: YBR289W once, YML007W once.
+	require.Equal(t, []string{"YBR289W", "YML007W"}, resp.Regulators)
+}
+
+// TestRegulatorsResolve_IntersectAndExplicit verifies that combining
+// intersect with an explicit list returns the intersection (keeping only
+// explicit tags that exist in the intersection).
+func TestRegulatorsResolve_IntersectAndExplicit(t *testing.T) {
+	s := newTestServer(t)
+	// YBR289W is in the callingcards INTERSECT hackett result (see Intersect test).
+	q := url.Values{
+		"intersect":  []string{"callingcards,hackett"},
+		"regulators": []string{"YBR289W,FAKE_TAG"},
 	}
-	for n > 0 {
-		s = string(rune('0'+(n%10))) + s
-		n /= 10
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, "body=%s", rr.Body.String())
+
+	var resp resolveResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Contains(t, resp.Regulators, "YBR289W")
+	require.NotContains(t, resp.Regulators, "FAKE_TAG")
+}
+
+// TestRegulatorsResolve_BadPrefix verifies that aliases other than
+// `binding.` / `perturbation.` are rejected with 400.
+func TestRegulatorsResolve_BadPrefix(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{"common": []string{"foo.callingcards:bar.hackett"}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 400, rr.Code, "body=%s", rr.Body.String())
+	require.Contains(t, rr.Body.String(), "unknown dataset prefix")
+}
+
+// TestRegulatorsResolve_DatasetCountCap verifies that more datasets than
+// the manifest contains is rejected with 400 by the dedupe+cap step
+// (mirrors binding/perturbation DoS posture).
+func TestRegulatorsResolve_DatasetCountCap(t *testing.T) {
+	s := newTestServer(t)
+	n := len(s.Whitelist.AllDatasets())
+	names := make([]string, 0, n+1)
+	for i := 0; i < n+1; i++ {
+		names = append(names, fmt.Sprintf("ds_%d", i))
 	}
-	for len(s) < width {
-		s = "0" + s
-	}
-	return s
+	q := url.Values{"intersect": []string{strings.Join(names, ",")}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 400, rr.Code, "body=%s", rr.Body.String())
+	require.Contains(t, rr.Body.String(), "exceeds maximum")
 }
