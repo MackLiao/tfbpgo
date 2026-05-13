@@ -17,6 +17,7 @@ import (
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/config"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/observability"
+	"github.com/BrentLab/tfbpshiny-go/backend/static"
 )
 
 func main() {
@@ -75,6 +76,7 @@ func main() {
 		Whitelist:       db.NewWhitelist(report.Manifests),
 		Manifests:       report.Manifests,
 		Metrics:         metrics,
+		StaticFS:        static.FS(),
 	}
 	r := srv.Routes()
 

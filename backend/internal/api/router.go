@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io/fs"
 	"net/http"
 	"time"
 
@@ -20,6 +21,9 @@ type Server struct {
 	Whitelist       *db.Whitelist
 	Manifests       *db.Manifests
 	Metrics         *observability.Metrics
+	// StaticFS, when non-nil, is mounted as a fallback http.FileServer for
+	// any unmatched routes. Phase 2 will populate this with the React bundle.
+	StaticFS fs.FS
 }
 
 func (s *Server) Routes() http.Handler {
@@ -49,6 +53,12 @@ func (s *Server) Routes() http.Handler {
 
 	r.Get("/_ref", s.RefIndex)
 	r.Get("/_ref/{view}", s.RefView)
+
+	// Static SPA placeholder mounted last so /api/*, /_ref/*, /healthz,
+	// /readyz, /metrics, and /api/version all take precedence.
+	if s.StaticFS != nil {
+		r.Handle("/*", http.FileServer(http.FS(s.StaticFS)))
+	}
 
 	return r
 }
