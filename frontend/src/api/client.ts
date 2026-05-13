@@ -26,7 +26,24 @@ async function get<T>(path: string, search?: URLSearchParams): Promise<T> {
   const url = path + (search && [...search].length ? `?${search.toString()}` : "");
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (res.status === 410) {
-    // Stale artifact — refresh version and reload page (deep-link friendly).
+    // /api/version itself cannot legitimately return 410 (it has no artifact
+    // version gate). If it does, refuse to recurse — we'd reload forever.
+    if (path === "/api/version") {
+      throw new ApiError(
+        410,
+        "stale artifact version on /api/version (should not happen)",
+      );
+    }
+    // Guard against an infinite reload loop. Track attempts in sessionStorage
+    // so a misconfigured server can't trap the user in a refresh cycle.
+    const attempts = Number(sessionStorage.getItem("stale_reload_attempts") ?? "0");
+    if (attempts >= 2) {
+      throw new ApiError(
+        410,
+        "artifact version still stale after reload; refusing to loop",
+      );
+    }
+    sessionStorage.setItem("stale_reload_attempts", String(attempts + 1));
     await refreshArtifactVersion();
     window.location.reload();
     return new Promise<T>(() => {}); // never resolves
@@ -34,6 +51,13 @@ async function get<T>(path: string, search?: URLSearchParams): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new ApiError(res.status, body);
+  }
+  // Any successful response clears the reload-attempt counter so a future
+  // genuine 410 starts fresh.
+  try {
+    sessionStorage.removeItem("stale_reload_attempts");
+  } catch {
+    // sessionStorage may be unavailable in some test/embedded environments.
   }
   return (await res.json()) as T;
 }

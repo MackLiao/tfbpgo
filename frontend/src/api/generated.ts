@@ -239,16 +239,25 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    /** @description Comma-separated list of regulator tokens to resolve. */
+                    /**
+                     * @description Comma-separated list of regulator locus tags to resolve. Capped at
+                     *     30 raw entries (request rejected if exceeded); the server deduplicates
+                     *     and uppercases entries before processing.
+                     */
                     regulators?: string;
                     /**
-                     * @description When `true`, intersects the resolved set with the regulators present
-                     *     in every dataset listed in `intersect`. Default `false`.
+                     * @description Sugar for `intersect`: a colon-separated pair `A:B` of dataset
+                     *     db_names (e.g. `callingcards:hackett`). Equivalent to
+                     *     `intersect=A,B`. Optional `binding.` / `perturbation.` prefixes are
+                     *     accepted on each side. If both `common` and `intersect` are set,
+                     *     `common` wins.
                      */
-                    common?: boolean;
+                    common?: string;
                     /**
-                     * @description Comma-separated dataset db_names to intersect against when
-                     *     `common=true`. Each name must be in `dataset_manifest`.
+                     * @description Comma-separated dataset db_names to intersect. Each name must be in
+                     *     `dataset_manifest`. Optional `binding.` / `perturbation.` prefixes
+                     *     are accepted; the prefix (if present) must match the dataset's
+                     *     actual `data_type`. The list is capped at the dataset manifest size.
                      */
                     intersect?: string;
                 };
@@ -556,7 +565,16 @@ export interface components {
             regulators: components["schemas"]["Regulator"][];
         };
         ResolveResponse: {
+            /**
+             * @description Canonical, sorted, deduplicated locus_tag list. Capped at 1000
+             *     entries server-side; `truncated:true` indicates the cap was hit.
+             */
             regulators: string[];
+            /**
+             * @description True when the resolved list exceeded the 1000-tag cap and was
+             *     trimmed. Clients should consider narrowing the dataset intersection
+             *     or providing an explicit `regulators` list.
+             */
             truncated?: boolean;
         };
         BindingRow: {
