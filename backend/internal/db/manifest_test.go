@@ -30,6 +30,9 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	require.True(t, dbNames["callingcards"])
 	require.True(t, dbNames["hackett"])
 
-	require.Len(t, m.Fields, 5)
-	require.Empty(t, m.Levels)
+	// Widened in Phase 3 to cover production-only columns referenced by
+	// the binding/perturbation/topn handlers (poisson_pval,
+	// callingcards_enrichment, log2_shrunken_timecourses, time, condition).
+	require.Len(t, m.Fields, 10)
+	require.NotEmpty(t, m.Levels)
 }

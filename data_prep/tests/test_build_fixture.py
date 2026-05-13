@@ -34,17 +34,26 @@ def test_fixture_has_expected_tables(built_fixture: Path) -> None:
         "callingcards_meta",
         "hackett",
         "hackett_meta",
+        # The widened fixture is self-contained: includes manifests + derived.
+        "artifact_manifest",
+        "dataset_manifest",
+        "field_manifest",
+        "filter_level_cache",
+        "hackett_analysis_set",
+        "regulator_display_names",
+        "dto_expanded",
     }
     assert expected <= tables, f"missing: {expected - tables}"
 
 
 def test_fixture_callingcards_row_count(built_fixture: Path) -> None:
+    # 3 regulators × 5 targets × 2 sample_ids = 30 rows in the widened fixture.
     conn = duckdb.connect(str(built_fixture), read_only=True)
     try:
         n = conn.execute("SELECT COUNT(*) FROM callingcards").fetchone()[0]
     finally:
         conn.close()
-    assert n == 12
+    assert n == 30
 
 
 def test_fixture_hackett_meta_includes_all_three_tiers(built_fixture: Path) -> None:
