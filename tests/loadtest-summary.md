@@ -60,8 +60,15 @@ the before/after diffs here.
 | `singleflight_shared_calls_total`                         | ≥ 99     | `<FILL IN>`    | `<✓/✗>` |
 | `db_query_duration_seconds_count{endpoint="binding/data"}`| == 1     | `<FILL IN>`    | `<✓/✗>` |
 | `cache_misses_total` Δ for the burst URL                  | == 1     | `<FILL IN>`    | `<✓/✗>` |
-| `cache_hits_total` Δ for the burst URL                    | ≈ 99     | `<FILL IN>`    | `<✓/✗>` |
+| `cache_hits_total` Δ for the burst URL                    | == 0     | `<FILL IN>`    | `<✓/✗>` |
 | `http_req_failed` rate                                    | == 0     | `<FILL IN>`    | `<✓/✗>` |
+
+`cache_hits_total` must NOT increase during the burst: the 99 singleflight
+waiters receive the in-flight result directly from `singleflight.Do`, and
+the loader populates the cache exactly once at the very end of its single
+SQL round-trip — none of the 100 in-burst requests go through the
+ristretto-hit path. Requests issued *after* the burst settles would be
+hits, but those are out of scope for this gate.
 
 ## Parity (§11.3.1)
 

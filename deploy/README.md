@@ -237,7 +237,9 @@ Numbers go into `tests/loadtest-summary.md` (template lives there). Spec
    - `singleflight_shared_calls_total` increased by ≥ 99
    - `db_query_duration_seconds_count{endpoint="binding/data"}` increased by exactly 1
    - `cache_misses_total` for the burst URL increased by exactly 1
-   - `cache_hits_total` for the burst URL increased by ≈ 99
+   - `cache_hits_total` for the burst URL did **not** increase
+     (singleflight waiters bypass the ristretto-hit path; the loader
+     populates the cache exactly once at the end of the burst)
 
 4. **OWASP-ish security spot-check** — see `backend/internal/api/*_test.go`
    and the security review notes in `docs/superpowers/`. On the live host:
