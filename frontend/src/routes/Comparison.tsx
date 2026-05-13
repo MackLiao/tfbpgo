@@ -7,9 +7,11 @@ import { ComparisonHeatmap } from "@/plots/ComparisonHeatmap";
 import { DTOPlot } from "@/plots/DTOPlot";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FilterChips } from "@/components/FilterChips";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export function Comparison() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const binding = (params.get("binding") ?? "").split(",").filter(Boolean);
   const perturbation = (params.get("perturbation") ?? "").split(",").filter(Boolean);
   const topN = Number(params.get("top_n") ?? 25);
@@ -41,32 +43,45 @@ export function Comparison() {
 
   return (
     <section className="space-y-4">
+      <FilterChips
+        availableDatasets={[...binding, ...perturbation]}
+        selected={{}}
+        onResolved={(tags) => {
+          const next = new URLSearchParams(params);
+          next.set("regulators", tags.slice(0, 30).join(","));
+          setParams(next);
+        }}
+      />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="topn">Top-N</TabsTrigger>
           <TabsTrigger value="dto">DTO</TabsTrigger>
         </TabsList>
         <TabsContent value="topn">
-          {!binding.length || !perturbation.length ? (
-            <p className="text-sm text-slate-600">
-              Pick at least one binding and one perturbation dataset on the Select page to
-              render the Top-N heatmap.
-            </p>
-          ) : null}
-          {topnQuery.error ? (
-            <p className="text-red-600">{(topnQuery.error as Error).message}</p>
-          ) : null}
-          {topnQuery.isPending && binding.length > 0 && perturbation.length > 0 ? (
-            <Skeleton className="h-96 w-full" />
-          ) : null}
-          {topnQuery.data ? <ComparisonHeatmap resp={topnQuery.data} /> : null}
+          <ErrorBoundary>
+            {!binding.length || !perturbation.length ? (
+              <p className="text-sm text-slate-600">
+                Pick at least one binding and one perturbation dataset on the Select page to
+                render the Top-N heatmap.
+              </p>
+            ) : null}
+            {topnQuery.error ? (
+              <p className="text-red-600">{(topnQuery.error as Error).message}</p>
+            ) : null}
+            {topnQuery.isPending && binding.length > 0 && perturbation.length > 0 ? (
+              <Skeleton className="h-96 w-full" />
+            ) : null}
+            {topnQuery.data ? <ComparisonHeatmap resp={topnQuery.data} /> : null}
+          </ErrorBoundary>
         </TabsContent>
         <TabsContent value="dto">
-          {dtoQuery.error ? (
-            <p className="text-red-600">{(dtoQuery.error as Error).message}</p>
-          ) : null}
-          {dtoQuery.isPending ? <Skeleton className="h-96 w-full" /> : null}
-          {dtoQuery.data ? <DTOPlot rows={dtoQuery.data.rows} /> : null}
+          <ErrorBoundary>
+            {dtoQuery.error ? (
+              <p className="text-red-600">{(dtoQuery.error as Error).message}</p>
+            ) : null}
+            {dtoQuery.isPending ? <Skeleton className="h-96 w-full" /> : null}
+            {dtoQuery.data ? <DTOPlot rows={dtoQuery.data.rows} /> : null}
+          </ErrorBoundary>
         </TabsContent>
       </Tabs>
     </section>
