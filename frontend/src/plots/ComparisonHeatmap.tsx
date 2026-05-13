@@ -11,11 +11,14 @@ export function ComparisonHeatmap({ resp }: ComparisonHeatmapProps) {
   const rows = resp.rows ?? [];
   const pairKeys = [...new Set(rows.map((r) => r.pairKey))].sort();
   const regs = [...new Set(rows.map((r) => r.regulatorLocusTag))].sort();
+  // Build a O(N) lookup table so the matrix fill is O(R*P) total instead of
+  // O(R*P*N) — important when topn returns hundreds of rows.
+  const cells = new Map<string, number>();
+  for (const r of rows) {
+    cells.set(`${r.regulatorLocusTag}|${r.pairKey}`, r.responsiveRatio);
+  }
   const z: (number | null)[][] = regs.map((reg) =>
-    pairKeys.map((pk) => {
-      const row = rows.find((r) => r.regulatorLocusTag === reg && r.pairKey === pk);
-      return row ? row.responsiveRatio : null;
-    }),
+    pairKeys.map((pk) => cells.get(`${reg}|${pk}`) ?? null),
   );
 
   if (regs.length === 0 || pairKeys.length === 0) {
