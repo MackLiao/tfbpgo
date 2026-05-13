@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -61,4 +62,30 @@ func TestOversizeResponseTracked(t *testing.T) {
 	big := make([]byte, 200)
 	_, _, _, _ = c.GetOrLoad(context.Background(), "k3", func() ([]byte, error) { return big, nil })
 	require.Equal(t, int64(1), c.OversizeCount())
+}
+
+// TestEvictionCounterFires forces ristretto to evict by inserting items
+// whose total cost exceeds the budget, then verifies EvictionCount > 0.
+// This locks in the OnEvict callback wiring so the cache_evictions_total
+// metric won't silently flatline if a future refactor drops it.
+func TestEvictionCounterFires(t *testing.T) {
+	c, err := New(Options{BudgetBytes: 4096})
+	require.NoError(t, err)
+
+	// Insert ~4 KiB items repeatedly. Each item's cost = len(body), so
+	// MaxCost = 4096 means we evict almost immediately on the second pass.
+	body := make([]byte, 1024)
+	for i := 0; i < 200; i++ {
+		key := fmt.Sprintf("k-%d", i)
+		_, _, _, err := c.GetOrLoad(context.Background(), key, func() ([]byte, error) {
+			return body, nil
+		})
+		require.NoError(t, err)
+	}
+	// Give ristretto's async eviction a moment to drain.
+	require.Eventually(t, func() bool {
+		return c.EvictionCount() > 0
+	}, 2*time.Second, 25*time.Millisecond,
+		"expected EvictionCount > 0 after overfilling cache, got %d",
+		c.EvictionCount())
 }

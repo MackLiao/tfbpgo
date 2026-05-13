@@ -135,7 +135,7 @@ func samplePoolStats(stop <-chan struct{}, pool *db.Pool, m *observability.Metri
 // exportCacheCounters polls the cache's atomic counters and bridges deltas
 // into the Prometheus counters. Counters are monotonic so we add (current - prev).
 func exportCacheCounters(stop <-chan struct{}, c *cache.Cache, m *observability.Metrics) {
-	var prevReject, prevOversize int64
+	var prevReject, prevOversize, prevEvict int64
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 	for {
@@ -145,11 +145,15 @@ func exportCacheCounters(stop <-chan struct{}, c *cache.Cache, m *observability.
 		case <-t.C:
 			rej := c.AdmissionRejected()
 			over := c.OversizeCount()
+			ev := c.EvictionCount()
 			if d := rej - atomic.SwapInt64(&prevReject, rej); d > 0 {
 				m.CacheReject.Add(float64(d))
 			}
 			if d := over - atomic.SwapInt64(&prevOversize, over); d > 0 {
 				m.CacheOversize.Add(float64(d))
+			}
+			if d := ev - atomic.SwapInt64(&prevEvict, ev); d > 0 {
+				m.CacheEviction.Add(float64(d))
 			}
 		}
 	}
