@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,4 +25,29 @@ func TestRespondInternalError_SanitizesBody(t *testing.T) {
 	require.JSONEq(t, `{"error":"internal error"}`, rr.Body.String())
 	require.NotContains(t, rr.Body.String(), "postgres")
 	require.NotContains(t, rr.Body.String(), "/var/run/db.sock")
+}
+
+func TestVersionedPathSetsImmutableCacheControl(t *testing.T) {
+	srv := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v/"+srv.ArtifactVersion+"/datasets", nil)
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	got := w.Header().Get("Cache-Control")
+	if !strings.Contains(got, "immutable") || !strings.Contains(got, "max-age=31536000") {
+		t.Fatalf("missing immutable Cache-Control: %q", got)
+	}
+}
+
+func TestUnversionedPathDoesNotSetImmutableCacheControl(t *testing.T) {
+	srv := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	got := w.Header().Get("Cache-Control")
+	if strings.Contains(got, "immutable") {
+		t.Fatalf("/api/version must not be immutable-cached, got: %q", got)
+	}
 }
