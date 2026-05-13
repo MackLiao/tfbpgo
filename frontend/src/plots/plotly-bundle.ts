@@ -1,4 +1,10 @@
-// Placeholder for the custom Plotly bundle. Implemented in Phase 2 Task 8.
-// The Vite config references this file as a manual chunk; the empty default
-// export is enough for Rollup to create the chunk.
-export default {};
+import Plotly from "plotly.js/lib/core";
+import scatter from "plotly.js/lib/scatter";
+import scattergl from "plotly.js/lib/scattergl";
+import heatmap from "plotly.js/lib/heatmap";
+import bar from "plotly.js/lib/bar";
+// histogram2d dropped to keep gzip under the 512 KB target (see Task 8 plan).
+// import histogram2d from "plotly.js/lib/histogram2d";
+
+Plotly.register([scatter, scattergl, heatmap, bar]);
+export default Plotly;
