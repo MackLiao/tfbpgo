@@ -1,5 +1,5 @@
 .PHONY: data-fixture data-build data-pull test test-data-prep \
-        backend-build backend-test backend-run \
+        frontend-build backend-build backend-test backend-run build \
         test-parity data-fixture-bootstrap parity-record \
         parity parity-snapshot-record \
         loadtest-profile loadtest-cold-burst
@@ -21,10 +21,19 @@ data-pull:
 test-data-prep:
 	cd data_prep && poetry run pytest
 
+# ----- frontend (Phase 2) ----------------------------------------------------
+
+frontend-build:
+	cd frontend && pnpm install --frozen-lockfile && pnpm build
+
 # ----- backend (Phase 1) -----------------------------------------------------
 
-backend-build:
+backend-build: frontend-build
 	cd backend && go build -o tfbp-server ./cmd/tfbp-server
+
+# Top-level "build everything" target: frontend assets first (embedded into
+# the Go binary via //go:embed all:dist), then the backend binary.
+build: backend-build
 
 backend-test:
 	cd backend && go test ./...
