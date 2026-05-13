@@ -47,6 +47,7 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/v/{v}", func(r chi.Router) {
 		r.Use(s.RequireArtifactVersion)
 		r.Get("/datasets", s.Datasets)
+		r.Get("/regulators/resolve", s.RegulatorsResolve)
 		r.Get("/regulators", s.Regulators)
 		r.Get("/binding", s.Binding)
 		r.Get("/perturbation", s.Perturbation)
