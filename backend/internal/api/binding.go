@@ -32,7 +32,11 @@ func (s *Server) Binding(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"regulator required"}`, http.StatusBadRequest)
 		return
 	}
-	dsList := splitCSV(q.Get("datasets"))
+	dsList, err := dedupeAndCapCSV("datasets", splitCSV(q.Get("datasets")), len(s.Whitelist.AllDatasets()))
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
 	for _, name := range dsList {
 		if err := s.Whitelist.CheckDataset(name); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
@@ -45,7 +49,12 @@ func (s *Server) Binding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filters, err := parseFilters(q.Get("filters"))
+	rawFilters := q.Get("filters")
+	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	filters, err := parseFilters(rawFilters)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return

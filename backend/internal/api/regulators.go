@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,7 +14,11 @@ import (
 
 func (s *Server) Regulators(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	search := q.Get("search")
+	search, err := trimAndCapSearch(q.Get("search"))
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 100 {
 		limit = 25

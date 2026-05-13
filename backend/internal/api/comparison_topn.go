@@ -60,41 +60,55 @@ var pertConfigs = map[string]pertConfig{
 
 func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	bindingDS := splitCSV(q.Get("binding"))
-	pertDS := splitCSV(q.Get("perturbation"))
+	maxDS := len(s.Whitelist.AllDatasets())
+	bindingDS, err := dedupeAndCapCSV("binding", splitCSV(q.Get("binding")), maxDS)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	pertDS, err := dedupeAndCapCSV("perturbation", splitCSV(q.Get("perturbation")), maxDS)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	for _, n := range append(append([]string{}, bindingDS...), pertDS...) {
 		if err := s.Whitelist.CheckDataset(n); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
 	// Validate dataset is configured for topn (binding vs perturbation map).
 	for _, b := range bindingDS {
 		if _, ok := bindingConfigs[b]; !ok {
-			http.Error(w, fmt.Sprintf("no binding config for %q", b), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("no binding config for %q", b))
 			return
 		}
 	}
 	for _, p := range pertDS {
 		if _, ok := pertConfigs[p]; !ok {
-			http.Error(w, fmt.Sprintf("no perturbation config for %q", p), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("no perturbation config for %q", p))
 			return
 		}
 	}
 
-	topN := atoiOr(q.Get("top_n"), 25)
+	topN := clampTopN(q.Get("top_n"), 25)
 	effectThr, _ := strconv.ParseFloat(orDefault(q.Get("effect"), "0.0"), 64)
 	pvalThr, _ := strconv.ParseFloat(orDefault(q.Get("pvalue"), "0.05"), 64)
 
-	filters, err := parseFilters(q.Get("filters"))
+	rawFilters := q.Get("filters")
+	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filters, err := parseFilters(rawFilters)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	for ds, fs := range filters {
 		for fld := range fs {
 			if err := s.Whitelist.CheckField(ds, fld); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}
