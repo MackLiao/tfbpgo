@@ -80,6 +80,51 @@ func TestComparisonTopN_PlaceholderCountInvariant_RegressionPair(t *testing.T) {
 
 // TestComparisonTopN_PlaceholderCountInvariant_AllPairs sanity-checks every
 // supported binding × perturbation combination (4 × 6 = 24 pairs).
+// TestComparisonTopN_HarbisonAppliesFilters pins the H2 fix: when the
+// dedup branch fires for harbison, user-supplied filter values must still
+// surface as positional args in the rendered SQL, matching the
+// non-harbison branch. Before the fix, filters[harbison] was silently
+// dropped.
+func TestComparisonTopN_HarbisonAppliesFilters(t *testing.T) {
+	tmpl := queries.Get("comparison/topn.sql")
+	srv := &Server{}
+	bcfg := bindingConfigs["harbison"]
+	pcfg := pertConfigs["kemmeren"]
+
+	filters := domain.FiltersByDB{
+		"harbison": map[string]domain.FilterSpec{
+			"pvalue": {Type: "numeric", Value: []byte(`[0, 0.01]`)},
+		},
+	}
+	rendered, args, err := srv.buildOnePair(
+		tmpl, "harbison", "kemmeren", bcfg, pcfg,
+		25, 0.0, 0.05, filters,
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, args)
+	// The filter `pvalue BETWEEN 0 AND 0.01` injects two numeric args
+	// (the GtOrEq lower bound and the LtOrEq upper bound) inside the
+	// harbison dedup CTE.
+	require.True(t,
+		strings.Contains(rendered, `"pvalue"`),
+		"rendered SQL must reference pvalue from filters: %s", rendered)
+	got := strings.Count(stripSQLComments(rendered), "?")
+	require.Equal(t, len(args), got,
+		"args count must match placeholders after H2 fix")
+}
+
+// TestBuildSquirrelWhereRaw_RejectsUnknownType pins the H3 fix: an
+// unknown filter spec.Type used to silently produce an empty WHERE
+// clause (dropping the user-requested filter). It now returns an error.
+func TestBuildSquirrelWhereRaw_RejectsUnknownType(t *testing.T) {
+	fs := map[string]domain.FilterSpec{
+		"some_field": {Type: "bogus", Value: []byte(`"x"`)},
+	}
+	_, _, err := buildSquirrelWhereRaw(fs)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bogus")
+}
+
 func TestComparisonTopN_PlaceholderCountInvariant_AllPairs(t *testing.T) {
 	tmpl := queries.Get("comparison/topn.sql")
 	srv := &Server{}

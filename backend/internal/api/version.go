@@ -7,7 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func (s *Server) Version(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	body, err := jsonMarshal(domain.VersionInfo{
@@ -17,7 +17,7 @@ func (s *Server) Version(w http.ResponseWriter, _ *http.Request) {
 		DuckDBVersion:   s.Manifests.Artifact.DuckDBVersion,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondInternalError(w, r, err)
 		return
 	}
 	_, _ = w.Write(body)
@@ -27,8 +27,11 @@ func (s *Server) RequireArtifactVersion(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v := chi.URLParam(r, "v")
 		if v != s.Manifests.Artifact.ArtifactVersion {
+			// 410 Gone signals "the version-pinned URL is permanently
+			// unavailable; refetch /api/version". Location is advisory —
+			// HTTP doesn't honor it on 410 but clients can read it.
 			w.Header().Set("Location", "/api/version")
-			http.Error(w, "stale artifact version", http.StatusGone)
+			writeJSONError(w, http.StatusGone, "stale artifact version")
 			return
 		}
 		next.ServeHTTP(w, r)

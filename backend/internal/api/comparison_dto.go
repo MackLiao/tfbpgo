@@ -13,7 +13,10 @@ import (
 )
 
 func (s *Server) ComparisonDTO(w http.ResponseWriter, r *http.Request) {
-	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, r.URL.Query())
+	// /comparison/dto takes no inputs that affect the response shape, so
+	// the canonical key has no query component. Any extra query params an
+	// attacker sends are ignored by the cache key.
+	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, nil)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
 		ctx, cancel := context.WithTimeout(r.Context(), db.QueryTimeout)
 		defer cancel()

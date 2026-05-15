@@ -34,12 +34,28 @@ async function boot() {
 boot().catch((err: unknown) => {
   // Surface a visible error instead of leaving a blank page when the initial
   // /api/version call fails (network down, backend not responding, etc.).
+  // Build the DOM via createElement + textContent so an error message that
+  // ever ends up attacker-controllable (regressions in /api/version) cannot
+  // become a reflected-XSS sink. innerHTML is intentionally NOT used here.
   const root = document.getElementById("root");
   if (!root) return;
   const message = err instanceof Error ? err.message : String(err);
-  root.innerHTML = `<div style="padding:2rem;font-family:system-ui;color:#a00">
-    <h1>Failed to load TFBPShiny</h1>
-    <p>Could not reach /api/version. Try refreshing in a moment.</p>
-    <pre style="white-space:pre-wrap;font-size:0.85em">${message}</pre>
-  </div>`;
+
+  const container = document.createElement("div");
+  container.style.cssText = "padding:2rem;font-family:system-ui;color:#a00";
+
+  const h1 = document.createElement("h1");
+  h1.textContent = "Failed to load TFBPShiny";
+  container.appendChild(h1);
+
+  const p = document.createElement("p");
+  p.textContent = "Could not reach /api/version. Try refreshing in a moment.";
+  container.appendChild(p);
+
+  const pre = document.createElement("pre");
+  pre.style.cssText = "white-space:pre-wrap;font-size:0.85em";
+  pre.textContent = message;
+  container.appendChild(pre);
+
+  root.replaceChildren(container);
 });

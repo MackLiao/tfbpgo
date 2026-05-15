@@ -17,9 +17,15 @@ type Metrics struct {
 	HTTPResponseSize *prometheus.HistogramVec
 
 	DBDuration  *prometheus.HistogramVec
-	DBPoolWait  prometheus.Histogram
-	DBPoolOpen  prometheus.Gauge
-	DBPoolInUse prometheus.Gauge
+	// DBPoolWait observes the per-5s-tick MEAN wait duration. This is a
+	// distribution-of-means and its quantiles are NOT per-acquire p95/p99.
+	// Use the DBPoolWaitDurationSecondsTotal / DBPoolWaitCount counter
+	// pair for true rate-of-contention alerting.
+	DBPoolWait                     prometheus.Histogram
+	DBPoolWaitDurationSecondsTotal prometheus.Counter
+	DBPoolWaitCount                prometheus.Counter
+	DBPoolOpen                     prometheus.Gauge
+	DBPoolInUse                    prometheus.Gauge
 
 	CacheHits     *prometheus.CounterVec
 	CacheMisses   *prometheus.CounterVec
@@ -58,8 +64,16 @@ func New() *Metrics {
 		}, []string{"query_name"}),
 		DBPoolWait: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "db_pool_wait_duration_seconds",
-			Help:    "Time spent waiting for a free DB connection.",
+			Help:    "Per-5s-tick mean DB-pool wait duration (NOT a per-acquire latency distribution; quantiles are distribution-of-means). Retained for backwards compatibility; alert on db_pool_wait_duration_seconds_total / db_pool_wait_count_total instead. Scheduled for removal once dashboards have migrated.",
 			Buckets: prometheus.DefBuckets,
+		}),
+		DBPoolWaitDurationSecondsTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "db_pool_wait_duration_seconds_total",
+			Help: "Cumulative seconds spent waiting for a free DB connection. Mirrors sql.DBStats.WaitDuration; use with db_pool_wait_count_total for mean wait per acquire.",
+		}),
+		DBPoolWaitCount: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "db_pool_wait_count_total",
+			Help: "Cumulative number of pool waits. Mirrors sql.DBStats.WaitCount.",
 		}),
 		DBPoolOpen: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "db_pool_open_connections",
@@ -101,7 +115,9 @@ func New() *Metrics {
 
 	reg.MustRegister(
 		m.HTTPDuration, m.HTTPRequestSize, m.HTTPResponseSize,
-		m.DBDuration, m.DBPoolWait, m.DBPoolOpen, m.DBPoolInUse,
+		m.DBDuration, m.DBPoolWait,
+		m.DBPoolWaitDurationSecondsTotal, m.DBPoolWaitCount,
+		m.DBPoolOpen, m.DBPoolInUse,
 		m.CacheHits, m.CacheMisses, m.SFShared,
 		m.CacheReject, m.CacheOversize, m.CacheEviction,
 		m.ArtifactInfo,

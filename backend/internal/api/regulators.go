@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -16,14 +15,18 @@ func (s *Server) Regulators(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	search, err := trimAndCapSearch(q.Get("search"))
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, r.URL.Query())
+	canon := canonValues(map[string]any{
+		"search": search,
+		"limit":  limit,
+	})
+	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
 		ctx, cancel := contextWithDB(r.Context(), db.QueryTimeout)
 		defer cancel()

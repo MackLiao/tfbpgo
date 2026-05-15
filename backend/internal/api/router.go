@@ -41,6 +41,7 @@ func (s *Server) Routes() http.Handler {
 	})
 	r.Use(middleware.Compress(5))
 	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(RequestGuard)
 	r.Use(RequestLogger(s.ArtifactVersion, s.Metrics))
 
 	r.Get("/healthz", s.Healthz)
@@ -70,7 +71,7 @@ func (s *Server) Routes() http.Handler {
 		fileServer := http.FileServer(http.FS(s.StaticFS))
 		r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Method != http.MethodGet && req.Method != http.MethodHead {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
 			p := strings.TrimPrefix(req.URL.Path, "/")
@@ -80,7 +81,7 @@ func (s *Server) Routes() http.Handler {
 			// reaches the fallback is by definition a 404.
 			for _, prefix := range []string{"api/", "healthz", "readyz", "metrics", "_ref/"} {
 				if p == prefix || strings.HasPrefix(p, prefix) {
-					http.Error(w, "not found", http.StatusNotFound)
+					writeJSONError(w, http.StatusNotFound, "not found")
 					return
 				}
 			}

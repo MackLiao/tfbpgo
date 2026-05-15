@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -24,24 +25,28 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
+	if err := run(); err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
-		slog.Error("config_load_failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("config_load_failed: %w", err)
 	}
 
 	pool, err := db.Open(db.Options{Path: cfg.DuckDBPath, TempDir: cfg.TempDir})
 	if err != nil {
-		slog.Error("startup_failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("startup_failed (db.Open): %w", err)
 	}
 	defer pool.Close()
 
 	startupCtx := context.Background()
 	report, err := db.RunStartupChecks(startupCtx, pool, db.MinSchemaVersion, db.MaxSchemaVersion)
 	if err != nil {
-		slog.Error("startup_failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("startup_failed (RunStartupChecks): %w", err)
 	}
 	slog.Info("startup_ok",
 		"artifact_version", report.Manifests.Artifact.ArtifactVersion,
@@ -57,8 +62,7 @@ func main() {
 	}
 	c, err := cache.New(cache.Options{BudgetBytes: cacheBudget})
 	if err != nil {
-		slog.Error("cache_init_failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("cache_init_failed: %w", err)
 	}
 	defer c.Close()
 
@@ -71,8 +75,15 @@ func main() {
 
 	wl, err := db.NewWhitelist(report.Manifests)
 	if err != nil {
-		slog.Error("startup_failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("startup_failed (NewWhitelist): %w", err)
+	}
+
+	// Fail-fast tripwire: catch drift between dataset_manifest and the
+	// handler-side measurement-column / config maps. Without this, a
+	// newly-added dataset that ships in the artifact ahead of a binary
+	// rebuild surfaces only as a 500 on the affected endpoint.
+	if err := api.AssertHandlerMapsCoverManifest(report.Manifests); err != nil {
+		return fmt.Errorf("startup_failed (handler maps): %w", err)
 	}
 
 	srv := &api.Server{
@@ -86,15 +97,17 @@ func main() {
 	}
 	r := srv.Routes()
 
-	// Background pool-stats sampler.
+	// Background goroutines share one stop channel; main joins via WaitGroup
+	// so neither sampler is still touching pool/cache when Close() runs.
 	stop := make(chan struct{})
-	go samplePoolStats(stop, pool, metrics)
-	defer close(stop)
-
-	// Background cache-counter exporter (snapshot deltas).
-	stopCache := make(chan struct{})
-	go exportCacheCounters(stopCache, c, metrics)
-	defer close(stopCache)
+	var bgWG sync.WaitGroup
+	bgWG.Add(2)
+	go func() { defer bgWG.Done(); samplePoolStats(stop, pool, metrics) }()
+	go func() { defer bgWG.Done(); exportCacheCounters(stop, c, metrics) }()
+	defer func() {
+		close(stop)
+		bgWG.Wait()
+	}()
 
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -109,18 +122,33 @@ func main() {
 	ctx, sigStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer sigStop()
 
+	// Forward a fatal listener error back to main via a buffered channel.
+	// os.Exit from a goroutine would skip the deferred Close()s and leave
+	// the named volume / temp dir in an unknown state.
+	listenErr := make(chan error, 1)
 	go func() {
 		slog.Info("startup_listen", "addr", httpSrv.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("listen_failed", "err", err)
-			os.Exit(1)
+			listenErr <- err
 		}
+		close(listenErr)
 	}()
 
-	<-ctx.Done()
+	var serveErr error
+	select {
+	case <-ctx.Done():
+		// Signal-driven shutdown — normal path.
+	case err, ok := <-listenErr:
+		if ok && err != nil {
+			serveErr = err
+		}
+	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
+
+	return serveErr
 }
 
 func samplePoolStats(stop <-chan struct{}, pool *db.Pool, m *observability.Metrics) {
@@ -136,13 +164,22 @@ func samplePoolStats(stop <-chan struct{}, pool *db.Pool, m *observability.Metri
 			st := pool.DB.Stats()
 			m.DBPoolOpen.Set(float64(st.OpenConnections))
 			m.DBPoolInUse.Set(float64(st.InUse))
-			// Observe per-tick mean wait time derived from cumulative
-			// WaitDuration / WaitCount deltas. database/sql exposes only
-			// monotonic totals, so the per-tick average is the closest
-			// proxy to per-acquire wait latency we can produce here.
 			waitDelta := st.WaitDuration - prevWait
 			countDelta := st.WaitCount - prevCount
+			// Always advance the counter pair so operators can compute a
+			// true rate-of-contention via
+			//   rate(db_pool_wait_duration_seconds_total[5m])
+			//   / rate(db_pool_wait_count_total[5m])
+			// without depending on the per-tick mean histogram below.
 			if countDelta > 0 {
+				m.DBPoolWaitCount.Add(float64(countDelta))
+				m.DBPoolWaitDurationSecondsTotal.Add(waitDelta.Seconds())
+				// The histogram observes the per-tick mean wait. This is
+				// NOT a true per-acquire latency distribution (database/sql
+				// exposes only monotonic totals), so its quantiles are the
+				// distribution of per-5s-tick means. Keep alongside the
+				// counters above for backwards compatibility; alerts
+				// should use the counters.
 				avgWait := waitDelta.Seconds() / float64(countDelta)
 				m.DBPoolWait.Observe(avgWait)
 			}

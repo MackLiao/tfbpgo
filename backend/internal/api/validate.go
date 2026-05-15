@@ -12,9 +12,12 @@ const (
 	MaxFiltersBytes = 16 * 1024
 	// MaxSearchChars caps the `?search=` parameter for /regulators.
 	MaxSearchChars = 64
-	// TopNMin / TopNMax bound the user-supplied `?top_n=` value.
+	// TopNMin / TopNMax bound the user-supplied `?top_n=` value. 1000 is
+	// the upper bound for any reasonable UI — heatmaps lose readability
+	// well before then. The cap is also a DoS guard: each row produced
+	// here is a row materialized into the per-pair CTE.
 	TopNMin = 1
-	TopNMax = 10000
+	TopNMax = 1000
 )
 
 // validateLength returns a 400-ready error when val exceeds max bytes.

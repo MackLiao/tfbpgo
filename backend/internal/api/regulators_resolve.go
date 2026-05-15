@@ -153,10 +153,10 @@ func (s *Server) buildResolveResponse(ctx context.Context, datasets, explicit []
 		for _, d := range datasets[1:] {
 			fmt.Fprintf(&chain,
 				"INTERSECT SELECT DISTINCT regulator_locus_tag FROM %s_meta\n",
-				quoteIdent(d))
+				whitelistedIdent(d))
 		}
 		sqlStr := strings.NewReplacer(
-			"{{first_table}}", quoteIdent(first),
+			"{{first_table}}", whitelistedIdent(first),
 			"{{intersect_chain}}", chain.String(),
 		).Replace(tmpl)
 

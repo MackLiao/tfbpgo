@@ -19,6 +19,36 @@ on `legacy.tfbindingandperturbation.com` for a 30-day grace period.
 - Rollback
 - Cutover gate checklist
 - Legacy Shiny grace period (Task 13)
+- Operating contract (single replica, schema upgrades)
+
+---
+
+## Operating contract (read first)
+
+The Go service is designed to run as **exactly one replica** today.
+
+- The `/api/v/{v}/*` middleware accepts only the artifact version currently
+  loaded by the running binary. A mismatched `{v}` returns `410 Gone`. There
+  is no acceptable-versions list. Multi-replica deploys with staggered
+  artifact pushes would flap clients between replicas → don't run more than
+  one tfbp container against the same Traefik route until this constraint
+  is relaxed.
+- During an artifact rollover, every open SPA tab will observe a brief
+  window of `410 Gone` responses, then auto-reload. Clients reload at most
+  twice (see `frontend/src/api/client.ts`); the third stale response surfaces
+  an error rather than looping. Plan rollovers for low-traffic windows.
+- The binary's compatible schema range is `[MinSchemaVersion,
+  MaxSchemaVersion]` in `backend/internal/db/startup.go` — today both are
+  `2`. When `schema_version=3` ships (post-cutover Phase 1.6), the migration
+  path is:
+  1. Ship a v=3-aware binary with `Min=2, Max=3` so it reads both. Roll
+     the binary first.
+  2. Publish + load the v=3 artifact. The binary picks it up.
+  3. (Later) ship a v=3-only binary with `Min=3, Max=3` to drop the v=2
+     path. This step is optional and only when v=2 is permanently retired.
+  Updating only `TAG` while the artifact is still v=2, or only
+  `ARTIFACT_KEY` while the binary is still v=2-only, refuses to start
+  (see Rollback ▸ Bad image). The fail-fast is intentional.
 
 ---
 
@@ -228,7 +258,11 @@ Numbers go into `tests/loadtest-summary.md` (template lives there). Spec
    - `http_req_failed` rate == 0
    - Peak RSS < 1.5 GB
    - `cache_hit_ratio` (popular segment) > 0.85
-   - `db_pool_wait_duration_seconds` p95 < 100 ms
+   - Pool contention: `rate(db_pool_wait_duration_seconds_total[5m]) /
+     rate(db_pool_wait_count_total[5m])` < 0.05 (mean wait per acquire
+     below 50 ms). The legacy `db_pool_wait_duration_seconds` histogram
+     observes per-5s-tick MEAN wait and its quantiles are NOT per-acquire
+     p95 — alert on the counter pair instead.
    - 0 OOM kills (`dmesg | grep -i killed`)
 
 3. **Cold-burst gate** — restart the container so the cache is empty, then run

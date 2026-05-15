@@ -27,46 +27,56 @@ func (s *Server) Perturbation(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	regulator := q.Get("regulator")
 	if regulator == "" {
-		http.Error(w, `{"error":"regulator required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "regulator required")
 		return
 	}
 	dsList, err := dedupeAndCapCSV("datasets", splitCSV(q.Get("datasets")), len(s.Whitelist.AllDatasets()))
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	for _, name := range dsList {
 		if err := s.Whitelist.CheckDataset(name); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		row, _ := s.Whitelist.Dataset(name)
 		if row.DataType != "perturbation" {
-			http.Error(w, fmt.Sprintf(`{"error":"dataset %q is not perturbation"}`, name), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("dataset %q is not perturbation", name))
 			return
 		}
 	}
 
 	rawFilters := q.Get("filters")
 	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	filters, err := parseFilters(rawFilters)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	for dbName, fs := range filters {
 		for fld := range fs {
 			if err := s.Whitelist.CheckField(dbName, fld); err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}
 	}
 
-	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, r.URL.Query())
+	canonFilters := ""
+	if filters != nil {
+		b, _ := json.Marshal(filters)
+		canonFilters = string(b)
+	}
+	canon := canonValues(map[string]any{
+		"regulator": regulator,
+		"datasets":  dsList,
+		"filters":   canonFilters,
+	})
+	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
 		return s.buildPerturbationResponse(r.Context(), regulator, dsList, filters)
 	})
@@ -88,8 +98,8 @@ func (s *Server) buildPerturbationResponse(ctx context.Context, reg string, data
 			return nil, err
 		}
 		sqlStr := strings.NewReplacer(
-			"{{table}}", quoteIdent(ds),
-			"{{col}}", quoteIdent(col),
+			"{{table}}", whitelistedIdent(ds),
+			"{{col}}", whitelistedIdent(col),
 			"{{extra_where}}", extraWhere,
 		).Replace(tmpl)
 

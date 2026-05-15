@@ -20,17 +20,22 @@ import (
 // CCTargetBlacklist mirrors the Python constant CC_TARGET_BLACKLIST.
 var CCTargetBlacklist = []string{"YOR201C", "YOR202W", "YOR203W", "YCL018W", "YEL021W"}
 
-// HarbisonDedupCTE is the special-case binding CTE for harbison.
-const HarbisonDedupCTE = `
+// harbisonDedupCTE builds the special-case binding CTE for harbison. An
+// optional `extraWhere` (already prefixed with " AND " when non-empty) is
+// appended inside the WHERE clause so user-supplied filters apply to the
+// dedup step as well — symmetric with the non-harbison branch.
+func harbisonDedupCTE(extraWhere string) string {
+	return `
 SELECT
     CAST(sample_id AS VARCHAR) AS binding_sample_id,
     regulator_locus_tag,
     target_locus_tag,
     MIN(pvalue) AS pvalue
 FROM harbison
-WHERE condition = 'YPD'
+WHERE condition = 'YPD'` + extraWhere + `
 GROUP BY sample_id, regulator_locus_tag, target_locus_tag
 `
+}
 
 type bindingConfig struct {
 	SampleCol     string
@@ -92,8 +97,16 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 	}
 
 	topN := clampTopN(q.Get("top_n"), 25)
-	effectThr, _ := strconv.ParseFloat(orDefault(q.Get("effect"), "0.0"), 64)
-	pvalThr, _ := strconv.ParseFloat(orDefault(q.Get("pvalue"), "0.05"), 64)
+	effectThr, err := strconv.ParseFloat(orDefault(q.Get("effect"), "0.0"), 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("effect: %v", err))
+		return
+	}
+	pvalThr, err := strconv.ParseFloat(orDefault(q.Get("pvalue"), "0.05"), 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("pvalue: %v", err))
+		return
+	}
 
 	rawFilters := q.Get("filters")
 	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
@@ -114,7 +127,20 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, q)
+	canonFilters := ""
+	if filters != nil {
+		b, _ := json.Marshal(filters)
+		canonFilters = string(b)
+	}
+	canon := canonValues(map[string]any{
+		"binding":      bindingDS,
+		"perturbation": pertDS,
+		"top_n":        topN,
+		"effect":       effectThr,
+		"pvalue":       pvalThr,
+		"filters":      canonFilters,
+	})
+	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
 		return s.buildTopNResponse(r.Context(), bindingDS, pertDS, topN, effectThr, pvalThr, filters)
 	})
@@ -184,7 +210,19 @@ func (s *Server) buildOnePair(
 	// binding CTE body
 	var bindingCTE string
 	if bcfg.HarbisonDedup {
-		bindingCTE = HarbisonDedupCTE
+		// Apply user-supplied filters to the dedup CTE so filters[harbison]
+		// is honored — silently dropping them in this branch produced a
+		// parity divergence vs. binding/data.sql.
+		bWhere, bArgs, err := buildSquirrelWhereRaw(filters[bDB])
+		if err != nil {
+			return "", nil, err
+		}
+		extra := ""
+		if bWhere != "" {
+			extra = " AND " + bWhere
+			args = append(args, bArgs...)
+		}
+		bindingCTE = harbisonDedupCTE(extra)
 	} else {
 		extra := []string{}
 		if bcfg.TargetBlackOK && len(CCTargetBlacklist) > 0 {
@@ -209,7 +247,7 @@ func (s *Server) buildOnePair(
 		}
 		bindingCTE = fmt.Sprintf(
 			"SELECT CAST(%s AS VARCHAR) AS binding_sample_id, regulator_locus_tag, target_locus_tag, %s FROM %s %s",
-			bcfg.SampleCol, bcfg.RankCol, bDB, whereStr,
+			whitelistedIdent(bcfg.SampleCol), whitelistedIdent(bcfg.RankCol), whitelistedIdent(bDB), whereStr,
 		)
 	}
 
@@ -250,9 +288,9 @@ func (s *Server) buildOnePair(
 	pairKey := bDB + "__" + pDB
 	out := strings.NewReplacer(
 		"{{binding_cte_body}}", bindingCTE,
-		"{{rank_col}}", bcfg.RankCol,
+		"{{rank_col}}", whitelistedIdent(bcfg.RankCol),
 		"{{rank_dir}}", rankDir,
-		"{{perturbation_view}}", pDB,
+		"{{perturbation_view}}", whitelistedIdent(pDB),
 		"{{responsive_expr}}", respExpr,
 		"{{pert_join}}", pertJoin,
 		"{{pert_filter_where}}", pertWhereStr,
@@ -310,6 +348,8 @@ func buildSquirrelWhereRaw(fs map[string]domain.FilterSpec) (string, []any, erro
 				return "", nil, err
 			}
 			and = append(and, sq.Eq{`"` + field + `"`: b})
+		default:
+			return "", nil, fmt.Errorf("filter %q: unknown type %q", field, spec.Type)
 		}
 	}
 	return and.ToSql()

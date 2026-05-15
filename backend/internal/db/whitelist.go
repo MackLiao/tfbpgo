@@ -5,12 +5,20 @@ import (
 	"regexp"
 )
 
-// safeIdent matches conservative SQL identifier shape: an ASCII letter or
-// underscore followed by alphanumerics or underscores. This is the same
-// shape the upstream artifact pipeline guarantees; we re-verify here so a
-// hand-edited DuckDB file fails fast instead of leaking past the whitelist
-// at runtime.
-var safeIdent = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// SafeIdentRE matches conservative SQL identifier shape: an ASCII letter
+// or underscore followed by alphanumerics or underscores. This is the
+// same shape the upstream artifact pipeline guarantees. The pattern is
+// load-bearing at two boundaries:
+//
+//  1. Manifest gate (NewWhitelist): runs once at startup; rejects an
+//     artifact whose dataset_manifest / field_manifest contains an
+//     identifier that doesn't match. Catches a hand-edited DuckDB file.
+//  2. SQL-interpolation tripwire (api.whitelistedIdent): runs per
+//     request; rejects an identifier that bypassed (1) somehow. Catches
+//     a future handler regression.
+//
+// Both call sites consult this one regexp so the pattern can't drift.
+var SafeIdentRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Whitelist verifies dataset and field identifiers against the manifests
 // loaded at startup. The Go service MUST call CheckDataset / CheckField on
@@ -26,12 +34,12 @@ type Whitelist struct {
 // instead of becoming a runtime SQL-injection vector.
 func NewWhitelist(m *Manifests) (*Whitelist, error) {
 	for _, d := range m.Datasets {
-		if !safeIdent.MatchString(d.DBName) {
+		if !SafeIdentRE.MatchString(d.DBName) {
 			return nil, fmt.Errorf("manifest contains unsafe db_name: %q", d.DBName)
 		}
 	}
 	for _, f := range m.Fields {
-		if !safeIdent.MatchString(f.DBName) || !safeIdent.MatchString(f.Field) {
+		if !SafeIdentRE.MatchString(f.DBName) || !SafeIdentRE.MatchString(f.Field) {
 			return nil, fmt.Errorf("manifest contains unsafe field: %q.%q", f.DBName, f.Field)
 		}
 	}

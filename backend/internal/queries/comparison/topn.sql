@@ -1,9 +1,8 @@
 -- comparison/topn.sql
--- Per-pair template. The Go-side builder substitutes:
---   {{binding_cte_body}}, {{rank_col}}, {{rank_dir}}
---   {{perturbation_view}}, {{responsive_expr}}
---   {{pert_join}}, {{pert_filter_where}}
---   {{pair_key}}
+-- Per-pair template. See backend/internal/api/comparison_topn.go for the
+-- list of substitution placeholders (intentionally not named here — they
+-- would otherwise be replaced by strings.NewReplacer, which would spill
+-- multi-line CTE bodies into the comment block and produce invalid SQL).
 -- Bind parameters are passed positionally and assembled by Squirrel.
 
 WITH binding AS (

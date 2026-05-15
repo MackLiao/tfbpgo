@@ -29,46 +29,62 @@ func (s *Server) Binding(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	regulator := q.Get("regulator")
 	if regulator == "" {
-		http.Error(w, `{"error":"regulator required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "regulator required")
 		return
 	}
 	dsList, err := dedupeAndCapCSV("datasets", splitCSV(q.Get("datasets")), len(s.Whitelist.AllDatasets()))
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	for _, name := range dsList {
 		if err := s.Whitelist.CheckDataset(name); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		row, _ := s.Whitelist.Dataset(name)
 		if row.DataType != "binding" {
-			http.Error(w, fmt.Sprintf(`{"error":"dataset %q is not binding"}`, name), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("dataset %q is not binding", name))
 			return
 		}
 	}
 
 	rawFilters := q.Get("filters")
 	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	filters, err := parseFilters(rawFilters)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	for dbName, fs := range filters {
 		for fld := range fs {
 			if err := s.Whitelist.CheckField(dbName, fld); err != nil {
-				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}
 	}
 
-	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, r.URL.Query())
+	// Canonicalize the cache key from only the inputs that drive the
+	// response, post-validation. This prevents cache fragmentation from
+	// param ordering (datasets=A,B vs B,A) and blocks junk-key fuzzing.
+	canonFilters := ""
+	if filters != nil {
+		// Re-marshal so semantically equal filter JSON with different key
+		// orderings hashes to the same cache key — Go's encoding/json
+		// emits map keys sorted.
+		b, _ := json.Marshal(filters)
+		canonFilters = string(b)
+	}
+	canon := canonValues(map[string]any{
+		"regulator": regulator,
+		"datasets":  dsList,
+		"filters":   canonFilters,
+	})
+	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
 		return s.buildBindingResponse(r.Context(), regulator, dsList, filters)
 	})
@@ -90,8 +106,8 @@ func (s *Server) buildBindingResponse(ctx context.Context, reg string, datasets 
 			return nil, err
 		}
 		sqlStr := strings.NewReplacer(
-			"{{table}}", quoteIdent(ds),
-			"{{col}}", quoteIdent(col),
+			"{{table}}", whitelistedIdent(ds),
+			"{{col}}", whitelistedIdent(col),
 			"{{extra_where}}", extraWhere,
 		).Replace(tmpl)
 
@@ -113,8 +129,6 @@ func (s *Server) buildBindingResponse(ctx context.Context, reg string, datasets 
 	return json.Marshal(resp)
 }
 
-// quoteIdent does NOT escape — caller MUST have already whitelisted.
-func quoteIdent(s string) string { return s }
 
 func buildSquirrelWhere(fs map[string]domain.FilterSpec) (string, []any, error) {
 	if len(fs) == 0 {
@@ -170,6 +184,16 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// validFilterTypes is the closed set of legal FilterSpec.Type values. Any
+// other value at parse time is a client-side malformed request and must
+// surface as a 400 — never reach the SQL builder where it would otherwise
+// surface as a 500 from the cache loader.
+var validFilterTypes = map[string]struct{}{
+	"categorical": {},
+	"numeric":     {},
+	"bool":        {},
+}
+
 func parseFilters(raw string) (domain.FiltersByDB, error) {
 	if raw == "" {
 		return nil, nil
@@ -177,6 +201,13 @@ func parseFilters(raw string) (domain.FiltersByDB, error) {
 	var out domain.FiltersByDB
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, fmt.Errorf("filters: %w", err)
+	}
+	for ds, fields := range out {
+		for fld, spec := range fields {
+			if _, ok := validFilterTypes[spec.Type]; !ok {
+				return nil, fmt.Errorf("filters[%s][%s]: unknown type %q", ds, fld, spec.Type)
+			}
+		}
 	}
 	return out, nil
 }
