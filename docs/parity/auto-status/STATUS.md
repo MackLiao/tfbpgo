@@ -190,5 +190,5 @@ Read before working, append a section before finishing.
 - Remaining items deferred to polish.md.
 - Tests: backend go test ./... -race ✓, parity ✓ (operator step; harness
   green at A5 commit 292aaac, no parity-affecting changes in this commit).
-- Commit: <SHA>
+- Commit: 6f167e6
 - Status: A5 multi-review fixes DONE.
