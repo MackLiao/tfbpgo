@@ -41,6 +41,16 @@ unless they cause downstream breakage.
 - **Cache canonicalization test fidelity** (go-reviewer NICE-TO-HAVE).
   `TestBindingScatter_CacheCanonicalization` re-issues an identical request;
   it tests HIT but not canonicalization. Re-write to permute param order.
+## From A6 (commit pending — Plotly bundle)
+
+- **Bundle size at 523 KB gzipped** (was 512 KB target). Adding the `box`
+  trace took us 11 KB over. Three options once Phase B is done:
+  1. Drop `bar` from the bundle (only used by the existing comparison
+     heatmap; the new boxplot from B1 should not need it).
+  2. Drop `heatmap` after B1 replaces ComparisonHeatmap with the boxplot.
+  3. Increase the documented target to ~530 KB. The 512 KB number was a
+     soft heuristic, not a load-time budget. Document and move on.
+
 - **A3 scatter parity golden URLs need snapshots recorded** (fix-up note).
   Four new entries added to `tests/parity/golden_urls.txt` for
   `/binding/scatter` and `/perturbation/scatter` (pearson + spearman).

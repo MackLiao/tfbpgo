@@ -18,7 +18,7 @@ Read before working, append a section before finishing.
 | A3  | correlation endpoints                      | DONE        | 218bf3c + multi-review fixes; polish notes in [polish.md](polish.md) |
 | A4  | Comparison hackett filter parity fix       | DONE        | independent |
 | A5  | Select Datasets backend endpoints          | PENDING     | depends on A1 |
-| A6  | Plotly bundle: register box trace          | PENDING     | independent |
+| A6  | Plotly bundle: register box trace          | DONE        | bundle now 523 KB gzip (11 KB over the 512 KB soft target); see [polish.md](polish.md) |
 | B1  | Comparison module rebuild                  | PENDING     | depends on A4+A6 |
 | B2  | Binding module rebuild                     | PENDING     | depends on A2+A3+A6 |
 | B3  | Perturbation module rebuild                | PENDING     | depends on A2+A3+A6 |
@@ -130,6 +130,14 @@ Read before working, append a section before finishing.
   parity (run_parity.sh diff) ✓, frontend tsc --noEmit ✓.
 - Commit: 3a3e940
 - Status: DONE.
+
+### 2026-05-22 — controller A6 (Plotly box trace)
+- Added `box` to `frontend/src/plots/plotly-bundle.ts` (single-line patch).
+- Bundle measured at 523 KB gzipped (was 512 KB; the audit anticipated
+  this trade-off — note logged in polish.md with options to recover the
+  budget after B1 replaces ComparisonHeatmap).
+- Tests: backend `go test ./...` ✓ (untouched); `vite build` ✓.
+- Status: DONE — pending commit alongside A5.
 
 ### 2026-05-22 00:54 PDT — implementer A3 multi-review fixes
 - CRITICAL: scatter SQL templates now filter NULL/Inf/NaN (matches
