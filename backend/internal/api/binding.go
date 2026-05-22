@@ -16,14 +16,10 @@ import (
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/queries"
 )
 
-// bindingMeasurementColumn mirrors DATASET_COLUMNS in the Python module.
-// Phase 1 hard-codes this; a follow-up plan moves it into dataset_manifest.
-var bindingMeasurementColumn = map[string]string{
-	"callingcards": "callingcards_enrichment",
-	"harbison":     "effect",
-	"rossi":        "enrichment",
-	"chec_m2025":   "enrichment",
-}
+// The measurement column for each binding dataset is sourced from
+// dataset_manifest.effect_col (schema_version=3+). The previous Go-side
+// bindingMeasurementColumn map was removed in Phase 1.6 — see
+// data_prep.manifests.DATASET_MEASUREMENT_COLUMNS for the canonical list.
 
 func (s *Server) Binding(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -97,10 +93,11 @@ func (s *Server) buildBindingResponse(ctx context.Context, reg string, datasets 
 	tmpl := queries.Get("binding/data.sql")
 	resp := domain.BindingResponse{Regulator: reg}
 	for _, ds := range datasets {
-		col, ok := bindingMeasurementColumn[ds]
-		if !ok {
-			return nil, fmt.Errorf("no measurement column mapped for dataset %q", ds)
+		row, ok := s.Whitelist.Dataset(ds)
+		if !ok || row.EffectCol == "" {
+			return nil, fmt.Errorf("no effect_col in manifest for dataset %q", ds)
 		}
+		col := row.EffectCol
 		extraWhere, args, err := buildSquirrelWhere(filters[ds])
 		if err != nil {
 			return nil, err

@@ -34,7 +34,7 @@ import duckdb
 # Pinned constants for the artifact_manifest so the snapshot tests
 # get byte-stable output across rebuilds.
 _FIXTURE_ARTIFACT_VERSION = "test-fixture"
-_FIXTURE_SCHEMA_VERSION = 2
+_FIXTURE_SCHEMA_VERSION = 3
 _FIXTURE_BUILT_AT = "2026-01-01 00:00:00"
 _FIXTURE_SOURCE_YAML_SHA256 = (
     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -310,12 +310,14 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
             assay           VARCHAR NOT NULL,
             display_name    VARCHAR NOT NULL,
             source_repo     VARCHAR NOT NULL,
-            sample_id_field VARCHAR NOT NULL
+            sample_id_field VARCHAR NOT NULL,
+            effect_col      VARCHAR NOT NULL,
+            pvalue_col      VARCHAR NOT NULL
         )
         """
     )
     conn.executemany(
-        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 "callingcards",
@@ -324,6 +326,8 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
                 "Calling Cards",
                 "BrentLab/callingcards",
                 "gm_id",
+                "callingcards_enrichment",
+                "poisson_pval",
             ),
             (
                 "hackett",
@@ -332,6 +336,10 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
                 "Hackett 2020",
                 "BrentLab/hackett_2020",
                 "sample_id",
+                "log2_shrunken_timecourses",
+                # Intentionally empty: existing buildResponsiveExpr semantics
+                # do not gate hackett on a p-value column.
+                "",
             ),
         ],
     )
@@ -341,6 +349,7 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE field_manifest (
             db_name VARCHAR NOT NULL,
             field   VARCHAR NOT NULL,
+            role    VARCHAR NOT NULL,
             PRIMARY KEY (db_name, field)
         )
         """
@@ -353,19 +362,21 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
     # hackett: keep effect, pvalue, log2_shrunken_timecourses,
     #   target_locus_tag (regulator_* hidden, date/mechanism/restriction/strain
     #   hidden, time is allowed).
+    # role='experimental_condition' for (callingcards, condition) and
+    # (hackett, time); '' otherwise.
     conn.executemany(
-        "INSERT INTO field_manifest VALUES (?, ?)",
+        "INSERT INTO field_manifest VALUES (?, ?, ?)",
         [
-            ("callingcards", "target_locus_tag"),
-            ("callingcards", "score"),
-            ("callingcards", "poisson_pval"),
-            ("callingcards", "callingcards_enrichment"),
-            ("callingcards", "condition"),
-            ("hackett", "target_locus_tag"),
-            ("hackett", "effect"),
-            ("hackett", "pvalue"),
-            ("hackett", "log2_shrunken_timecourses"),
-            ("hackett", "time"),
+            ("callingcards", "target_locus_tag", ""),
+            ("callingcards", "score", ""),
+            ("callingcards", "poisson_pval", ""),
+            ("callingcards", "callingcards_enrichment", ""),
+            ("callingcards", "condition", "experimental_condition"),
+            ("hackett", "target_locus_tag", ""),
+            ("hackett", "effect", ""),
+            ("hackett", "pvalue", ""),
+            ("hackett", "log2_shrunken_timecourses", ""),
+            ("hackett", "time", "experimental_condition"),
         ],
     )
 

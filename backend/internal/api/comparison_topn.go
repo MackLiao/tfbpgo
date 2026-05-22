@@ -265,7 +265,7 @@ func (s *Server) buildOnePair(
 	args = append(args, topN)
 
 	// responsive expression — depends on perturbation dataset's effect/pvalue cols
-	respExpr := buildResponsiveExpr(pDB, effectThr, pvalThr, &args)
+	respExpr := buildResponsiveExpr(s, pDB, effectThr, pvalThr, &args)
 
 	// pert filter where
 	pWhere, pArgs, err := buildSquirrelWhereRaw(filters[pDB])
@@ -299,16 +299,29 @@ func (s *Server) buildOnePair(
 	return out, args, nil
 }
 
-func buildResponsiveExpr(pDB string, effThr, pvalThr float64, args *[]any) string {
-	col := pertMeasurementColumn[pDB]
+// buildResponsiveExpr returns the SQL CASE expression that classifies a
+// perturbation row as "responsive" given the dataset's effect_col and
+// pvalue_col (both sourced from dataset_manifest in schema_version=3+).
+//
+// Semantics preserved from the previous hard-coded implementation:
+//   - both effect_col and pvalue_col non-empty: two-term CASE on
+//     ABS(effect) > effThr AND pvalue < pvalThr;
+//   - effect_col non-empty, pvalue_col empty (hackett, hughes_*): one-term
+//     CASE on ABS(effect) > effThr;
+//   - neither set (unknown dataset, defensive): fall back to
+//     CAST(p.responsive AS INTEGER) so the SQL still compiles.
+func buildResponsiveExpr(s *Server, pDB string, effThr, pvalThr float64, args *[]any) string {
+	col := ""
 	pvalCol := ""
-	switch pDB {
-	case "degron":
-		pvalCol = "pvalue"
-	case "kemmeren":
-		pvalCol = "pval"
-	case "hu_reimand":
-		pvalCol = "pval"
+	// s.Whitelist may be nil in narrowly-scoped unit tests that only
+	// exercise SQL-rendering invariants (e.g. placeholder count). In
+	// production code paths the request handler always populates it
+	// via newServer().
+	if s != nil && s.Whitelist != nil {
+		if row, ok := s.Whitelist.Dataset(pDB); ok {
+			col = row.EffectCol
+			pvalCol = row.PValueCol
+		}
 	}
 	if col != "" && pvalCol != "" {
 		*args = append(*args, effThr, pvalThr)

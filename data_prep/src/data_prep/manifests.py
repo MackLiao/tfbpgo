@@ -14,7 +14,42 @@ from data_prep._sql import columns_of, validate_identifier
 # Bump when the set of §5.5 tables, or the meaning of their columns,
 # changes. The Go binary embeds the compatible range and refuses to
 # start against an artifact outside it.
-SCHEMA_VERSION: int = 2
+SCHEMA_VERSION: int = 3
+
+
+# Per-dataset measurement column map. Each value is (effect_col, pvalue_col).
+# pvalue_col may be '' for datasets that have no associated p-value column
+# (e.g. hackett, hughes_*). These mirror the previously hard-coded Go-side
+# maps bindingMeasurementColumn / pertMeasurementColumn and the per-dataset
+# switch inside comparison_topn.buildResponsiveExpr.
+#
+# Datasets present in dataset_manifest but absent from this map will cause
+# write_dataset_manifest to raise ValueError — the artifact MUST carry the
+# effect/pvalue column names so the Go service can serve the dataset.
+DATASET_MEASUREMENT_COLUMNS: dict[str, tuple[str, str]] = {
+    # binding
+    "callingcards": ("callingcards_enrichment", "poisson_pval"),
+    "harbison":     ("effect", "pvalue"),
+    "rossi":        ("enrichment", "poisson_pval"),
+    "chec_m2025":   ("enrichment", "poisson_pval"),
+    # perturbation
+    "degron":                ("log2FoldChange", "pvalue"),
+    "hughes_overexpression": ("mean_norm_log2fc", ""),
+    "hughes_knockout":       ("mean_norm_log2fc", ""),
+    "kemmeren":              ("Madj", "pval"),
+    "hackett":               ("log2_shrunken_timecourses", ""),
+    "hu_reimand":            ("effect", "pval"),
+}
+
+
+# Per-dataset set of fields whose role classification is
+# `experimental_condition`. Used by Select Datasets (and the frontend) to
+# surface the experimental condition control independently from generic
+# filters. All other (db_name, field) rows get role=''.
+EXPERIMENTAL_CONDITION_FIELDS: dict[str, frozenset[str]] = {
+    "callingcards": frozenset({"condition"}),
+    "hackett":      frozenset({"time"}),
+}
 
 
 def write_artifact_manifest(
@@ -68,7 +103,7 @@ def write_dataset_manifest(
     `dto` entry). Those tables still exist in the artifact but are not
     user-selectable datasets.
     """
-    rows: list[tuple[str, str, str, str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str, str, str, str]] = []
     for repo_id, repo_block in (config.get("repositories") or {}).items():
         datasets = (repo_block or {}).get("dataset") or {}
         for _ds_key, ds_cfg in datasets.items():
@@ -83,6 +118,13 @@ def write_dataset_manifest(
                     f"dataset {db_name!r} (repo {repo_id}) "
                     "missing required sample_id.field in YAML"
                 )
+            if db_name not in DATASET_MEASUREMENT_COLUMNS:
+                raise ValueError(
+                    f"dataset {db_name!r} (repo {repo_id}) has no entry in "
+                    "DATASET_MEASUREMENT_COLUMNS; add (effect_col, pvalue_col) "
+                    "to data_prep.manifests before building this artifact"
+                )
+            effect_col, pvalue_col = DATASET_MEASUREMENT_COLUMNS[db_name]
             rows.append(
                 (
                     db_name,
@@ -91,6 +133,8 @@ def write_dataset_manifest(
                     tags.get("display_name", ""),
                     repo_id,
                     sample_id_field,
+                    effect_col,
+                    pvalue_col,
                 )
             )
 
@@ -108,12 +152,14 @@ def write_dataset_manifest(
             assay           VARCHAR NOT NULL,
             display_name    VARCHAR NOT NULL,
             source_repo     VARCHAR NOT NULL,
-            sample_id_field VARCHAR NOT NULL
+            sample_id_field VARCHAR NOT NULL,
+            effect_col      VARCHAR NOT NULL,
+            pvalue_col      VARCHAR NOT NULL
         )
         """
     )
     conn.executemany(
-        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?)", rows
+        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows
     )
 
 
@@ -172,7 +218,7 @@ def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
         ).fetchall()
     ]
 
-    rows: list[tuple[str, str]] = []
+    rows: list[tuple[str, str, str]] = []
     for db_name in db_names:
         data_cols = columns_of(conn, db_name)
         meta_cols = columns_of(conn, f"{db_name}_meta")
@@ -181,13 +227,15 @@ def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
 
         join_keys = set(data_cols) & set(meta_cols)
         excluded = _hidden_for(db_name) | _STRUCTURAL_FIELDS | join_keys
+        exp_cond = EXPERIMENTAL_CONDITION_FIELDS.get(db_name, frozenset())
 
         seen: set[str] = set()
         for col in [*data_cols, *meta_cols]:
             if col in excluded or col in seen:
                 continue
             seen.add(col)
-            rows.append((db_name, col))
+            role = "experimental_condition" if col in exp_cond else ""
+            rows.append((db_name, col, role))
 
     conn.execute("DROP TABLE IF EXISTS field_manifest")
     conn.execute(
@@ -195,13 +243,14 @@ def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE field_manifest (
             db_name VARCHAR NOT NULL,
             field   VARCHAR NOT NULL,
+            role    VARCHAR NOT NULL,
             PRIMARY KEY (db_name, field)
         )
         """
     )
     if rows:
         conn.executemany(
-            "INSERT INTO field_manifest VALUES (?, ?)", rows
+            "INSERT INTO field_manifest VALUES (?, ?, ?)", rows
         )
 
 

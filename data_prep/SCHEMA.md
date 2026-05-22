@@ -11,7 +11,7 @@ from `data_prep/src/data_prep/manifests.py`, the code wins.
 
 ## Schema versioning
 
-The current schema version is **2**. It is recorded in
+The current schema version is **3**. It is recorded in
 `artifact_manifest.schema_version` and exported as `SCHEMA_VERSION` in
 `data_prep/src/data_prep/manifests.py`.
 
@@ -32,6 +32,14 @@ artifact whose `schema_version` is outside its compatible range.
 
 ## CHANGELOG
 
+- **v3**: Externalized previously hard-coded Go-side maps into the artifact:
+  added `dataset_manifest.effect_col` and `dataset_manifest.pvalue_col`
+  (both NOT NULL; `pvalue_col` may be empty string for datasets with no
+  associated p-value column, e.g. hackett, hughes_*). Added
+  `field_manifest.role` (NOT NULL; currently `'experimental_condition'`
+  for `(callingcards, condition)` and `(hackett, time)`, `''` otherwise)
+  so the Select Datasets UI can classify experimental-condition fields
+  without re-encoding the list in the frontend.
 - **v2**: Added `sample_id_field` to `dataset_manifest` so Phase 1 can
   write JOIN queries without re-parsing YAML.
 - **v1**: Initial release. Four manifest tables + two derived tables.
@@ -59,6 +67,8 @@ artifact whose `schema_version` is outside its compatible range.
 | `display_name` | VARCHAR NOT NULL | Human-readable label. |
 | `source_repo` | VARCHAR NOT NULL | HuggingFace repo path. |
 | `sample_id_field` | VARCHAR NOT NULL | Name of the JOIN-key column between `{db_name}` and `{db_name}_meta` (e.g., `gm_id`, `sample_id`). |
+| `effect_col` | VARCHAR NOT NULL | Measurement column used by binding/perturbation data endpoints and as the per-pair effect column in comparison topn. |
+| `pvalue_col` | VARCHAR NOT NULL | P-value column for the dataset, or `''` if the dataset has no associated p-value column (hackett, hughes_*). |
 
 Datasets without a `tags` block in YAML (e.g., the comparative `dto`
 entry) are excluded — their tables still exist but are not user-selectable.
@@ -69,6 +79,7 @@ entry) are excluded — their tables still exist but are not user-selectable.
 |--------|------|-------|
 | `db_name` | VARCHAR | References `dataset_manifest.db_name`. |
 | `field` | VARCHAR | A column name legal as a filter or sort target. |
+| `role` | VARCHAR NOT NULL | Role classification (currently `'experimental_condition'` or `''`). Used by Select Datasets to surface experimental-condition controls separately from generic filters. |
 
 Excludes: `regulator_locus_tag`, `regulator_symbol` (globally hidden),
 the join key (e.g., `gm_id` or `sample_id`), and per-dataset hidden

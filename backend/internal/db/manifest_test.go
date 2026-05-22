@@ -16,19 +16,26 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	m, err := LoadManifests(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, "test-fixture", m.Artifact.ArtifactVersion)
-	require.Equal(t, 2, m.Artifact.SchemaVersion)
+	require.Equal(t, 3, m.Artifact.SchemaVersion)
 	require.False(t, m.Artifact.ParityTestsPassed)
 
 	require.Len(t, m.Datasets, 2)
 	for _, ds := range m.Datasets {
 		require.NotEmpty(t, ds.SampleIDField, "v2 schema requires sample_id_field")
+		require.NotEmpty(t, ds.EffectCol, "v3 schema requires non-empty effect_col for %s", ds.DBName)
 	}
-	dbNames := map[string]bool{}
+	dsByName := map[string]DatasetRow{}
 	for _, ds := range m.Datasets {
-		dbNames[ds.DBName] = true
+		dsByName[ds.DBName] = ds
 	}
-	require.True(t, dbNames["callingcards"])
-	require.True(t, dbNames["hackett"])
+	require.Contains(t, dsByName, "callingcards")
+	require.Contains(t, dsByName, "hackett")
+	// v3-specific assertions: effect/pvalue cols carried in the artifact.
+	require.Equal(t, "callingcards_enrichment", dsByName["callingcards"].EffectCol)
+	require.Equal(t, "poisson_pval", dsByName["callingcards"].PValueCol)
+	require.Equal(t, "log2_shrunken_timecourses", dsByName["hackett"].EffectCol)
+	require.Equal(t, "", dsByName["hackett"].PValueCol,
+		"hackett intentionally has no p-value column — see buildResponsiveExpr")
 
 	// Widened in Phase 3 to cover production-only columns referenced by
 	// the binding/perturbation/topn handlers (poisson_pval,
@@ -55,4 +62,14 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 		require.True(t, got[k], "missing field_manifest entry: %s", k)
 	}
 	require.NotEmpty(t, m.Levels)
+
+	// v3: field_manifest.role carries the experimental_condition classification.
+	roleByKey := map[string]string{}
+	for _, f := range m.Fields {
+		roleByKey[f.DBName+"."+f.Field] = f.Role
+	}
+	require.Equal(t, "experimental_condition", roleByKey["callingcards.condition"])
+	require.Equal(t, "experimental_condition", roleByKey["hackett.time"])
+	// Sanity-check that a non-condition field has the empty role.
+	require.Equal(t, "", roleByKey["callingcards.target_locus_tag"])
 }

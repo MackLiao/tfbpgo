@@ -14,14 +14,10 @@ import (
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/queries"
 )
 
-var pertMeasurementColumn = map[string]string{
-	"degron":                "log2FoldChange",
-	"hughes_overexpression": "mean_norm_log2fc",
-	"hughes_knockout":       "mean_norm_log2fc",
-	"kemmeren":              "Madj",
-	"hackett":               "log2_shrunken_timecourses",
-	"hu_reimand":            "effect",
-}
+// The measurement column for each perturbation dataset is sourced from
+// dataset_manifest.effect_col (schema_version=3+). The previous Go-side
+// pertMeasurementColumn map was removed in Phase 1.6 — see
+// data_prep.manifests.DATASET_MEASUREMENT_COLUMNS for the canonical list.
 
 func (s *Server) Perturbation(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -89,10 +85,11 @@ func (s *Server) buildPerturbationResponse(ctx context.Context, reg string, data
 	tmpl := queries.Get("perturbation/data.sql")
 	resp := domain.PerturbationResponse{Regulator: reg}
 	for _, ds := range datasets {
-		col, ok := pertMeasurementColumn[ds]
-		if !ok {
-			return nil, fmt.Errorf("no measurement column mapped for dataset %q", ds)
+		row, ok := s.Whitelist.Dataset(ds)
+		if !ok || row.EffectCol == "" {
+			return nil, fmt.Errorf("no effect_col in manifest for dataset %q", ds)
 		}
+		col := row.EffectCol
 		extraWhere, args, err := buildSquirrelWhere(filters[ds])
 		if err != nil {
 			return nil, err

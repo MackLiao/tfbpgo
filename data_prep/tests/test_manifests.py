@@ -9,6 +9,8 @@ import pytest
 import yaml
 
 from data_prep.manifests import (
+    DATASET_MEASUREMENT_COLUMNS,
+    EXPERIMENTAL_CONDITION_FIELDS,
     HIDDEN_FILTER_FIELDS,
     LEVEL_CACHE_THRESHOLD,
     SCHEMA_VERSION,
@@ -17,6 +19,10 @@ from data_prep.manifests import (
     write_field_manifest,
     write_filter_level_cache,
 )
+
+
+def test_schema_version_is_three() -> None:
+    assert SCHEMA_VERSION == 3
 
 
 def test_artifact_manifest_has_exactly_one_row(
@@ -136,16 +142,72 @@ def test_dataset_manifest_emits_one_row_per_tagged_dataset(
     write_dataset_manifest(fresh_duckdb, config)
 
     rows = fresh_duckdb.execute(
-        "SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field "
+        "SELECT db_name, data_type, assay, display_name, source_repo, "
+        "sample_id_field, effect_col, pvalue_col "
         "FROM dataset_manifest ORDER BY db_name"
     ).fetchall()
 
     assert rows == [
         ("callingcards", "binding", "CallingCards", "2026 Calling Cards",
-         "BrentLab/callingcards", "gm_id"),
+         "BrentLab/callingcards", "gm_id",
+         "callingcards_enrichment", "poisson_pval"),
         ("hackett", "perturbation", "overexpression",
-         "2020 Overexpression (Hackett)", "BrentLab/hackett_2020", "sample_id"),
+         "2020 Overexpression (Hackett)", "BrentLab/hackett_2020", "sample_id",
+         "log2_shrunken_timecourses", ""),
     ]
+
+
+def test_dataset_manifest_columns_v3(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    config = yaml.safe_load(_SAMPLE_YAML)
+    write_dataset_manifest(fresh_duckdb, config)
+    cols = {
+        row[0]
+        for row in fresh_duckdb.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'dataset_manifest'"
+        ).fetchall()
+    }
+    expected = {
+        "db_name",
+        "data_type",
+        "assay",
+        "display_name",
+        "source_repo",
+        "sample_id_field",
+        "effect_col",
+        "pvalue_col",
+    }
+    assert cols == expected
+
+
+def test_dataset_manifest_raises_when_db_name_missing_from_measurement_map(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """A dataset in YAML but absent from DATASET_MEASUREMENT_COLUMNS must
+    raise — the artifact would otherwise ship without the per-dataset
+    effect/pvalue cols the Go service needs."""
+    assert "future_assay_42" not in DATASET_MEASUREMENT_COLUMNS
+    config = {
+        "repositories": {
+            "BrentLab/future": {
+                "dataset": {
+                    "future_v1": {
+                        "tags": {
+                            "data_type": "binding",
+                            "assay": "Future",
+                            "display_name": "Future",
+                        },
+                        "db_name": "future_assay_42",
+                        "sample_id": {"field": "sample_id"},
+                    },
+                },
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="DATASET_MEASUREMENT_COLUMNS"):
+        write_dataset_manifest(fresh_duckdb, config)
 
 
 def test_dataset_manifest_raises_when_sample_id_field_missing(
@@ -223,12 +285,15 @@ def _seed_two_datasets(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         "CREATE TABLE dataset_manifest (db_name VARCHAR PRIMARY KEY, "
         "data_type VARCHAR, assay VARCHAR, display_name VARCHAR, "
-        "source_repo VARCHAR, sample_id_field VARCHAR)"
+        "source_repo VARCHAR, sample_id_field VARCHAR, "
+        "effect_col VARCHAR, pvalue_col VARCHAR)"
     )
     conn.execute(
         "INSERT INTO dataset_manifest VALUES "
-        "('callingcards', 'binding', 'CallingCards', 'cc', 'BrentLab/callingcards', 'gm_id'), "
-        "('harbison', 'binding', 'ChIP-chip', 'harbison', 'BrentLab/harbison_2004', 'sample_id')"
+        "('callingcards', 'binding', 'CallingCards', 'cc', "
+        "'BrentLab/callingcards', 'gm_id', 'callingcards_enrichment', 'poisson_pval'), "
+        "('harbison', 'binding', 'ChIP-chip', 'harbison', "
+        "'BrentLab/harbison_2004', 'sample_id', 'effect', 'pvalue')"
     )
 
 
@@ -274,6 +339,27 @@ def test_field_manifest_db_name_field_unique(
         "SELECT COUNT(DISTINCT (db_name, field)) FROM field_manifest"
     ).fetchone()[0]
     assert n == n_distinct
+
+
+def test_field_manifest_role_for_experimental_condition(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """v3: callingcards.condition is tagged role='experimental_condition'.
+    All other fields keep role=''."""
+    assert "condition" in EXPERIMENTAL_CONDITION_FIELDS["callingcards"]
+    _seed_two_datasets(fresh_duckdb)
+    write_field_manifest(fresh_duckdb)
+    rows = fresh_duckdb.execute(
+        "SELECT db_name, field, role FROM field_manifest "
+        "ORDER BY db_name, field"
+    ).fetchall()
+    role_by_key = {(db, f): r for (db, f, r) in rows}
+    assert role_by_key[("callingcards", "condition")] == "experimental_condition"
+    # callingcards.target_locus_tag and harbison.target_locus_tag must be
+    # role=''. (harbison.condition is hidden, so it never reaches the
+    # field_manifest.)
+    assert role_by_key[("callingcards", "target_locus_tag")] == ""
+    assert role_by_key[("harbison", "target_locus_tag")] == ""
 
 
 def _seed_low_cardinality(conn: duckdb.DuckDBPyConnection) -> None:

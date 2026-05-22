@@ -8,35 +8,33 @@ import (
 )
 
 // AssertHandlerMapsCoverManifest verifies that every dataset in
-// dataset_manifest has a matching entry in the appropriate handler-side
-// configuration map (bindingMeasurementColumn / bindingConfigs for
-// data_type=binding, and pertMeasurementColumn / pertConfigs for
-// data_type=perturbation).
+// dataset_manifest carries the columns the Go handlers need.
 //
-// Until the Phase 1.6 migration moves these maps into dataset_manifest,
-// drift between the artifact and the binary is invisible at startup.
-// A missing entry surfaces only when a user hits the affected handler
-// — as a 500 from buildBindingResponse/buildPerturbationResponse, or
-// (for comparison/topn) as a 400 from the per-pair config check.
+// In schema_version=3 the previously hard-coded Go maps
+// (bindingMeasurementColumn / pertMeasurementColumn) were removed; the
+// handlers now read `effect_col` straight from dataset_manifest. This
+// assertion still runs at startup and refuses to start the listener if
+// any selectable dataset has an empty effect_col — e.g. an upstream YAML
+// edit slipped past the data_prep ValueError gate. Operators upgrading
+// the artifact ahead of the binary get a clean fail-fast.
 //
-// This assertion runs at startup and refuses to start the listener if
-// the manifest contains a dataset the binary cannot serve. Operators
-// upgrading the artifact ahead of the binary get a clean fail-fast.
+// bindingConfigs / pertConfigs (in comparison_topn.go) are intentionally
+// NOT validated here: they carry per-dataset business logic (sample col,
+// rank direction, harbison dedup, hackett time filter) that does not
+// trivially generalize to a manifest column. A dataset may be
+// /binding-eligible but not /comparison/topn-eligible; that asymmetry
+// is checked at request time with a 400.
 func AssertHandlerMapsCoverManifest(m *db.Manifests) error {
 	var missing []string
 	for _, d := range m.Datasets {
 		switch d.DataType {
 		case "binding":
-			if _, ok := bindingMeasurementColumn[d.DBName]; !ok {
-				missing = append(missing, fmt.Sprintf("binding %q: no entry in bindingMeasurementColumn", d.DBName))
+			if d.EffectCol == "" {
+				missing = append(missing, fmt.Sprintf("binding %q: empty manifest effect_col", d.DBName))
 			}
-			// bindingConfigs / pertConfigs are consulted only by
-			// comparison/topn; a dataset may be /binding-eligible but
-			// not /comparison/topn-eligible. That asymmetry is checked
-			// at request time with a 400, intentionally not here.
 		case "perturbation":
-			if _, ok := pertMeasurementColumn[d.DBName]; !ok {
-				missing = append(missing, fmt.Sprintf("perturbation %q: no entry in pertMeasurementColumn", d.DBName))
+			if d.EffectCol == "" {
+				missing = append(missing, fmt.Sprintf("perturbation %q: empty manifest effect_col", d.DBName))
 			}
 		default:
 			// Unknown data_type — likely a schema_version bump that

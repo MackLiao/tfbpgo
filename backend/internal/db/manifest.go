@@ -24,12 +24,22 @@ type DatasetRow struct {
 	DisplayName   string `db:"display_name"`
 	SourceRepo    string `db:"source_repo"`
 	SampleIDField string `db:"sample_id_field"`
+	// EffectCol / PValueCol moved into the artifact in schema_version=3.
+	// EffectCol is required (non-empty for every selectable dataset).
+	// PValueCol may be empty for datasets without an associated p-value
+	// column (hackett, hughes_*).
+	EffectCol string `db:"effect_col"`
+	PValueCol string `db:"pvalue_col"`
 }
 
 // FieldRow mirrors field_manifest.
 type FieldRow struct {
 	DBName string `db:"db_name"`
 	Field  string `db:"field"`
+	// Role added in schema_version=3. Empty string for ordinary fields;
+	// "experimental_condition" for fields the Select Datasets UI treats
+	// as experimental-condition controls.
+	Role string `db:"role"`
 }
 
 // FilterLevelRow mirrors filter_level_cache.
@@ -61,10 +71,10 @@ func LoadManifests(ctx context.Context, p *Pool) (*Manifests, error) {
 	}
 	m.Artifact = rows[0]
 
-	if err := p.DB.SelectContext(ctx, &m.Datasets, `SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field FROM dataset_manifest ORDER BY db_name`); err != nil {
+	if err := p.DB.SelectContext(ctx, &m.Datasets, `SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field, effect_col, pvalue_col FROM dataset_manifest ORDER BY db_name`); err != nil {
 		return nil, fmt.Errorf("dataset_manifest: %w", err)
 	}
-	if err := p.DB.SelectContext(ctx, &m.Fields, `SELECT db_name, field FROM field_manifest ORDER BY db_name, field`); err != nil {
+	if err := p.DB.SelectContext(ctx, &m.Fields, `SELECT db_name, field, role FROM field_manifest ORDER BY db_name, field`); err != nil {
 		return nil, fmt.Errorf("field_manifest: %w", err)
 	}
 	if err := p.DB.SelectContext(ctx, &m.Levels, `SELECT db_name, field, level FROM filter_level_cache ORDER BY db_name, field, level`); err != nil {

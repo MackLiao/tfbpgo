@@ -71,6 +71,43 @@ def test_fixture_hackett_meta_includes_all_three_tiers(built_fixture: Path) -> N
     assert ("GEV", "M") in pairs
 
 
+def test_fixture_dataset_manifest_v3_columns(built_fixture: Path) -> None:
+    """v3: dataset_manifest carries effect_col/pvalue_col. callingcards has
+    a real p-value column; hackett intentionally has none."""
+    conn = duckdb.connect(str(built_fixture), read_only=True)
+    try:
+        rows = conn.execute(
+            "SELECT db_name, effect_col, pvalue_col FROM dataset_manifest "
+            "ORDER BY db_name"
+        ).fetchall()
+        sv = conn.execute(
+            "SELECT schema_version FROM artifact_manifest"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert sv == 3
+    by_name = {db: (eff, pv) for (db, eff, pv) in rows}
+    assert by_name["callingcards"] == ("callingcards_enrichment", "poisson_pval")
+    assert by_name["hackett"] == ("log2_shrunken_timecourses", "")
+
+
+def test_fixture_field_manifest_role_column(built_fixture: Path) -> None:
+    """v3: field_manifest.role marks experimental_condition fields."""
+    conn = duckdb.connect(str(built_fixture), read_only=True)
+    try:
+        rows = conn.execute(
+            "SELECT db_name, field, role FROM field_manifest"
+        ).fetchall()
+    finally:
+        conn.close()
+    role_by_key = {(db, f): r for (db, f, r) in rows}
+    assert role_by_key[("callingcards", "condition")] == "experimental_condition"
+    assert role_by_key[("hackett", "time")] == "experimental_condition"
+    # Sanity: a non-condition field is empty-role.
+    assert role_by_key[("callingcards", "target_locus_tag")] == ""
+    assert role_by_key[("hackett", "log2_shrunken_timecourses")] == ""
+
+
 def test_fixture_is_reproducible(tmp_path: Path) -> None:
     """Two invocations of build_fixture produce byte-identical files (modulo
     DuckDB internal metadata). Check via row hashes instead of file bytes."""
