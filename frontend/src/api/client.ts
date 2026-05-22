@@ -130,4 +130,70 @@ export const api = {
     return get<Schemas["TopNResponse"]>(vpath("/comparison/topn"), s);
   },
   dto: (): Promise<Schemas["DTOResponse"]> => get<Schemas["DTOResponse"]>(vpath("/comparison/dto")),
+
+  // ----- Correlation endpoints (Phase A3) ---------------------------------
+  // Backend handlers: /api/v/{v}/{binding|perturbation}/{corr|correlations|scatter}.
+  // The naming asymmetry — `corr` on the binding side, `correlations` (plural)
+  // on the perturbation side — matches the Shiny module names captured in
+  // docs/parity/{binding,perturbation}.md and is intentional.
+  bindingCorr: (q: {
+    datasets: string[];
+    method: "pearson" | "spearman";
+    col: "effect" | "pvalue";
+    filters?: string;
+  }): Promise<Schemas["CorrResponse"]> => {
+    const s = new URLSearchParams({
+      datasets: q.datasets.join(","),
+      method: q.method,
+      col: q.col,
+    });
+    if (q.filters) s.set("filters", q.filters);
+    return get<Schemas["CorrResponse"]>(vpath("/binding/corr"), s);
+  },
+  bindingScatter: (q: {
+    regulator: string;
+    pair: [string, string];
+    method: "pearson" | "spearman";
+    col: "effect" | "pvalue";
+    filters?: string;
+  }): Promise<Schemas["ScatterResponse"]> => {
+    const s = new URLSearchParams({
+      regulator: q.regulator,
+      pair: q.pair.join(","),
+      method: q.method,
+      col: q.col,
+    });
+    if (q.filters) s.set("filters", q.filters);
+    return get<Schemas["ScatterResponse"]>(vpath("/binding/scatter"), s);
+  },
+  perturbationCorrelations: (q: {
+    datasets: string[];
+    method: "pearson" | "spearman";
+    col: "effect" | "pvalue";
+    filters?: string;
+  }): Promise<Schemas["CorrResponse"]> => {
+    const s = new URLSearchParams({
+      datasets: q.datasets.join(","),
+      method: q.method,
+      col: q.col,
+    });
+    if (q.filters) s.set("filters", q.filters);
+    return get<Schemas["CorrResponse"]>(vpath("/perturbation/correlations"), s);
+  },
+  perturbationScatter: (q: {
+    regulator: string;
+    pair: [string, string];
+    method: "pearson" | "spearman";
+    col: "effect" | "pvalue";
+    filters?: string;
+  }): Promise<Schemas["ScatterResponse"]> => {
+    const s = new URLSearchParams({
+      regulator: q.regulator,
+      pair: q.pair.join(","),
+      method: q.method,
+      col: q.col,
+    });
+    if (q.filters) s.set("filters", q.filters);
+    return get<Schemas["ScatterResponse"]>(vpath("/perturbation/scatter"), s);
+  },
 };

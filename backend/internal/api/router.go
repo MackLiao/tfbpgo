@@ -57,7 +57,17 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/datasets", s.Datasets)
 		r.Get("/regulators/resolve", s.RegulatorsResolve)
 		r.Get("/regulators", s.Regulators)
+		// Order: /binding/corr and /binding/scatter must register before
+		// /binding so chi's route trie does not greedy-match them against
+		// the catch-all binding handler. The trie is path-segment-based
+		// (so /binding/* would never resolve to /binding's leaf node), but
+		// keeping these literal-prefix routes adjacent to /binding makes
+		// the override surface easy to read.
+		r.Get("/binding/corr", s.BindingCorr)
+		r.Get("/binding/scatter", s.BindingScatter)
 		r.Get("/binding", s.Binding)
+		r.Get("/perturbation/correlations", s.PerturbationCorrelations)
+		r.Get("/perturbation/scatter", s.PerturbationScatter)
 		r.Get("/perturbation", s.Perturbation)
 		r.Get("/comparison/topn", s.ComparisonTopN)
 		r.Get("/comparison/dto", s.ComparisonDTO)

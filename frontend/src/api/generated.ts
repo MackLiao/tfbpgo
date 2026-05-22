@@ -410,6 +410,268 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v/{v}/binding/corr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-regulator correlation between two or more binding datasets
+         * @description Returns Pearson- or Spearman-correlated (regulator, sample_a, sample_b)
+         *     groups for every pair drawn from `sorted(datasets) choose 2`. The
+         *     underlying SQL templates (`backend/internal/queries/binding/corr_pair_*.sql`)
+         *     mirror Shiny's `_corr_pair_sql_impl` exactly: INNER JOIN on (regulator,
+         *     target), NULL/Inf/NaN exclusion, and a `HAVING COUNT(*) >= 3` floor.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /**
+                     * @description Comma-separated binding dataset db_names. At least 2 entries; all
+                     *     must be present in `dataset_manifest` AND have `data_type=binding`.
+                     */
+                    datasets: string;
+                    /** @description Correlation method (`pearson` for raw values, `spearman` for ranks). */
+                    method: "pearson" | "spearman";
+                    /**
+                     * @description Measurement column kind. `effect` selects `dataset_manifest.effect_col`;
+                     *     `pvalue` selects `dataset_manifest.pvalue_col` (falling back to
+                     *     `effect_col` when the dataset has no p-value column, matching Shiny's
+                     *     `get_measurement_column`).
+                     */
+                    col: "effect" | "pvalue";
+                    /**
+                     * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
+                     *     string is capped at 16 KiB before unmarshal to prevent DoS.
+                     */
+                    filters?: components["parameters"]["Filters"];
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Correlation envelope; one CorrPair per `(dbA, dbB)` combination. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CorrResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v/{v}/binding/scatter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-target value pairs for one regulator across two binding datasets
+         * @description Returns (target, val_a, val_b) tuples for a single regulator across one
+         *     pair of binding datasets. For `method=spearman`, val_* are rank values
+         *     produced by `RANK() OVER`. The server computes `r` (Pearson correlation
+         *     over the returned points) using the same algorithm class as DuckDB's
+         *     `corr()`; the value is clamped to [-1, 1] and coerced to 0 when fewer
+         *     than 2 points are returned or the variance is zero (mirrors Shiny's
+         *     NaN-coercion behavior).
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Regulator locus_tag (required); bound as a positional `?` in the SQL. */
+                    regulator: string;
+                    /**
+                     * @description Comma-separated pair of binding dataset db_names (exactly 2 entries).
+                     *     Both must have `data_type=binding`. Order is preserved (dbA, dbB).
+                     */
+                    pair: string;
+                    method: "pearson" | "spearman";
+                    col: "effect" | "pvalue";
+                    /**
+                     * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
+                     *     string is capped at 16 KiB before unmarshal to prevent DoS.
+                     */
+                    filters?: components["parameters"]["Filters"];
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Per-target value pairs for the regulator. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScatterResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v/{v}/perturbation/correlations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-regulator correlation between two or more perturbation datasets
+         * @description Perturbation analogue of `/binding/corr`. The path uses the plural
+         *     `correlations` (vs `corr` on the binding side) to match the original
+         *     Shiny module's naming and the parity audit in
+         *     `docs/parity/perturbation.md`. Same response shape as `/binding/corr`.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /**
+                     * @description Comma-separated perturbation dataset db_names. At least 2 entries;
+                     *     all must have `data_type=perturbation`.
+                     */
+                    datasets: string;
+                    method: "pearson" | "spearman";
+                    col: "effect" | "pvalue";
+                    /**
+                     * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
+                     *     string is capped at 16 KiB before unmarshal to prevent DoS.
+                     */
+                    filters?: components["parameters"]["Filters"];
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Correlation envelope; one CorrPair per `(dbA, dbB)` combination. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CorrResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v/{v}/perturbation/scatter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-target value pairs for one regulator across two perturbation datasets
+         * @description Perturbation analogue of `/binding/scatter`. See that endpoint's
+         *     description for the per-target row shape and server-side Pearson r
+         *     computation.
+         */
+        get: {
+            parameters: {
+                query: {
+                    regulator: string;
+                    /** @description Comma-separated pair of perturbation dataset db_names. */
+                    pair: string;
+                    method: "pearson" | "spearman";
+                    col: "effect" | "pvalue";
+                    /**
+                     * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
+                     *     string is capped at 16 KiB before unmarshal to prevent DoS.
+                     */
+                    filters?: components["parameters"]["Filters"];
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Per-target value pairs for the regulator. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScatterResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v/{v}/comparison/topn": {
         parameters: {
             query?: never;
@@ -655,6 +917,67 @@ export interface components {
         };
         DTOResponse: {
             rows: components["schemas"]["DTORow"][];
+        };
+        CorrPairPoint: {
+            /** @description Dataset db_name on the A side. */
+            dbA: string;
+            /** @description sample_id from dataset A. */
+            dbAId: string;
+            dbB: string;
+            dbBId: string;
+            regulatorLocusTag: string;
+            /**
+             * Format: double
+             * @description corr() value for this (regulator, dbAId, dbBId) group. For Pearson,
+             *     computed over raw measurement values; for Spearman, computed over
+             *     RANK() outputs. Clamped to [-1, 1] in practice.
+             */
+            correlation: number;
+        };
+        CorrPair: {
+            dbA: string;
+            dbB: string;
+            /** @description Measurement column actually used on the A side. */
+            colA: string;
+            colB: string;
+            points: components["schemas"]["CorrPairPoint"][];
+        };
+        CorrResponse: {
+            /** @enum {string} */
+            method: "pearson" | "spearman";
+            /** @enum {string} */
+            col: "effect" | "pvalue";
+            /**
+             * @description One entry per `(dbA, dbB)` combination drawn from
+             *     `sorted(datasets) choose 2`. Ordering is stable across param-order
+             *     permutations so cache values are deterministic.
+             */
+            pairs: components["schemas"]["CorrPair"][];
+        };
+        ScatterPoint: {
+            targetLocusTag: string;
+            /** Format: double */
+            valA: number;
+            /** Format: double */
+            valB: number;
+        };
+        ScatterResponse: {
+            regulator: string;
+            dbA: string;
+            dbB: string;
+            colA: string;
+            colB: string;
+            /** @enum {string} */
+            method: "pearson" | "spearman";
+            /**
+             * Format: double
+             * @description Pearson correlation computed server-side over the returned points.
+             *     Coerced to 0 when fewer than 2 points are returned or when the
+             *     denominator is zero (matches Shiny's NaN-coercion). Clamped to
+             *     [-1, 1].
+             */
+            r: number;
+            points: components["schemas"]["ScatterPoint"][];
         };
         /**
          * @description One field-level filter clause. `value` is polymorphic and depends on

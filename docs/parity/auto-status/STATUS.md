@@ -80,3 +80,31 @@ Read before working, append a section before finishing.
   backend/internal/queries/correlation_parity_test.go).
 - Commit: 2b18fef
 - Status: DONE.
+
+### 2026-05-22 01:00 PDT — implementer A3
+- Added handlers: BindingCorr, BindingScatter, PerturbationCorrelations,
+  PerturbationScatter (routes /binding/corr, /binding/scatter,
+  /perturbation/correlations, /perturbation/scatter under /api/v/{v}).
+- Reused A2 SQL templates; per-pair execution via sorted(datasets) choose 2;
+  regulator strip in scatter (mirrors Shiny workspace.py:536-540) AND the
+  strip applied BEFORE the field-whitelist check so that callers can
+  legitimately ship regulator_locus_tag in filters without 400ing on
+  CheckField (regulator_locus_tag is a column, not a field_manifest entry).
+- Server-side Pearson r in scatter responses (clamped to [-1,1], coerced
+  to 0 on degenerate inputs to mirror Shiny NaN handling).
+- pvalue→effect fallback when dataset.PValueCol == "" (matches Shiny
+  get_measurement_column).
+- Shared helpers in correlation.go: validateCorrMethod/Col,
+  resolveMeasurementCol, isPValueCol/orderExpr, stripRegulatorFilter,
+  renderCorrPairSQL/renderScatterSQL, pearsonR, sortedPairs.
+- Domain types: CorrResponse, CorrPair, CorrPairPoint, ScatterResponse,
+  ScatterPoint.
+- OpenAPI doc: 4 new paths + 5 new schemas; frontend types regenerated;
+  client.ts gains bindingCorr / bindingScatter / perturbationCorrelations /
+  perturbationScatter typed helpers.
+- UI consumers deferred to Phase B per task brief.
+- Tests: backend go test ./... ✓ (added ~20 handler/unit tests across
+  binding_corr_test.go + perturbation_corr_test.go); parity ✓;
+  frontend tsc --noEmit ✓.
+- Commit: <pending>
+- Status: DONE.

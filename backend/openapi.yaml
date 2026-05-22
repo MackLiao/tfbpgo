@@ -249,6 +249,200 @@ paths:
         "410":
           $ref: "#/components/responses/StaleArtifactVersion"
 
+  /api/v/{v}/binding/corr:
+    get:
+      tags: [data]
+      summary: Per-regulator correlation between two or more binding datasets
+      description: |
+        Returns Pearson- or Spearman-correlated (regulator, sample_a, sample_b)
+        groups for every pair drawn from `sorted(datasets) choose 2`. The
+        underlying SQL templates (`backend/internal/queries/binding/corr_pair_*.sql`)
+        mirror Shiny's `_corr_pair_sql_impl` exactly: INNER JOIN on (regulator,
+        target), NULL/Inf/NaN exclusion, and a `HAVING COUNT(*) >= 3` floor.
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: datasets
+          in: query
+          required: true
+          description: |
+            Comma-separated binding dataset db_names. At least 2 entries; all
+            must be present in `dataset_manifest` AND have `data_type=binding`.
+          schema:
+            type: string
+        - name: method
+          in: query
+          required: true
+          description: Correlation method (`pearson` for raw values, `spearman` for ranks).
+          schema:
+            type: string
+            enum: [pearson, spearman]
+        - name: col
+          in: query
+          required: true
+          description: |
+            Measurement column kind. `effect` selects `dataset_manifest.effect_col`;
+            `pvalue` selects `dataset_manifest.pvalue_col` (falling back to
+            `effect_col` when the dataset has no p-value column, matching Shiny's
+            `get_measurement_column`).
+          schema:
+            type: string
+            enum: [effect, pvalue]
+        - $ref: "#/components/parameters/Filters"
+      responses:
+        "200":
+          description: Correlation envelope; one CorrPair per `(dbA, dbB)` combination.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CorrResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
+  /api/v/{v}/binding/scatter:
+    get:
+      tags: [data]
+      summary: Per-target value pairs for one regulator across two binding datasets
+      description: |
+        Returns (target, val_a, val_b) tuples for a single regulator across one
+        pair of binding datasets. For `method=spearman`, val_* are rank values
+        produced by `RANK() OVER`. The server computes `r` (Pearson correlation
+        over the returned points) using the same algorithm class as DuckDB's
+        `corr()`; the value is clamped to [-1, 1] and coerced to 0 when fewer
+        than 2 points are returned or the variance is zero (mirrors Shiny's
+        NaN-coercion behavior).
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: regulator
+          in: query
+          required: true
+          description: Regulator locus_tag (required); bound as a positional `?` in the SQL.
+          schema:
+            type: string
+        - name: pair
+          in: query
+          required: true
+          description: |
+            Comma-separated pair of binding dataset db_names (exactly 2 entries).
+            Both must have `data_type=binding`. Order is preserved (dbA, dbB).
+          schema:
+            type: string
+        - name: method
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [pearson, spearman]
+        - name: col
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [effect, pvalue]
+        - $ref: "#/components/parameters/Filters"
+      responses:
+        "200":
+          description: Per-target value pairs for the regulator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScatterResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
+  /api/v/{v}/perturbation/correlations:
+    get:
+      tags: [data]
+      summary: Per-regulator correlation between two or more perturbation datasets
+      description: |
+        Perturbation analogue of `/binding/corr`. The path uses the plural
+        `correlations` (vs `corr` on the binding side) to match the original
+        Shiny module's naming and the parity audit in
+        `docs/parity/perturbation.md`. Same response shape as `/binding/corr`.
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: datasets
+          in: query
+          required: true
+          description: |
+            Comma-separated perturbation dataset db_names. At least 2 entries;
+            all must have `data_type=perturbation`.
+          schema:
+            type: string
+        - name: method
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [pearson, spearman]
+        - name: col
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [effect, pvalue]
+        - $ref: "#/components/parameters/Filters"
+      responses:
+        "200":
+          description: Correlation envelope; one CorrPair per `(dbA, dbB)` combination.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CorrResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
+  /api/v/{v}/perturbation/scatter:
+    get:
+      tags: [data]
+      summary: Per-target value pairs for one regulator across two perturbation datasets
+      description: |
+        Perturbation analogue of `/binding/scatter`. See that endpoint's
+        description for the per-target row shape and server-side Pearson r
+        computation.
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: regulator
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: pair
+          in: query
+          required: true
+          description: Comma-separated pair of perturbation dataset db_names.
+          schema:
+            type: string
+        - name: method
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [pearson, spearman]
+        - name: col
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [effect, pvalue]
+        - $ref: "#/components/parameters/Filters"
+      responses:
+        "200":
+          description: Per-target value pairs for the regulator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScatterResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
   /api/v/{v}/comparison/topn:
     get:
       tags: [comparison]
@@ -654,6 +848,110 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DTORow"
+
+    CorrPairPoint:
+      type: object
+      required: [dbA, dbAId, dbB, dbBId, regulatorLocusTag, correlation]
+      properties:
+        dbA:
+          type: string
+          description: Dataset db_name on the A side.
+        dbAId:
+          type: string
+          description: sample_id from dataset A.
+        dbB:
+          type: string
+        dbBId:
+          type: string
+        regulatorLocusTag:
+          type: string
+        correlation:
+          type: number
+          format: double
+          description: |
+            corr() value for this (regulator, dbAId, dbBId) group. For Pearson,
+            computed over raw measurement values; for Spearman, computed over
+            RANK() outputs. Clamped to [-1, 1] in practice.
+
+    CorrPair:
+      type: object
+      required: [dbA, dbB, colA, colB, points]
+      properties:
+        dbA:
+          type: string
+        dbB:
+          type: string
+        colA:
+          type: string
+          description: Measurement column actually used on the A side.
+        colB:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/CorrPairPoint"
+
+    CorrResponse:
+      type: object
+      required: [method, col, pairs]
+      properties:
+        method:
+          type: string
+          enum: [pearson, spearman]
+        col:
+          type: string
+          enum: [effect, pvalue]
+        pairs:
+          type: array
+          description: |
+            One entry per `(dbA, dbB)` combination drawn from
+            `sorted(datasets) choose 2`. Ordering is stable across param-order
+            permutations so cache values are deterministic.
+          items:
+            $ref: "#/components/schemas/CorrPair"
+
+    ScatterPoint:
+      type: object
+      required: [targetLocusTag, valA, valB]
+      properties:
+        targetLocusTag:
+          type: string
+        valA:
+          type: number
+          format: double
+        valB:
+          type: number
+          format: double
+
+    ScatterResponse:
+      type: object
+      required: [regulator, dbA, dbB, colA, colB, method, r, points]
+      properties:
+        regulator:
+          type: string
+        dbA:
+          type: string
+        dbB:
+          type: string
+        colA:
+          type: string
+        colB:
+          type: string
+        method:
+          type: string
+          enum: [pearson, spearman]
+        r:
+          type: number
+          format: double
+          description: |
+            Pearson correlation computed server-side over the returned points.
+            Coerced to 0 when fewer than 2 points are returned or when the
+            denominator is zero (matches Shiny's NaN-coercion). Clamped to
+            [-1, 1].
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScatterPoint"
 
     FilterSpec:
       type: object
