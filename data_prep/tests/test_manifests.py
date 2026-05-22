@@ -21,8 +21,8 @@ from data_prep.manifests import (
 )
 
 
-def test_schema_version_is_three() -> None:
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_four() -> None:
+    assert SCHEMA_VERSION == 4
 
 
 def test_artifact_manifest_has_exactly_one_row(
@@ -143,21 +143,35 @@ def test_dataset_manifest_emits_one_row_per_tagged_dataset(
 
     rows = fresh_duckdb.execute(
         "SELECT db_name, data_type, assay, display_name, source_repo, "
-        "sample_id_field, effect_col, pvalue_col "
+        "sample_id_field, effect_col, pvalue_col, "
+        "default_active, default_filters, condition_cols "
         "FROM dataset_manifest ORDER BY db_name"
     ).fetchall()
 
+    # callingcards: in DEFAULT_ACTIVE_DATASETS, no DEFAULT_DATASET_FILTERS
+    # entry, has CONDITION_COLS=['condition'].
+    # hackett:      in DEFAULT_ACTIVE_DATASETS, DEFAULT_DATASET_FILTERS
+    # encodes {"time": {"type":"numeric","value":[45,45]}}, and
+    # CONDITION_COLS=['mechanism','restriction','time'].
     assert rows == [
-        ("callingcards", "binding", "CallingCards", "2026 Calling Cards",
-         "BrentLab/callingcards", "gm_id",
-         "callingcards_enrichment", "poisson_pval"),
-        ("hackett", "perturbation", "overexpression",
-         "2020 Overexpression (Hackett)", "BrentLab/hackett_2020", "sample_id",
-         "log2_shrunken_timecourses", ""),
+        (
+            "callingcards", "binding", "CallingCards", "2026 Calling Cards",
+            "BrentLab/callingcards", "gm_id",
+            "callingcards_enrichment", "poisson_pval",
+            True, "", "condition",
+        ),
+        (
+            "hackett", "perturbation", "overexpression",
+            "2020 Overexpression (Hackett)", "BrentLab/hackett_2020", "sample_id",
+            "log2_shrunken_timecourses", "",
+            True,
+            '{"time":{"type":"numeric","value":[45,45]}}',
+            "mechanism,restriction,time",
+        ),
     ]
 
 
-def test_dataset_manifest_columns_v3(
+def test_dataset_manifest_columns_v4(
     fresh_duckdb: duckdb.DuckDBPyConnection,
 ) -> None:
     config = yaml.safe_load(_SAMPLE_YAML)
@@ -178,6 +192,10 @@ def test_dataset_manifest_columns_v3(
         "sample_id_field",
         "effect_col",
         "pvalue_col",
+        # v4 additions
+        "default_active",
+        "default_filters",
+        "condition_cols",
     }
     assert cols == expected
 
@@ -360,6 +378,84 @@ def test_field_manifest_role_for_experimental_condition(
     # field_manifest.)
     assert role_by_key[("callingcards", "target_locus_tag")] == ""
     assert role_by_key[("harbison", "target_locus_tag")] == ""
+
+
+def test_field_manifest_v4_columns(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """v4: field_manifest gains description / level_definitions /
+    ui_kind_override / numeric_level_sort columns."""
+    _seed_two_datasets(fresh_duckdb)
+    write_field_manifest(fresh_duckdb)
+    cols = {
+        row[0]
+        for row in fresh_duckdb.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'field_manifest'"
+        ).fetchall()
+    }
+    expected = {
+        "db_name",
+        "field",
+        "role",
+        "description",
+        "level_definitions",
+        "ui_kind_override",
+        "numeric_level_sort",
+    }
+    assert cols == expected
+
+
+def test_field_manifest_v4_defaults_empty(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """For datasets without FIELD_TYPE_OVERRIDES entries, the new columns
+    are all empty strings."""
+    _seed_two_datasets(fresh_duckdb)
+    write_field_manifest(fresh_duckdb)
+    rows = fresh_duckdb.execute(
+        "SELECT description, level_definitions, ui_kind_override, "
+        "numeric_level_sort FROM field_manifest"
+    ).fetchall()
+    for desc, lvl_defs, ui_kind, lvl_sort in rows:
+        assert desc == ""
+        assert lvl_defs == ""
+        assert ui_kind == ""
+        assert lvl_sort == ""
+
+
+def test_field_manifest_v4_hackett_time_override(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """Seed a hackett dataset and verify (hackett, time) picks up
+    FIELD_TYPE_OVERRIDES → (categorical, numeric)."""
+    fresh_duckdb.execute(
+        "CREATE TABLE hackett (sample_id VARCHAR, regulator_locus_tag VARCHAR, "
+        "target_locus_tag VARCHAR, score DOUBLE)"
+    )
+    fresh_duckdb.execute(
+        "CREATE TABLE hackett_meta (sample_id VARCHAR, "
+        "regulator_locus_tag VARCHAR, regulator_symbol VARCHAR, "
+        "time INTEGER)"
+    )
+    fresh_duckdb.execute(
+        "CREATE TABLE dataset_manifest (db_name VARCHAR PRIMARY KEY, "
+        "data_type VARCHAR, assay VARCHAR, display_name VARCHAR, "
+        "source_repo VARCHAR, sample_id_field VARCHAR, "
+        "effect_col VARCHAR, pvalue_col VARCHAR)"
+    )
+    fresh_duckdb.execute(
+        "INSERT INTO dataset_manifest VALUES "
+        "('hackett', 'perturbation', 'overexpression', 'Hackett', "
+        "'BrentLab/hackett_2020', 'sample_id', "
+        "'log2_shrunken_timecourses', '')"
+    )
+    write_field_manifest(fresh_duckdb)
+    row = fresh_duckdb.execute(
+        "SELECT ui_kind_override, numeric_level_sort "
+        "FROM field_manifest WHERE db_name='hackett' AND field='time'"
+    ).fetchone()
+    assert row == ("categorical", "numeric")
 
 
 def _seed_low_cardinality(conn: duckdb.DuckDBPyConnection) -> None:

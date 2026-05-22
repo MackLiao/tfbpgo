@@ -34,7 +34,7 @@ import duckdb
 # Pinned constants for the artifact_manifest so the snapshot tests
 # get byte-stable output across rebuilds.
 _FIXTURE_ARTIFACT_VERSION = "test-fixture"
-_FIXTURE_SCHEMA_VERSION = 3
+_FIXTURE_SCHEMA_VERSION = 4
 _FIXTURE_BUILT_AT = "2026-01-01 00:00:00"
 _FIXTURE_SOURCE_YAML_SHA256 = (
     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -312,12 +312,15 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
             source_repo     VARCHAR NOT NULL,
             sample_id_field VARCHAR NOT NULL,
             effect_col      VARCHAR NOT NULL,
-            pvalue_col      VARCHAR NOT NULL
+            pvalue_col      VARCHAR NOT NULL,
+            default_active  BOOLEAN NOT NULL DEFAULT FALSE,
+            default_filters VARCHAR NOT NULL DEFAULT '',
+            condition_cols  VARCHAR NOT NULL DEFAULT ''
         )
         """
     )
     conn.executemany(
-        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 "callingcards",
@@ -328,6 +331,9 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
                 "gm_id",
                 "callingcards_enrichment",
                 "poisson_pval",
+                True,
+                "",
+                "condition",
             ),
             (
                 "hackett",
@@ -340,6 +346,9 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
                 # Intentionally empty: existing buildResponsiveExpr semantics
                 # do not gate hackett on a p-value column.
                 "",
+                True,
+                '{"time":{"type":"numeric","value":[45,45]}}',
+                "mechanism,restriction,time",
             ),
         ],
     )
@@ -347,9 +356,13 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         """
         CREATE TABLE field_manifest (
-            db_name VARCHAR NOT NULL,
-            field   VARCHAR NOT NULL,
-            role    VARCHAR NOT NULL,
+            db_name            VARCHAR NOT NULL,
+            field              VARCHAR NOT NULL,
+            role               VARCHAR NOT NULL,
+            description        VARCHAR NOT NULL DEFAULT '',
+            level_definitions  VARCHAR NOT NULL DEFAULT '',
+            ui_kind_override   VARCHAR NOT NULL DEFAULT '',
+            numeric_level_sort VARCHAR NOT NULL DEFAULT '',
             PRIMARY KEY (db_name, field)
         )
         """
@@ -364,19 +377,21 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
     #   hidden, time is allowed).
     # role='experimental_condition' for (callingcards, condition) and
     # (hackett, time); '' otherwise.
+    # v4: hackett.time gets ui_kind_override='categorical' +
+    # numeric_level_sort='numeric' (mirrors FIELD_TYPE_OVERRIDES).
     conn.executemany(
-        "INSERT INTO field_manifest VALUES (?, ?, ?)",
+        "INSERT INTO field_manifest VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
-            ("callingcards", "target_locus_tag", ""),
-            ("callingcards", "score", ""),
-            ("callingcards", "poisson_pval", ""),
-            ("callingcards", "callingcards_enrichment", ""),
-            ("callingcards", "condition", "experimental_condition"),
-            ("hackett", "target_locus_tag", ""),
-            ("hackett", "effect", ""),
-            ("hackett", "pvalue", ""),
-            ("hackett", "log2_shrunken_timecourses", ""),
-            ("hackett", "time", "experimental_condition"),
+            ("callingcards", "target_locus_tag",         "",                     "", "", "",            ""),
+            ("callingcards", "score",                    "",                     "", "", "",            ""),
+            ("callingcards", "poisson_pval",             "",                     "", "", "",            ""),
+            ("callingcards", "callingcards_enrichment",  "",                     "", "", "",            ""),
+            ("callingcards", "condition",                "experimental_condition","", "", "",            ""),
+            ("hackett",      "target_locus_tag",         "",                     "", "", "",            ""),
+            ("hackett",      "effect",                   "",                     "", "", "",            ""),
+            ("hackett",      "pvalue",                   "",                     "", "", "",            ""),
+            ("hackett",      "log2_shrunken_timecourses","",                     "", "", "",            ""),
+            ("hackett",      "time",                     "experimental_condition","", "", "categorical", "numeric"),
         ],
     )
 

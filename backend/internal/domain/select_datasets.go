@@ -1,16 +1,26 @@
 package domain
 
 // FieldMeta describes one field's metadata for the Select Datasets filter
-// modal. Combines manifest data (role + filter_level_cache levels) with
-// runtime introspection (DBType + numeric min/max).
+// modal. Combines manifest data (role + filter_level_cache levels +
+// v4 UX metadata) with runtime introspection (DBType + numeric min/max).
+//
+// v4: Description / LevelDefinitions / UIKindOverride / NumericLevelSort
+// are sourced from field_manifest. Description is free-text tooltip copy
+// that the frontend MUST HTML-escape on render. LevelDefinitions is an
+// opaque JSON {level: label} string that the frontend parses on demand.
+// UIKindOverride takes precedence over DuckDB-type-driven Kind inference.
 type FieldMeta struct {
-	Field      string   `json:"field"`
-	DBType     string   `json:"dbType"`
-	Kind       string   `json:"kind"`
-	Role       string   `json:"role"`
-	Levels     []string `json:"levels,omitempty"`
-	NumericMin *float64 `json:"numericMin,omitempty"`
-	NumericMax *float64 `json:"numericMax,omitempty"`
+	Field            string   `json:"field"`
+	DBType           string   `json:"dbType"`
+	Kind             string   `json:"kind"`
+	Role             string   `json:"role"`
+	Description      string   `json:"description,omitempty"`
+	LevelDefinitions string   `json:"levelDefinitions,omitempty"`
+	UIKindOverride   string   `json:"uiKindOverride,omitempty"`
+	NumericLevelSort string   `json:"numericLevelSort,omitempty"`
+	Levels           []string `json:"levels,omitempty"`
+	NumericMin       *float64 `json:"numericMin,omitempty"`
+	NumericMax       *float64 `json:"numericMax,omitempty"`
 }
 
 // DatasetFieldsResponse is the shape returned by

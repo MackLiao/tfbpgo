@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
@@ -26,14 +27,26 @@ func (s *Server) buildDatasetsResponse() ([]byte, error) {
 	}
 	out := domain.DatasetsResponse{}
 	for _, d := range s.Manifests.Datasets {
+		// Parse condition_cols CSV → []string on the server so the JSON
+		// contract is clean. The manifest gate has already validated
+		// every entry against SafeIdentRE.
+		var cc []string
+		if d.ConditionCols != "" {
+			cc = strings.Split(d.ConditionCols, ",")
+		} else {
+			cc = []string{}
+		}
 		out.Datasets = append(out.Datasets, domain.DatasetEntry{
-			DBName:        d.DBName,
-			DataType:      d.DataType,
-			Assay:         d.Assay,
-			DisplayName:   d.DisplayName,
-			SourceRepo:    d.SourceRepo,
-			SampleIDField: d.SampleIDField,
-			Fields:        fieldsByDB[d.DBName],
+			DBName:         d.DBName,
+			DataType:       d.DataType,
+			Assay:          d.Assay,
+			DisplayName:    d.DisplayName,
+			SourceRepo:     d.SourceRepo,
+			SampleIDField:  d.SampleIDField,
+			Fields:         fieldsByDB[d.DBName],
+			DefaultActive:  d.DefaultActive,
+			DefaultFilters: d.DefaultFilters,
+			ConditionCols:  cc,
 		})
 	}
 	return jsonMarshal(out)

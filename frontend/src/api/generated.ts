@@ -1058,6 +1058,27 @@ export interface components {
             sourceRepo: string;
             sampleIdField: string;
             fields: string[];
+            /**
+             * @description v4: whether the dataset should be pre-selected on first visit.
+             *     Mirrors Shiny's `DEFAULT_ACTIVE_DATASETS`
+             *     (`reference/tfbpshiny/utils/vdb_init.py:40-50`).
+             */
+            defaultActive: boolean;
+            /**
+             * @description v4: opaque JSON `{field: FilterSpec}` to apply as the initial
+             *     filter state on first visit, or the empty string when no preset
+             *     applies. Forwarded verbatim from `dataset_manifest`; clients
+             *     parse on demand. Mirrors `DEFAULT_DATASET_FILTERS`
+             *     (`vdb_init.py:55-68`).
+             */
+            defaultFilters: string;
+            /**
+             * @description v4: ordered list of field names whose values together form the
+             *     sample-condition label shown in binding/perturbation hover
+             *     tooltips. Server-parsed from the comma-separated form in
+             *     `dataset_manifest.condition_cols`.
+             */
+            conditionCols: string[];
         };
         DatasetsResponse: {
             datasets: components["schemas"]["DatasetEntry"][];
@@ -1234,8 +1255,9 @@ export interface components {
          * @description One field's combined manifest + introspection metadata. `dbType` is
          *     the raw DuckDB column type ("VARCHAR", "DOUBLE", "INTEGER", ...) at
          *     first request time; `kind` is the categorical/numeric/bool bucket
-         *     the filter modal should render, after `FIELD_TYPE_OVERRIDES` is
-         *     applied (currently only `hackett.time` is overridden).
+         *     the filter modal should render, after `uiKindOverride` is applied.
+         *     In v4 the override is sourced from `field_manifest.ui_kind_override`
+         *     (was a Go-side constant in v3).
          */
         FieldMeta: {
             field: string;
@@ -1245,6 +1267,35 @@ export interface components {
             kind: "categorical" | "numeric" | "bool";
             /** @description Either `""` or `"experimental_condition"` (from `field_manifest.role`). */
             role: string;
+            /**
+             * @description v4: free-text tooltip copy from `field_manifest.description`.
+             *     Capped server-side at 1 KB. Frontend MUST HTML-escape on
+             *     render — this string may contain any UTF-8. Omitted when
+             *     empty.
+             */
+            description?: string;
+            /**
+             * @description v4: opaque JSON `{level: label}` mapping from
+             *     `field_manifest.level_definitions` (raw string the frontend
+             *     parses on demand). Capped at 16 KB. Omitted when empty.
+             */
+            levelDefinitions?: string;
+            /**
+             * @description v4: raw `field_manifest.ui_kind_override` value. When non-empty
+             *     it overrides DuckDB-type-driven `kind` inference. Empty
+             *     string means "no override; use DuckDB type". Omitted when
+             *     empty.
+             * @enum {string}
+             */
+            uiKindOverride?: "" | "categorical" | "numeric" | "bool";
+            /**
+             * @description v4: for categorical fields whose level labels look numeric
+             *     ("45", "90"), whether to sort numerically (`"numeric"`) or
+             *     lexicographically (`"string"`). Empty string means default
+             *     sort. Omitted when empty.
+             * @enum {string}
+             */
+            numericLevelSort?: "" | "numeric" | "string";
             /** @description filter_level_cache values for the field, sorted by the build pipeline. Omitted when the field has no cached levels. */
             levels?: string[];
             /**

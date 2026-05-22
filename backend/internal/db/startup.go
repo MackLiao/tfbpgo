@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	MinSchemaVersion = 3
-	MaxSchemaVersion = 3
+	MinSchemaVersion = 4
+	MaxSchemaVersion = 4
 )
 
 var RequiredTables = []string{

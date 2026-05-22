@@ -16,7 +16,7 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	m, err := LoadManifests(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, "test-fixture", m.Artifact.ArtifactVersion)
-	require.Equal(t, 3, m.Artifact.SchemaVersion)
+	require.Equal(t, 4, m.Artifact.SchemaVersion)
 	require.False(t, m.Artifact.ParityTestsPassed)
 
 	require.Len(t, m.Datasets, 2)
@@ -36,6 +36,19 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	require.Equal(t, "log2_shrunken_timecourses", dsByName["hackett"].EffectCol)
 	require.Equal(t, "", dsByName["hackett"].PValueCol,
 		"hackett intentionally has no p-value column — see buildResponsiveExpr")
+
+	// v4: dataset_manifest carries DefaultActive / DefaultFilters /
+	// ConditionCols. Both fixture datasets are default_active=TRUE; only
+	// hackett has a preset default_filters spec; both carry condition_cols.
+	require.True(t, dsByName["callingcards"].DefaultActive)
+	require.Equal(t, "", dsByName["callingcards"].DefaultFilters)
+	require.Equal(t, "condition", dsByName["callingcards"].ConditionCols)
+	require.True(t, dsByName["hackett"].DefaultActive)
+	require.Equal(t,
+		`{"time":{"type":"numeric","value":[45,45]}}`,
+		dsByName["hackett"].DefaultFilters,
+	)
+	require.Equal(t, "mechanism,restriction,time", dsByName["hackett"].ConditionCols)
 
 	// Widened in Phase 3 to cover production-only columns referenced by
 	// the binding/perturbation/topn handlers (poisson_pval,
@@ -65,11 +78,22 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 
 	// v3: field_manifest.role carries the experimental_condition classification.
 	roleByKey := map[string]string{}
+	fieldByKey := map[string]FieldRow{}
 	for _, f := range m.Fields {
 		roleByKey[f.DBName+"."+f.Field] = f.Role
+		fieldByKey[f.DBName+"."+f.Field] = f
 	}
 	require.Equal(t, "experimental_condition", roleByKey["callingcards.condition"])
 	require.Equal(t, "experimental_condition", roleByKey["hackett.time"])
 	// Sanity-check that a non-condition field has the empty role.
 	require.Equal(t, "", roleByKey["callingcards.target_locus_tag"])
+
+	// v4: field_manifest carries per-(db, field) UX metadata. At least one
+	// row (hackett.time) must surface UIKindOverride=="categorical" so the
+	// frontend renders a selectize for it; everything else stays empty.
+	require.Equal(t, "categorical", fieldByKey["hackett.time"].UIKindOverride)
+	require.Equal(t, "numeric", fieldByKey["hackett.time"].NumericLevelSort)
+	require.Equal(t, "", fieldByKey["callingcards.score"].UIKindOverride)
+	require.Equal(t, "", fieldByKey["callingcards.score"].Description)
+	require.Equal(t, "", fieldByKey["callingcards.score"].LevelDefinitions)
 }

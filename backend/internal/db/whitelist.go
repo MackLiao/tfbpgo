@@ -3,7 +3,37 @@ package db
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
+
+// v4 caps. DefaultFilters / LevelDefinitions are forwarded to the
+// frontend as opaque JSON; Description is free-text tooltip copy that
+// may contain any UTF-8. The caps are defense-in-depth so a hand-edited
+// artifact cannot blow up the response body. Frontend MUST HTML-escape
+// Description on render.
+const (
+	maxDefaultFiltersBytes  = 16 * 1024
+	maxLevelDefinitionBytes = 16 * 1024
+	maxDescriptionBytes     = 1 * 1024
+)
+
+// allowedUIKindOverride is the closed set of values
+// field_manifest.ui_kind_override may take. Empty string means "no
+// override; use DuckDB-type inference".
+var allowedUIKindOverride = map[string]struct{}{
+	"":            {},
+	"categorical": {},
+	"numeric":     {},
+	"bool":        {},
+}
+
+// allowedNumericLevelSort is the closed set of values
+// field_manifest.numeric_level_sort may take.
+var allowedNumericLevelSort = map[string]struct{}{
+	"":        {},
+	"numeric": {},
+	"string":  {},
+}
 
 // SafeIdentRE matches conservative SQL identifier shape: an ASCII letter
 // or underscore followed by alphanumerics or underscores. This is the
@@ -47,10 +77,40 @@ func NewWhitelist(m *Manifests) (*Whitelist, error) {
 		if d.PValueCol != "" && !SafeIdentRE.MatchString(d.PValueCol) {
 			return nil, fmt.Errorf("manifest contains unsafe pvalue_col for %q: %q", d.DBName, d.PValueCol)
 		}
+		// v4: validate condition_cols entries (CSV) against SafeIdentRE
+		// because these are interpolated into SQL by handlers that emit
+		// the sample-condition label. DefaultFilters is opaque JSON and
+		// must NOT be interpolated into SQL; we only cap its size as
+		// defense-in-depth against a hand-edited artifact.
+		if d.ConditionCols != "" {
+			for _, c := range strings.Split(d.ConditionCols, ",") {
+				if !SafeIdentRE.MatchString(c) {
+					return nil, fmt.Errorf("manifest contains unsafe condition_cols entry for %q: %q", d.DBName, c)
+				}
+			}
+		}
+		if len(d.DefaultFilters) > maxDefaultFiltersBytes {
+			return nil, fmt.Errorf("manifest default_filters for %q exceeds %d-byte cap (%d)", d.DBName, maxDefaultFiltersBytes, len(d.DefaultFilters))
+		}
 	}
 	for _, f := range m.Fields {
 		if !SafeIdentRE.MatchString(f.DBName) || !SafeIdentRE.MatchString(f.Field) {
 			return nil, fmt.Errorf("manifest contains unsafe field: %q.%q", f.DBName, f.Field)
+		}
+		// v4: validate closed-set fields and cap free-text / JSON blobs.
+		// ui_kind_override / numeric_level_sort are exact-match against
+		// a small enum; the JSON-shaped fields are forwarded opaquely.
+		if _, ok := allowedUIKindOverride[f.UIKindOverride]; !ok {
+			return nil, fmt.Errorf("manifest ui_kind_override out of set for %q.%q: %q", f.DBName, f.Field, f.UIKindOverride)
+		}
+		if _, ok := allowedNumericLevelSort[f.NumericLevelSort]; !ok {
+			return nil, fmt.Errorf("manifest numeric_level_sort out of set for %q.%q: %q", f.DBName, f.Field, f.NumericLevelSort)
+		}
+		if len(f.LevelDefinitions) > maxLevelDefinitionBytes {
+			return nil, fmt.Errorf("manifest level_definitions for %q.%q exceeds %d-byte cap (%d)", f.DBName, f.Field, maxLevelDefinitionBytes, len(f.LevelDefinitions))
+		}
+		if len(f.Description) > maxDescriptionBytes {
+			return nil, fmt.Errorf("manifest description for %q.%q exceeds %d-byte cap (%d)", f.DBName, f.Field, maxDescriptionBytes, len(f.Description))
 		}
 	}
 	w := &Whitelist{

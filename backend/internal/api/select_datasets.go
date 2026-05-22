@@ -18,15 +18,10 @@ import (
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/queries"
 )
 
-// fieldTypeOverrides mirrors reference/tfbpshiny/modules/select_datasets/queries.py:17-20.
-// (db_name, field) pairs that should be exposed as categorical regardless of
-// their raw DB type. The Shiny code uses a tuple key whose first element may
-// be the empty string to mean "any dataset"; the Go map only supports exact
-// matches, which is sufficient for the parity-driving case (hackett.time) —
-// extend if more wildcard overrides are required.
-var fieldTypeOverrides = map[[2]string]string{
-	{"hackett", "time"}: "categorical",
-}
+// v4: the per-(db, field) UI kind override is sourced from
+// field_manifest.ui_kind_override, no longer a Go-side constant.
+// See reference/tfbpshiny/modules/select_datasets/queries.py:17-20 for
+// the values written into the artifact.
 
 // fieldIntrospection is the lazily-populated, per-Server cache of column
 // metadata derived from DESCRIBE on the actual table. Keyed by (db_name,
@@ -134,10 +129,12 @@ func (s *Server) WarmIntrospectionCache(ctx context.Context) error {
 
 // kindForDBType classifies a DuckDB type string into one of
 // "categorical" | "numeric" | "bool" using the same buckets the Shiny modal
-// uses. The override map takes precedence (hackett.time → categorical).
-func kindForDBType(dbName, field, dbType string) string {
-	if k, ok := fieldTypeOverrides[[2]string{dbName, field}]; ok {
-		return k
+// uses. Callers should consult uiKindOverride from field_manifest first;
+// kindForDBType is the fallback when no override is set. The override
+// argument is honored here too so we can keep the lookup centralized.
+func kindForDBType(uiKindOverride, dbType string) string {
+	if uiKindOverride != "" {
+		return uiKindOverride
 	}
 	t := strings.ToUpper(dbType)
 	// Strip parameterized type suffix like DECIMAL(10,2).
@@ -230,15 +227,11 @@ func (s *Server) DatasetFields(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) buildDatasetFieldsResponse(ctx context.Context, dbName string) ([]byte, error) {
-	// Gather fields + roles from the manifest for this dataset only.
-	type fld struct {
-		name string
-		role string
-	}
-	var flds []fld
+	// Gather fields + v4 metadata from the manifest for this dataset only.
+	var flds []db.FieldRow
 	for _, f := range s.Manifests.Fields {
 		if f.DBName == dbName {
-			flds = append(flds, fld{name: f.Field, role: f.Role})
+			flds = append(flds, f)
 		}
 	}
 
@@ -252,22 +245,26 @@ func (s *Server) buildDatasetFieldsResponse(ctx context.Context, dbName string) 
 
 	out := domain.DatasetFieldsResponse{DBName: dbName, Fields: make([]domain.FieldMeta, 0, len(flds))}
 	for _, f := range flds {
-		intro, ok, err := s.introspectField(ctx, dbName, f.name)
+		intro, ok, err := s.introspectField(ctx, dbName, f.Field)
 		if err != nil {
-			return nil, fmt.Errorf("introspect %s.%s: %w", dbName, f.name, err)
+			return nil, fmt.Errorf("introspect %s.%s: %w", dbName, f.Field, err)
 		}
 		fm := domain.FieldMeta{
-			Field:  f.name,
-			Role:   f.role,
-			Levels: levelsByField[f.name],
+			Field:            f.Field,
+			Role:             f.Role,
+			Description:      f.Description,
+			LevelDefinitions: f.LevelDefinitions,
+			UIKindOverride:   f.UIKindOverride,
+			NumericLevelSort: f.NumericLevelSort,
+			Levels:           levelsByField[f.Field],
 		}
 		if ok {
 			fm.DBType = intro.dbType
-			fm.Kind = kindForDBType(dbName, f.name, intro.dbType)
+			fm.Kind = kindForDBType(f.UIKindOverride, intro.dbType)
 			if fm.Kind == "numeric" {
-				rng, err := s.computeNumericRange(ctx, dbName, f.name, intro.table)
+				rng, err := s.computeNumericRange(ctx, dbName, f.Field, intro.table)
 				if err != nil {
-					return nil, fmt.Errorf("range %s.%s: %w", dbName, f.name, err)
+					return nil, fmt.Errorf("range %s.%s: %w", dbName, f.Field, err)
 				}
 				fm.NumericMin = rng.min
 				fm.NumericMax = rng.max
@@ -276,7 +273,7 @@ func (s *Server) buildDatasetFieldsResponse(ctx context.Context, dbName string) 
 			// Field present in manifest but absent from both tables. Treat as
 			// categorical (least surprising for a UI control) and surface the
 			// empty DBType so the operator can spot the drift in logs / API.
-			fm.Kind = kindForDBType(dbName, f.name, "")
+			fm.Kind = kindForDBType(f.UIKindOverride, "")
 		}
 		out.Fields = append(out.Fields, fm)
 	}

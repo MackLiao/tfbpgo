@@ -73,7 +73,7 @@ def test_fixture_hackett_meta_includes_all_three_tiers(built_fixture: Path) -> N
 
 def test_fixture_dataset_manifest_v3_columns(built_fixture: Path) -> None:
     """v3: dataset_manifest carries effect_col/pvalue_col. callingcards has
-    a real p-value column; hackett intentionally has none."""
+    a real p-value column; hackett intentionally has none. (Retained at v4.)"""
     conn = duckdb.connect(str(built_fixture), read_only=True)
     try:
         rows = conn.execute(
@@ -85,7 +85,7 @@ def test_fixture_dataset_manifest_v3_columns(built_fixture: Path) -> None:
         ).fetchone()[0]
     finally:
         conn.close()
-    assert sv == 3
+    assert sv == 4
     by_name = {db: (eff, pv) for (db, eff, pv) in rows}
     assert by_name["callingcards"] == ("callingcards_enrichment", "poisson_pval")
     assert by_name["hackett"] == ("log2_shrunken_timecourses", "")
@@ -106,6 +106,51 @@ def test_fixture_field_manifest_role_column(built_fixture: Path) -> None:
     # Sanity: a non-condition field is empty-role.
     assert role_by_key[("callingcards", "target_locus_tag")] == ""
     assert role_by_key[("hackett", "log2_shrunken_timecourses")] == ""
+
+
+def test_fixture_dataset_manifest_v4_columns(built_fixture: Path) -> None:
+    """v4: dataset_manifest gains default_active / default_filters /
+    condition_cols. Both fixture datasets are default_active=TRUE; only
+    hackett has a default_filters spec; both carry condition_cols."""
+    conn = duckdb.connect(str(built_fixture), read_only=True)
+    try:
+        rows = conn.execute(
+            "SELECT db_name, default_active, default_filters, condition_cols "
+            "FROM dataset_manifest ORDER BY db_name"
+        ).fetchall()
+    finally:
+        conn.close()
+    by_name = {db: (active, df, cc) for (db, active, df, cc) in rows}
+    assert by_name["callingcards"] == (True, "", "condition")
+    assert by_name["hackett"] == (
+        True,
+        '{"time":{"type":"numeric","value":[45,45]}}',
+        "mechanism,restriction,time",
+    )
+
+
+def test_fixture_field_manifest_v4_columns(built_fixture: Path) -> None:
+    """v4: field_manifest carries description / level_definitions /
+    ui_kind_override / numeric_level_sort. hackett.time gets the
+    categorical + numeric-sort override; everything else is empty."""
+    conn = duckdb.connect(str(built_fixture), read_only=True)
+    try:
+        rows = conn.execute(
+            "SELECT db_name, field, description, level_definitions, "
+            "ui_kind_override, numeric_level_sort FROM field_manifest"
+        ).fetchall()
+    finally:
+        conn.close()
+    by_key = {
+        (db, f): (desc, lvl_defs, ui_kind, lvl_sort)
+        for (db, f, desc, lvl_defs, ui_kind, lvl_sort) in rows
+    }
+    # hackett.time: categorical + numeric level-sort.
+    assert by_key[("hackett", "time")] == ("", "", "categorical", "numeric")
+    # callingcards.condition: no override.
+    assert by_key[("callingcards", "condition")] == ("", "", "", "")
+    # callingcards.score: no override.
+    assert by_key[("callingcards", "score")] == ("", "", "", "")
 
 
 def test_fixture_is_reproducible(tmp_path: Path) -> None:

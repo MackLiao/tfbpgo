@@ -69,12 +69,18 @@ func TestDatasetFields_HackettTimeOverride(t *testing.T) {
 	}
 	tm, ok := byField["time"]
 	require.True(t, ok, "time field missing")
-	// time is INTEGER in DuckDB but FIELD_TYPE_OVERRIDES forces categorical.
-	require.Equal(t, "categorical", tm.Kind, "FIELD_TYPE_OVERRIDES should win")
+	// time is INTEGER in DuckDB but FIELD_TYPE_OVERRIDES (sourced from
+	// field_manifest.ui_kind_override in v4) forces categorical.
+	require.Equal(t, "categorical", tm.Kind, "ui_kind_override should win")
 	require.Equal(t, "experimental_condition", tm.Role)
 	require.ElementsMatch(t, []string{"45"}, tm.Levels)
 	require.Nil(t, tm.NumericMin, "categorical override should not set numeric range")
 	require.Nil(t, tm.NumericMax)
+	// v4: the override + level-sort hint are exposed verbatim from the
+	// manifest so the frontend can render the selectize with numeric sort.
+	require.Equal(t, "categorical", tm.UIKindOverride,
+		"v4: UIKindOverride sourced from field_manifest")
+	require.Equal(t, "numeric", tm.NumericLevelSort)
 }
 
 func TestDatasetFields_UnknownDataset400(t *testing.T) {
