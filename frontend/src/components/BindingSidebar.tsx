@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { RegulatorPicker } from "@/components/RegulatorPicker";
 
 // Sidebar for the Binding route. Mirrors
@@ -17,6 +18,12 @@ export interface BindingSidebarProps {
   method: "pearson" | "spearman";
   onColChange: (col: "effect" | "pvalue") => void;
   onMethodChange: (m: "pearson" | "spearman") => void;
+  // Optional override for the Regulator picker. When provided (typically
+  // an ActivePairRegulatorPicker bound to the loaded corr response), it
+  // replaces the global RegulatorPicker. Mirrors Shiny's behavior of
+  // narrowing the selectize to regulators present in the active pairs
+  // (docs/parity/binding.md row 10).
+  regulatorPickerSlot?: ReactNode;
 }
 
 export function BindingSidebar({
@@ -26,6 +33,7 @@ export function BindingSidebar({
   method,
   onColChange,
   onMethodChange,
+  regulatorPickerSlot,
 }: BindingSidebarProps) {
   return (
     <aside className="space-y-5 rounded-md border border-slate-200 bg-white p-3 text-sm">
@@ -85,7 +93,9 @@ export function BindingSidebar({
 
       <div>
         <h3 className="mb-1 font-medium text-slate-700">Regulator</h3>
-        <RegulatorPicker value={regulator} onChange={onRegulatorChange} />
+        {regulatorPickerSlot ?? (
+          <RegulatorPicker value={regulator} onChange={onRegulatorChange} />
+        )}
       </div>
     </aside>
   );

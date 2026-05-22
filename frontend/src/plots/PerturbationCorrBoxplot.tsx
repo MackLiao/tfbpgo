@@ -2,6 +2,7 @@
 // Keep these in sync.
 import { useMemo } from "react";
 import type { Schemas } from "@/api/client";
+import { htmlEscape } from "@/lib/html-escape";
 import { PlotLazy } from "./PlotLazy";
 
 // Pairwise correlation distribution box plot for the Perturbation module.
@@ -25,6 +26,9 @@ export interface PerturbationCorrBoxplotProps {
   datasetDisplay?: (dbName: string) => string;
   // Optional locus_tag → display_name map for regulator hover text.
   regulatorDisplayMap?: Record<string, string>;
+  // Optional per-dataset sample_id → condition-label map. Mirrors
+  // BindingCorrBoxplot — see that file's comment for the hover format.
+  sampleConditionsByDB?: Record<string, Record<string, string>>;
   onRegulatorClick: (locusTag: string) => void;
 }
 
@@ -37,7 +41,11 @@ interface PointAccumulator {
 interface OverlayPoint {
   x: string;
   y: number;
-  text: string;
+  symbol: string;
+  dbA: string;
+  dbAId: string;
+  dbB: string;
+  dbBId: string;
 }
 
 export function PerturbationCorrBoxplot({
@@ -45,6 +53,7 @@ export function PerturbationCorrBoxplot({
   selectedRegulator,
   datasetDisplay,
   regulatorDisplayMap,
+  sampleConditionsByDB,
   onRegulatorClick,
 }: PerturbationCorrBoxplotProps) {
   const displayDb = datasetDisplay ?? ((db: string) => db);
@@ -81,7 +90,11 @@ export function PerturbationCorrBoxplot({
           overlay.push({
             x: xLabel,
             y: pt.correlation,
-            text: regDisplay(pt.regulatorLocusTag),
+            symbol: regDisplay(pt.regulatorLocusTag),
+            dbA: pair.dbA,
+            dbAId: pt.dbAId,
+            dbB: pair.dbB,
+            dbBId: pt.dbBId,
           });
         }
       }
@@ -108,20 +121,44 @@ export function PerturbationCorrBoxplot({
 
     let overlayTrace: Record<string, unknown> | null = null;
     if (overlay.length > 0) {
+      // Per-point hovertext, mirroring workspace.py:295-306 (binding) /
+      // the equivalent perturbation overlay: a multi-line string with
+      // symbol, r, and per-side condition labels. HTML-escaped because
+      // Plotly renders hovertext as HTML.
+      const hovertext = overlay.map((p) => {
+        const lines: string[] = [];
+        lines.push(htmlEscape(p.symbol));
+        lines.push(`r = ${p.y.toFixed(3)}`);
+        const condA = sampleConditionsByDB?.[p.dbA]?.[p.dbAId] ?? "";
+        const condB = sampleConditionsByDB?.[p.dbB]?.[p.dbBId] ?? "";
+        if (condA) {
+          lines.push(`${htmlEscape(displayDb(p.dbA))}: ${htmlEscape(condA)}`);
+        }
+        if (condB) {
+          lines.push(`${htmlEscape(displayDb(p.dbB))}: ${htmlEscape(condB)}`);
+        }
+        return lines.join("<br>");
+      });
       overlayTrace = {
         type: "scatter",
         mode: "markers",
         x: overlay.map((p) => p.x),
         y: overlay.map((p) => p.y),
-        text: overlay.map((p) => `${p.text}<br>r = ${p.y.toFixed(3)}`),
+        hovertext,
         marker: { size: 10, color: "black", symbol: "circle" },
-        hovertemplate: "%{text}<extra></extra>",
+        hovertemplate: "%{hovertext}<extra></extra>",
         showlegend: false,
       };
     }
 
     return { boxTraces: traces, overlayTrace, hasPairs: true };
-  }, [resp.pairs, selectedRegulator, displayDb, regulatorDisplayMap]);
+  }, [
+    resp.pairs,
+    selectedRegulator,
+    displayDb,
+    regulatorDisplayMap,
+    sampleConditionsByDB,
+  ]);
 
   // Empty state: render a placeholder annotation centered in the figure,
   // matching workspace.py:217-226.

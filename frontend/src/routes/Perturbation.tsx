@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { qk } from "@/lib/query-keys";
+import { ActivePairRegulatorPicker } from "@/components/ActivePairRegulatorPicker";
 import { PerturbationSidebar } from "@/components/PerturbationSidebar";
 import { PerturbationCorrBoxplot } from "@/plots/PerturbationCorrBoxplot";
 import { PerturbationScatterRow } from "@/plots/PerturbationScatterRow";
@@ -87,6 +88,34 @@ export function Perturbation() {
     setParams(np);
   };
 
+  // Per-dataset sample-conditions fetch — see Binding.tsx for the
+  // pattern. Feeds the selected-regulator overlay hovertext.
+  const participatingDatasets = useMemo<string[]>(() => {
+    if (!corrQuery.data) return [];
+    const s = new Set<string>();
+    for (const p of corrQuery.data.pairs) {
+      s.add(p.dbA);
+      s.add(p.dbB);
+    }
+    return [...s].sort();
+  }, [corrQuery.data]);
+
+  const sampleCondQueries = useQueries({
+    queries: participatingDatasets.map((db) => ({
+      queryKey: qk.sampleConditions(db),
+      queryFn: () => api.sampleConditions({ db }),
+    })),
+  });
+
+  const sampleConditionsByDB = useMemo<Record<string, Record<string, string>>>(() => {
+    const out: Record<string, Record<string, string>> = {};
+    participatingDatasets.forEach((db, i) => {
+      const data = sampleCondQueries[i]?.data;
+      if (data) out[db] = data.labels;
+    });
+    return out;
+  }, [participatingDatasets, sampleCondQueries]);
+
   // Compute the set of datasets that had no row for the selected regulator
   // (mirrors workspace.py:429-469). A dataset is "missing" only if EVERY
   // pair it participates in lacks the regulator — matches Shiny's
@@ -121,6 +150,15 @@ export function Perturbation() {
         method={method}
         onColChange={setCol}
         onMethodChange={setMethod}
+        regulatorPickerSlot={
+          corrQuery.data ? (
+            <ActivePairRegulatorPicker
+              corr={corrQuery.data}
+              value={reg}
+              onChange={setRegulator}
+            />
+          ) : undefined
+        }
       />
       <div className="space-y-4">
         <h1 className="text-2xl font-semibold">Perturbation Correlation</h1>
@@ -139,6 +177,7 @@ export function Perturbation() {
               resp={corrQuery.data}
               selectedRegulator={reg}
               datasetDisplay={datasetDisplay}
+              sampleConditionsByDB={sampleConditionsByDB}
               onRegulatorClick={setRegulator}
             />
           ) : null}

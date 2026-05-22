@@ -161,6 +161,39 @@ paths:
         "410":
           $ref: "#/components/responses/StaleArtifactVersion"
 
+  /api/v/{v}/datasets/{db}/sample-conditions:
+    get:
+      tags: [select_datasets]
+      summary: Per-sample condition-label map for one dataset
+      description: |
+        Returns the `{sample_id: condition_label}` map used by the
+        binding/perturbation correlation overlay hover tooltips. Mirrors
+        Shiny's `fetch_sample_condition_map`
+        (`reference/tfbpshiny/utils/sample_conditions.py:55-94`). Source
+        columns come from `dataset_manifest.condition_cols` (CSV;
+        schema_version=4). The label is the per-row join of non-empty
+        trimmed values with `" / "`. Samples whose composed label is
+        empty are omitted. When `condition_cols` is empty, returns an
+        empty `labels` object and `conditionCols: []`.
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: db
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sample-condition label map.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SampleConditionsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
   /api/v/{v}/selection/matrix:
     get:
       tags: [select_datasets]
@@ -1243,6 +1276,29 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DatasetRegulator"
+
+    SampleConditionsResponse:
+      type: object
+      required: [dbName, conditionCols, labels]
+      properties:
+        dbName:
+          type: string
+        conditionCols:
+          type: array
+          items:
+            type: string
+          description: |
+            Per-dataset condition columns from
+            `dataset_manifest.condition_cols`. Empty array when the
+            dataset has no condition columns configured.
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Map from `sample_id` to the joined condition label
+            (`" / "`-separated). Samples whose composed label is empty
+            are omitted.
 
     MatrixDiagonalCell:
       type: object

@@ -210,6 +210,13 @@ export const api = {
     get<Schemas["DatasetRegulatorsResponse"]>(
       vpath(`/datasets/${encodeURIComponent(q.db)}/regulators`),
     ),
+  // Per-dataset sample_id → condition-label map used by the binding /
+  // perturbation correlation overlay hovertext. See
+  // docs/parity/binding.md rows 21, 42.
+  sampleConditions: (q: { db: string }): Promise<Schemas["SampleConditionsResponse"]> =>
+    get<Schemas["SampleConditionsResponse"]>(
+      vpath(`/datasets/${encodeURIComponent(q.db)}/sample-conditions`),
+    ),
   selectionMatrix: (q: {
     datasets: string[];
     filters?: string;

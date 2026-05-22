@@ -1,5 +1,6 @@
 // Mirrors components/BindingSidebar.tsx 1:1 for the Perturbation route.
 // Keep these in sync.
+import type { ReactNode } from "react";
 import { RegulatorPicker } from "@/components/RegulatorPicker";
 
 // Sidebar for the Perturbation route. Mirrors
@@ -19,6 +20,9 @@ export interface PerturbationSidebarProps {
   method: "pearson" | "spearman";
   onColChange: (col: "effect" | "pvalue") => void;
   onMethodChange: (m: "pearson" | "spearman") => void;
+  // See BindingSidebar — optional narrowed picker shown once the corr
+  // response is loaded.
+  regulatorPickerSlot?: ReactNode;
 }
 
 export function PerturbationSidebar({
@@ -28,6 +32,7 @@ export function PerturbationSidebar({
   method,
   onColChange,
   onMethodChange,
+  regulatorPickerSlot,
 }: PerturbationSidebarProps) {
   return (
     <aside className="space-y-5 rounded-md border border-slate-200 bg-white p-3 text-sm">
@@ -87,7 +92,9 @@ export function PerturbationSidebar({
 
       <div>
         <h3 className="mb-1 font-medium text-slate-700">Regulator</h3>
-        <RegulatorPicker value={regulator} onChange={onRegulatorChange} />
+        {regulatorPickerSlot ?? (
+          <RegulatorPicker value={regulator} onChange={onRegulatorChange} />
+        )}
       </div>
     </aside>
   );

@@ -66,6 +66,8 @@ export const qk = {
     [v(), "selectionMatrix", [...datasets].sort().join(","), filters] as const,
   datasetFields: (db: string) => [v(), "datasetFields", db] as const,
   datasetRegulators: (db: string) => [v(), "datasetRegulators", db] as const,
+  // Per-dataset sample-conditions map for Binding/Perturbation overlay hovertext.
+  sampleConditions: (db: string) => [v(), "sampleConditions", db] as const,
   // Pair is sorted into the key so /regulators/resolve?common=A:B and B:A
   // share a cache entry (the server is order-symmetric for intersect anyway).
   regulatorsResolveCommon: (dbA: string, dbB: string) => {

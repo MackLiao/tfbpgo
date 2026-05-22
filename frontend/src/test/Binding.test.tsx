@@ -126,6 +126,81 @@ describe("Binding route URL keys", () => {
     });
   });
 
+  it("renders the ActivePairRegulatorPicker narrowed to corr-response regulators once corr data is loaded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch((url) => {
+        if (url.endsWith("/datasets")) {
+          return {
+            datasets: [
+              { dbName: "callingcards", displayName: "Calling Cards" },
+              { dbName: "hackett", displayName: "Hackett" },
+            ],
+          };
+        }
+        if (url.includes("/binding/corr")) {
+          return {
+            method: "pearson",
+            col: "effect",
+            pairs: [
+              {
+                dbA: "callingcards",
+                dbB: "hackett",
+                colA: "callingcards_enrichment",
+                colB: "effect",
+                points: [
+                  {
+                    dbA: "callingcards",
+                    dbAId: "cc_0",
+                    dbB: "hackett",
+                    dbBId: "h_0",
+                    regulatorLocusTag: "YBR289W",
+                    correlation: 0.5,
+                  },
+                  {
+                    dbA: "callingcards",
+                    dbAId: "cc_1",
+                    dbB: "hackett",
+                    dbBId: "h_1",
+                    regulatorLocusTag: "YAL001C",
+                    correlation: 0.2,
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        if (url.includes("/sample-conditions")) {
+          return { dbName: "x", conditionCols: [], labels: {} };
+        }
+        return {};
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={["/binding?binding=callingcards,hackett"]}>
+          <Binding />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Once corrQuery.data resolves, the sidebar must replace the global
+    // typeahead RegulatorPicker (which has an Input with this exact
+    // placeholder) with the narrowed <select> (small set < 50).
+    await waitFor(() => {
+      expect(
+        screen.queryByPlaceholderText(/search regulator/i),
+      ).not.toBeInTheDocument();
+    });
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(select).toBeInTheDocument();
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    // Alphabetized by case-insensitive label; "YAL001C" < "YBR289W".
+    expect(optionValues).toContain("YBR289W");
+    expect(optionValues).toContain("YAL001C");
+  });
+
   it("renders the correlation boxplot trace + selected-regulator overlay when corr data is present", async () => {
     vi.stubGlobal(
       "fetch",

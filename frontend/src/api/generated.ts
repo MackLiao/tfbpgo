@@ -281,6 +281,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v/{v}/datasets/{db}/sample-conditions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-sample condition-label map for one dataset
+         * @description Returns the `{sample_id: condition_label}` map used by the
+         *     binding/perturbation correlation overlay hover tooltips. Mirrors
+         *     Shiny's `fetch_sample_condition_map`
+         *     (`reference/tfbpshiny/utils/sample_conditions.py:55-94`). Source
+         *     columns come from `dataset_manifest.condition_cols` (CSV;
+         *     schema_version=4). The label is the per-row join of non-empty
+         *     trimmed values with `" / "`. Samples whose composed label is
+         *     empty are omitted. When `condition_cols` is empty, returns an
+         *     empty `labels` object and `conditionCols: []`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                    db: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Sample-condition label map. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SampleConditionsResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v/{v}/selection/matrix": {
         parameters: {
             query?: never;
@@ -1329,6 +1385,23 @@ export interface components {
         DatasetRegulatorsResponse: {
             dbName: string;
             regulators: components["schemas"]["DatasetRegulator"][];
+        };
+        SampleConditionsResponse: {
+            dbName: string;
+            /**
+             * @description Per-dataset condition columns from
+             *     `dataset_manifest.condition_cols`. Empty array when the
+             *     dataset has no condition columns configured.
+             */
+            conditionCols: string[];
+            /**
+             * @description Map from `sample_id` to the joined condition label
+             *     (`" / "`-separated). Samples whose composed label is empty
+             *     are omitted.
+             */
+            labels: {
+                [key: string]: string;
+            };
         };
         MatrixDiagonalCell: {
             dbName: string;

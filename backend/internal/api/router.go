@@ -69,6 +69,7 @@ func (s *Server) Routes() http.Handler {
 		// prefix correctly.
 		r.Get("/datasets/{db}/fields", s.DatasetFields)
 		r.Get("/datasets/{db}/regulators", s.DatasetRegulators)
+		r.Get("/datasets/{db}/sample-conditions", s.SampleConditions)
 		r.Get("/selection/matrix", s.SelectionMatrix)
 		r.Get("/selection/breakdown", s.SelectionBreakdown)
 		r.Get("/regulators/resolve", s.RegulatorsResolve)

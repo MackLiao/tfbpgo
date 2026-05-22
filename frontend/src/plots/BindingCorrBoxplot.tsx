@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { Schemas } from "@/api/client";
+import { htmlEscape } from "@/lib/html-escape";
 import { PlotLazy } from "./PlotLazy";
 
 // Pairwise correlation distribution box plot for the Binding module.
@@ -23,6 +24,11 @@ export interface BindingCorrBoxplotProps {
   datasetDisplay?: (dbName: string) => string;
   // Optional locus_tag → display_name map for regulator hover text.
   regulatorDisplayMap?: Record<string, string>;
+  // Optional per-dataset sample_id → condition-label map. When present,
+  // selected-regulator overlay hovertext appends one line per dataset
+  // ("<dataset display>: <condition label>"). Mirrors Shiny's
+  // workspace.py:295-306 (`fetch_sample_condition_map` → hover join).
+  sampleConditionsByDB?: Record<string, Record<string, string>>;
   onRegulatorClick: (locusTag: string) => void;
 }
 
@@ -35,7 +41,14 @@ interface PointAccumulator {
 interface OverlayPoint {
   x: string;
   y: number;
-  text: string;
+  // Symbol or fallback locus tag for the selected regulator (pre-escape).
+  symbol: string;
+  // Per-side dataset + sample-id context, used to look up condition
+  // labels at render time (mirrors workspace.py:295-306).
+  dbA: string;
+  dbAId: string;
+  dbB: string;
+  dbBId: string;
 }
 
 export function BindingCorrBoxplot({
@@ -43,6 +56,7 @@ export function BindingCorrBoxplot({
   selectedRegulator,
   datasetDisplay,
   regulatorDisplayMap,
+  sampleConditionsByDB,
   onRegulatorClick,
 }: BindingCorrBoxplotProps) {
   const displayDb = datasetDisplay ?? ((db: string) => db);
@@ -79,7 +93,11 @@ export function BindingCorrBoxplot({
           overlay.push({
             x: xLabel,
             y: pt.correlation,
-            text: regDisplay(pt.regulatorLocusTag),
+            symbol: regDisplay(pt.regulatorLocusTag),
+            dbA: pair.dbA,
+            dbAId: pt.dbAId,
+            dbB: pair.dbB,
+            dbBId: pt.dbBId,
           });
         }
       }
@@ -106,20 +124,45 @@ export function BindingCorrBoxplot({
 
     let overlayTrace: Record<string, unknown> | null = null;
     if (overlay.length > 0) {
+      // Per-point hovertext, mirroring workspace.py:295-306:
+      //   "<symbol>\nr = X.XXX\n<dataset A>: <cond A>\n<dataset B>: <cond B>"
+      // joined with "<br>". Every DB-sourced string (symbol, display
+      // name, condition label) is HTML-escaped before injection because
+      // Plotly renders hovertext as HTML by default.
+      const hovertext = overlay.map((p) => {
+        const lines: string[] = [];
+        lines.push(htmlEscape(p.symbol));
+        lines.push(`r = ${p.y.toFixed(3)}`);
+        const condA = sampleConditionsByDB?.[p.dbA]?.[p.dbAId] ?? "";
+        const condB = sampleConditionsByDB?.[p.dbB]?.[p.dbBId] ?? "";
+        if (condA) {
+          lines.push(`${htmlEscape(displayDb(p.dbA))}: ${htmlEscape(condA)}`);
+        }
+        if (condB) {
+          lines.push(`${htmlEscape(displayDb(p.dbB))}: ${htmlEscape(condB)}`);
+        }
+        return lines.join("<br>");
+      });
       overlayTrace = {
         type: "scatter",
         mode: "markers",
         x: overlay.map((p) => p.x),
         y: overlay.map((p) => p.y),
-        text: overlay.map((p) => `${p.text}<br>r = ${p.y.toFixed(3)}`),
+        hovertext,
         marker: { size: 10, color: "black", symbol: "circle" },
-        hovertemplate: "%{text}<extra></extra>",
+        hovertemplate: "%{hovertext}<extra></extra>",
         showlegend: false,
       };
     }
 
     return { boxTraces: traces, overlayTrace, hasPairs: true };
-  }, [resp.pairs, selectedRegulator, displayDb, regulatorDisplayMap]);
+  }, [
+    resp.pairs,
+    selectedRegulator,
+    displayDb,
+    regulatorDisplayMap,
+    sampleConditionsByDB,
+  ]);
 
   // Empty state: render a placeholder annotation centered in the figure,
   // matching workspace.py:236-245.

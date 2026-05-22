@@ -49,6 +49,21 @@ type DatasetRegulatorsResponse struct {
 	Regulators []DatasetRegulator `json:"regulators"`
 }
 
+// SampleConditionsResponse is the shape returned by
+// GET /api/v/{v}/datasets/{db}/sample-conditions.
+//
+// Mirrors the Shiny `fetch_sample_condition_map` helper at
+// reference/tfbpshiny/utils/sample_conditions.py:55-94. Labels is a map
+// from sample_id to the joined condition string (values separated by
+// " / "). Samples whose composed label is empty (all NULL or all
+// whitespace) are omitted. When the dataset has empty `condition_cols`
+// in the manifest, ConditionCols is an empty slice and Labels is empty.
+type SampleConditionsResponse struct {
+	DBName        string            `json:"dbName"`
+	ConditionCols []string          `json:"conditionCols"`
+	Labels        map[string]string `json:"labels"`
+}
+
 // MatrixDiagonalCell is one per-dataset cell in the selection-matrix
 // diagonal: distinct regulator + sample counts after filters applied.
 type MatrixDiagonalCell struct {
