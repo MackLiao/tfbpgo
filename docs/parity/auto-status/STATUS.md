@@ -13,8 +13,8 @@ Read before working, append a section before finishing.
 
 | ID  | Title                                      | Status      | Notes |
 |-----|--------------------------------------------|-------------|-------|
-| A1  | schema_version=3 — externalize column maps | DONE        | commit 1976f59 |
-| A2  | Pearson/Spearman correlation SQL           | PENDING     | depends on A1 |
+| A1  | schema_version=3 — externalize column maps | DONE        | 1976f59 + c784d9e (review fixes); polish notes in [polish.md](polish.md) |
+| A2  | Pearson/Spearman correlation SQL           | DONE        | depends on A1 |
 | A3  | correlation endpoints                      | PENDING     | depends on A1+A2 |
 | A4  | Comparison hackett filter parity fix       | PENDING     | independent |
 | A5  | Select Datasets backend endpoints          | PENDING     | depends on A1 |
@@ -62,3 +62,21 @@ Read before working, append a section before finishing.
 - Tests: backend go test ./... ✓, data_prep pytest ✓, parity ✓.
 - Commit: 923b806
 - Status: A1 multi-review fixes DONE.
+
+### 2026-05-22 00:31 PDT — implementer A2
+- New SQL templates: 8 files (binding+perturbation × pearson+spearman × corr_pair+regulator_scatter).
+- Deleted placeholder files: binding/{corr_pair,regulator_scatter}.sql, perturbation/corr_pair.sql.
+- Templates mirror Shiny's _corr_pair_sql_impl + regulator_scatter_sql exactly
+  (INNER JOIN on (regulator, target); NULL/Inf/NaN exclusion; HAVING COUNT(*) >= 3
+  floor on corr_pair only; spearman uses caller-supplied {{order_a_expr}} /
+  {{order_b_expr}} so effect=ABS DESC vs pvalue=ASC is decided in Go).
+- Numerical-parity tests against fixture (callingcards × hackett); spot-checked
+  Pearson correlation = +1.0 for YBR289W cc_0_a × h_0 group (perfectly correlated
+  linspace inputs) and Spearman = -1.0 for same group (cc all-positive ABS-DESC
+  ranks 5..1 vs hackett all-negative ABS-DESC ranks 1..5).
+- Also verified HAVING floor prunes groups with <3 paired rows, and that the
+  pvalue ASC order branch parses + runs end-to-end.
+- Tests: backend go test ./... ✓ (added 11 tests in
+  backend/internal/queries/correlation_parity_test.go).
+- Commit: 2b18fef
+- Status: DONE.
