@@ -7,9 +7,15 @@
 //  - row 9  bool fields render as a checkbox
 //  - row 16 Reset / Apply Filters buttons in the modal footer
 //
-// Deferred (see polish.md): "Apply to all datasets" toggle (row 12),
-// description tooltip (row 9 label), level_definitions checkboxes (row 10),
-// cascade narrowing (row 19), from_pair annotation (rows 15/30/31).
+// Task C4 adds (schema_version=4 metadata):
+//  - row 9   description tooltip on field label via native title=
+//  - row 10  level_definitions JSON → human-readable checkbox labels
+//  - row 19  PARTIAL: numericLevelSort honored for categorical levels;
+//            full cascade narrowing deferred (needs runtime joins — see
+//            docs/parity/auto-status/polish.md C4 entry).
+//
+// Still deferred (see polish.md): "Apply to all datasets" toggle (row 12),
+// runtime cascade narrowing (row 19), from_pair annotation (rows 15/30/31).
 //
 // State model: this component holds a `pending` map locally and commits it
 // to URL via `onApply` only when the user clicks "Apply Filters". The page
@@ -23,6 +29,7 @@ import { qk } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { sortLevels } from "@/lib/sort-levels";
 
 type FilterSpec = Schemas["FilterSpec"];
 type FieldMeta = Schemas["FieldMeta"];
@@ -170,7 +177,17 @@ interface FieldControlProps {
 
 function FieldControl({ field, spec, onChange }: FieldControlProps) {
   if (field.kind === "categorical") {
-    const levels = field.levels ?? [];
+    // C4: honor numericLevelSort (e.g. hackett.time renders "10" < "45" < "90"
+    // rather than "10" < "45" < "90" risking lex-mangling once we have 3+ digits).
+    const levels = sortLevels(field.levels ?? [], field.numericLevelSort);
+    // C4: level_definitions is `{level: label}`. When present, render the
+    // human-readable label next to the checkbox; fall back to the raw level
+    // string otherwise. Defensive cast — wire type is `unknown`.
+    const levelLabels = field.levelDefinitions ?? {};
+    const labelFor = (lv: string): string => {
+      const raw = (levelLabels as Record<string, unknown>)[lv];
+      return typeof raw === "string" && raw.length > 0 ? raw : lv;
+    };
     // Value is string[] when set; null/empty means "no filter on this field".
     const selected: string[] = spec && spec.type === "categorical" && Array.isArray(spec.value)
       ? (spec.value as string[])
@@ -193,6 +210,7 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
             {levels.map((lv) => {
               const id = `flt-${field.field}-${lv}`;
               const checked = selected.includes(lv);
+              const label = labelFor(lv);
               return (
                 <li key={lv}>
                   <label htmlFor={id} className="flex items-center gap-1.5 text-sm">
@@ -201,7 +219,9 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
                       checked={checked}
                       onChange={(e) => toggle(lv, e.currentTarget.checked)}
                     />
-                    <span className="truncate">{lv}</span>
+                    <span className="truncate" title={label !== lv ? lv : undefined}>
+                      {label}
+                    </span>
                   </label>
                 </li>
               );
@@ -277,6 +297,7 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
   const id = `flt-${field.field}`;
   const checked = spec && spec.type === "bool" ? Boolean(spec.value) : false;
   const isSet = spec !== null;
+  const description = field.description && field.description.length > 0 ? field.description : undefined;
   return (
     <div>
       <div className="flex items-center gap-2">
@@ -285,7 +306,12 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
           checked={checked}
           onChange={(e) => onChange({ type: "bool", value: e.currentTarget.checked })}
         />
-        <label htmlFor={id} className="text-sm font-medium text-slate-800">
+        <label
+          htmlFor={id}
+          className="text-sm font-medium text-slate-800"
+          title={description}
+          data-testid={`field-label-${field.field}`}
+        >
           {field.field}
         </label>
         {isSet && (
@@ -299,9 +325,19 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
 }
 
 function FieldLabel({ field }: { field: FieldMeta }) {
+  // C4 (audit row 9): native browser tooltip via title= when the
+  // field_manifest.description is non-empty. Browser handles HTML escaping
+  // for attribute values, so no manual escape needed.
+  const description = field.description && field.description.length > 0 ? field.description : undefined;
   return (
     <div className="flex items-baseline justify-between">
-      <span className="text-sm font-medium text-slate-800">{field.field}</span>
+      <span
+        className="text-sm font-medium text-slate-800"
+        title={description}
+        data-testid={`field-label-${field.field}`}
+      >
+        {field.field}
+      </span>
       <span className="text-xs font-mono text-slate-500">
         {field.kind}
         {field.role ? ` · ${field.role}` : ""}

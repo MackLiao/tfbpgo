@@ -128,6 +128,31 @@ unless they cause downstream breakage.
   honored inside `kindForDBType` itself — which is true but mildly
   redundant. One-line doc cleanup; cosmetic only.
 
+## From C4 (Select Datasets — schema-v4-dependent features)
+
+- **Cascade narrowing inside filter modal** (audit row 19). The Shiny app
+  narrows the downstream categorical level set when an upstream
+  experimental_condition field has a selection (e.g. selecting
+  `restriction=Glucose` shrinks the `time` checkboxes to the time points
+  that actually exist under that restriction). C4 implements the simpler
+  half — `level_definitions` JSON now drives human-readable checkbox
+  labels — but DEFERS the runtime joins required to compute the narrowed
+  level set per upstream selection.
+
+  Doing it correctly needs either (a) a new backend endpoint
+  `/api/v/{v}/datasets/{db}/fields/{field}/levels?given={otherField}={value}…`
+  that JOINs `{db}_meta` rows live, or (b) a precomputed
+  `field_level_combinations` cache table in `tfbp.duckdb` keyed on
+  (db, field, upstream-selection-tuple). Both add load; defer until a
+  user actually asks for it.
+
+- **Dataset-level description tooltips** (audit row 22). C4 added the
+  field-level description tooltip via `field_manifest.description`. The
+  dataset row (sidebar) tooltip is the same pattern but on
+  `dataset_manifest.description` — which doesn't exist as of
+  schema_version=4. Add to schema_version=5 alongside any other
+  dataset-level copy needs, or fold into a generic `tooltip` column.
+
 ## From B4 (commit pending — Select Datasets rebuild)
 
 P1/P2 features from docs/parity/select_datasets.md §2 that were intentionally

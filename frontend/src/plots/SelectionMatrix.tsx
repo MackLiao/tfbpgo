@@ -5,7 +5,8 @@
 // the right primitive). Mirrors Shiny's `_matrix_data()` workspace from
 // reference/tfbpshiny/modules/select_datasets/server/workspace.py:74-126.
 //
-// Diagonal cells:        "{N} regulators / {M} samples"  (row 26)
+// Diagonal cells:        "{N} regulators / {M} samples"  (row 26) — clickable
+//                        in C4: opens DatasetBreakdownModal (row 28)
 // Upper-tri off-diag:    "{N} common regulators"          (row 27) — clickable
 // Lower-tri off-diag:    "—"                              (intentionally blank)
 
@@ -20,10 +21,12 @@ export interface SelectionMatrixProps {
   filters: string;
   datasetDisplay: (db: string) => string;
   onOffDiagonalClick: (dbA: string, dbB: string) => void;
+  /** Optional — when provided, diagonal cells become clickable (audit row 28). */
+  onDiagonalClick?: (db: string) => void;
 }
 
 export function SelectionMatrix(props: SelectionMatrixProps) {
-  const { datasets, filters, datasetDisplay, onOffDiagonalClick } = props;
+  const { datasets, filters, datasetDisplay, onOffDiagonalClick, onDiagonalClick } = props;
 
   // Hook order must stay stable across renders — `enabled` gates the fetch
   // when there are no active datasets rather than early-returning above it.
@@ -102,21 +105,40 @@ export function SelectionMatrix(props: SelectionMatrixProps) {
               {datasets.map((colDb, colIdx) => {
                 if (rowDb === colDb) {
                   const d = diag.get(rowDb);
+                  const inner = d ? (
+                    <>
+                      {d.nRegulators} regulators
+                      <br />
+                      {d.nSamples} samples
+                    </>
+                  ) : (
+                    "—"
+                  );
+                  if (onDiagonalClick && d) {
+                    return (
+                      <td
+                        key={colDb}
+                        className="border border-slate-200 bg-blue-50 px-0 py-0 text-xs"
+                        data-testid={`cell-${rowDb}-${colDb}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onDiagonalClick(rowDb)}
+                          className="block w-full px-3 py-2 text-left font-mono text-slate-800 hover:bg-blue-100"
+                          title="Show sample breakdown"
+                        >
+                          {inner}
+                        </button>
+                      </td>
+                    );
+                  }
                   return (
                     <td
                       key={colDb}
                       className="border border-slate-200 bg-blue-50 px-3 py-2 font-mono text-xs text-slate-800"
                       data-testid={`cell-${rowDb}-${colDb}`}
                     >
-                      {d ? (
-                        <>
-                          {d.nRegulators} regulators
-                          <br />
-                          {d.nSamples} samples
-                        </>
-                      ) : (
-                        "—"
-                      )}
+                      {inner}
                     </td>
                   );
                 }

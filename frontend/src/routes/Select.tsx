@@ -6,8 +6,13 @@
 //   row 26/27 intersection matrix workspace (SelectionMatrix)
 //   row 29 off-diagonal click → CommonRegulatorsModal
 //
+// Task C4 (schema_version=4 metadata) adds:
+//   row 1   sort datasets by display_name (client-side)
+//   row 3   default-active datasets on first visit (URL preselection)
+//   row 4   default filters on first visit
+//   row 28  diagonal click → DatasetBreakdownModal
+//
 // Deferred to docs/parity/auto-status/polish.md (see end of this commit):
-//   - row 3/4   default-active datasets / default filters
 //   - row 12/14 apply-to-all toggle
 //   - row 15/30/31 from_pair annotation + highlight
 //   - row 16    sidebar search box (P2)
@@ -16,9 +21,8 @@
 //               the URL directly. This matches Phase 2's checkbox-toggles-
 //               write-URL pattern and audit §8 already flagged the
 //               staging question as UNCLEAR.
-//   - row 22    description tooltip on row
+//   - row 22    description tooltip on row (dataset-level — field-level is C4)
 //   - row 23    sidebar collapse/expand
-//   - row 28    diagonal click → /selection/breakdown modal
 //   - row 35/36 CSV+README export
 //
 // URL contract:
@@ -27,7 +31,7 @@
 //   ?filters=<json>      FiltersByDB-shape JSON (URL-encoded)
 //   ?regulators=A,B,C    optional CSV, written by CommonRegulatorsModal
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, type Schemas } from "@/api/client";
@@ -37,6 +41,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DatasetFilterModal } from "@/components/DatasetFilterModal";
 import { CommonRegulatorsModal } from "@/components/CommonRegulatorsModal";
+import { DatasetBreakdownModal } from "@/components/DatasetBreakdownModal";
 import { SelectionMatrix } from "@/plots/SelectionMatrix";
 
 type DatasetEntry = Schemas["DatasetEntry"];
@@ -89,13 +94,24 @@ export function Select() {
   const [filterDb, setFilterDb] = useState<string | null>(null);
   // Modal state — common-regulators target (which pair was clicked).
   const [commonPair, setCommonPair] = useState<[string, string] | null>(null);
+  // Modal state — breakdown target (which diagonal cell was clicked, C4).
+  const [breakdownDb, setBreakdownDb] = useState<string | null>(null);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: qk.datasets(),
     queryFn: () => api.datasets(),
   });
 
-  const datasets = data?.datasets ?? [];
+  // C4 (audit row 1): sort client-side by displayName so the sidebar follows
+  // human-readable order without forcing a backend re-snapshot. Backend
+  // still orders by db_name internally (stable for cross-pair computation).
+  const datasets = useMemo(
+    () =>
+      [...(data?.datasets ?? [])].sort((a, b) =>
+        a.displayName.localeCompare(b.displayName),
+      ),
+    [data],
+  );
   const binding = datasets.filter((d) => d.dataType === "binding");
   const perturbation = datasets.filter((d) => d.dataType === "perturbation");
   const displayNameByDb = useMemo(() => {
@@ -149,6 +165,59 @@ export function Select() {
     },
     [params, filters, setParams],
   );
+
+  // C4 (audit rows 3 + 4): first-visit defaults. When the user lands with no
+  // ?binding=, ?perturbation=, or ?filters= query params AND the /datasets
+  // response has arrived, preselect every dataset whose manifest entry has
+  // `defaultActive=true` and seed `?filters=` from each dataset's
+  // `defaultFilters` (JSON object, may be null). One-shot per mount via
+  // useRef so navigating back to /select after intentional deselect does
+  // NOT re-add the defaults.
+  const defaultsAppliedRef = useRef(false);
+  useEffect(() => {
+    if (defaultsAppliedRef.current) return;
+    if (!data) return;
+    const hasBinding = (params.get("binding") ?? "") !== "";
+    const hasPerturbation = (params.get("perturbation") ?? "") !== "";
+    const hasFilters = (params.get("filters") ?? "") !== "";
+    if (hasBinding || hasPerturbation) {
+      // User arrived with explicit selection (e.g. shared link) — never
+      // overwrite. Mark applied so we don't retry on subsequent renders.
+      defaultsAppliedRef.current = true;
+      return;
+    }
+    const defaultActive = datasets.filter((d) => d.defaultActive === true);
+    if (defaultActive.length === 0) {
+      defaultsAppliedRef.current = true;
+      return;
+    }
+    const defaultBinding = defaultActive
+      .filter((d) => d.dataType === "binding")
+      .map((d) => d.dbName);
+    const defaultPerturbation = defaultActive
+      .filter((d) => d.dataType === "perturbation")
+      .map((d) => d.dbName);
+    const next = new URLSearchParams(params);
+    if (defaultBinding.length > 0) next.set("binding", defaultBinding.join(","));
+    if (defaultPerturbation.length > 0)
+      next.set("perturbation", defaultPerturbation.join(","));
+    // Seed `?filters=` only when the URL didn't already carry one.
+    if (!hasFilters) {
+      const merged: FiltersByDB = {};
+      for (const d of defaultActive) {
+        const df = d.defaultFilters;
+        if (df && typeof df === "object" && Object.keys(df).length > 0) {
+          merged[d.dbName] = df as Record<string, FilterSpec>;
+        }
+      }
+      if (Object.keys(merged).length > 0) {
+        next.set("filters", serializeFiltersToURL(merged));
+      }
+    }
+    defaultsAppliedRef.current = true;
+    // replace:true so the back button doesn't bounce to an empty URL.
+    setParams(next, { replace: true });
+  }, [data, datasets, params, setParams]);
 
   const onSelectCommon = useCallback(
     (tags: string[]): void => {
@@ -222,6 +291,7 @@ export function Select() {
             filters={filtersRaw}
             datasetDisplay={displayName}
             onOffDiagonalClick={(a, b) => setCommonPair([a, b])}
+            onDiagonalClick={(db) => setBreakdownDb(db)}
           />
         </section>
       </div>
@@ -243,6 +313,14 @@ export function Select() {
         displayA={commonPair ? displayName(commonPair[0]) : ""}
         displayB={commonPair ? displayName(commonPair[1]) : ""}
         onSelectCommon={onSelectCommon}
+      />
+
+      <DatasetBreakdownModal
+        open={breakdownDb !== null}
+        onClose={() => setBreakdownDb(null)}
+        db={breakdownDb ?? ""}
+        displayName={breakdownDb ? displayName(breakdownDb) : ""}
+        filters={filtersRaw}
       />
     </div>
   );
