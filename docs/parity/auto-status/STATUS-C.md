@@ -21,7 +21,7 @@ before starting, append a section before finishing.
 | C5  | Select Datasets — remaining UX features            | PENDING     | depends on C4 (apply-to-all, sidebar) |
 | C6  | Export endpoint + tarball UI                       | PENDING     | independent; large surface |
 | C7  | Multi-review nice-to-haves cleanup                 | PENDING     | independent; small surface across many files |
-| C8  | Plotly bundle recovery                             | PENDING     | depends on B1 (already done) |
+| C8  | Plotly bundle recovery                             | DONE        | dropped `bar` post-B1; 523→514 KB gzipped |
 | C9  | Performance — corr/matrix → UNION-ALL              | PENDING     | independent; benchmark gated |
 
 ---
@@ -48,4 +48,18 @@ before starting, append a section before finishing.
 - Tests: data_prep pytest ✓ (60 passed), backend go test ./... -race ✓,
   parity ✓ (15/15), frontend tsc --noEmit ✓, vitest ✓ (24 passed).
 - Commit: 602d479
+- Status: DONE.
+
+### 2026-05-22 08:55 PDT — implementer C8
+- Grepped `frontend/src` for `type: "bar"` / `"bar"` usage — none. B1's
+  boxplot rebuild eliminated the sole consumer (ComparisonHeatmap).
+- Dropped `bar` import + registration from
+  `frontend/src/plots/plotly-bundle.ts`; updated comment to record the
+  post-B1 trim alongside the histogram2d note.
+- Bundle: plotly chunk 1,494.18 kB raw → **514.25 kB gzipped** (down from
+  523 KB; ~9 KB recovered, ~2 KB above the 512 KB soft target). polish.md
+  A6 entry marked RESOLVED with the residual-2 KB caveat noted; further
+  recovery (drop `heatmap`) deferred until `SelectionMatrix` migrates.
+- Tests: `pnpm exec tsc --noEmit` ✓, `pnpm exec vitest run` ✓ (24/24),
+  `pnpm exec vite build` ✓.
 - Status: DONE.

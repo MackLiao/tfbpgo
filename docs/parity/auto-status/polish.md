@@ -75,6 +75,18 @@ unless they cause downstream breakage.
   3. Increase the documented target to ~530 KB. The 512 KB number was a
      soft heuristic, not a load-time budget. Document and move on.
 
+  **RESOLVED — partial (Task C8, commit on `auto/overnight-phase-a`).**
+  Option 1 applied: `bar` dropped from `plotly-bundle.ts` post-B1, since
+  the boxplot rebuild removed the sole `bar` consumer (ComparisonHeatmap
+  no longer renders `type: "bar"` anywhere in `frontend/src`). New plotly
+  chunk: 1,494.18 kB raw → **514.25 kB gzipped** (down from 523 KB; saved
+  ~9 KB). Still ~2 KB over the 512 KB soft target. Remaining headroom
+  comes from option 2 (drop `heatmap` — but `SelectionMatrix` still uses
+  it for the dataset-overlap matrix, so this is a Phase C5+ decision)
+  or option 3 (formally raise the target to ~520 KB). The 512 KB number
+  was always a soft heuristic; treating C8 as a sufficient recovery and
+  closing the entry. Re-open if cutover load testing flags a regression.
+
 - **A3 scatter parity golden URLs need snapshots recorded** (fix-up note).
   Four new entries added to `tests/parity/golden_urls.txt` for
   `/binding/scatter` and `/perturbation/scatter` (pearson + spearman).
