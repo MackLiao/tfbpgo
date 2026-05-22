@@ -112,6 +112,26 @@ func (s *Server) initIntrospect() {
 	})
 }
 
+// WarmIntrospectionCache populates the per-(db, field) type cache for every
+// entry in s.Manifests.Fields. Call once at startup after manifests are
+// loaded. Subsequent introspectField calls become pure map lookups under
+// the existing mutex — no DB I/O, no race on cold misses.
+//
+// The lazy introspectField path remains a correctness fallback: if warming
+// fails for any individual (db, field) pair (e.g. a manifest entry whose
+// table is temporarily unavailable), the request path will retry. We
+// intentionally swallow per-entry failures here so a single malformed
+// row doesn't block startup.
+func (s *Server) WarmIntrospectionCache(ctx context.Context) error {
+	s.initIntrospect()
+	for _, f := range s.Manifests.Fields {
+		// ignore individual failures so a malformed (db, field) doesn't
+		// block startup; introspectField will retry on the request path.
+		_, _, _ = s.introspectField(ctx, f.DBName, f.Field)
+	}
+	return nil
+}
+
 // kindForDBType classifies a DuckDB type string into one of
 // "categorical" | "numeric" | "bool" using the same buckets the Shiny modal
 // uses. The override map takes precedence (hackett.time → categorical).
@@ -157,8 +177,14 @@ func (s *Server) computeNumericRange(ctx context.Context, dbName, field, table s
 	// Identifiers are already whitelisted. Use TRY_CAST to DOUBLE so an
 	// INTEGER-typed column overridden to categorical (hackett.time) won't
 	// flow through here anyway — we only call this for Kind=numeric.
-	sqlStr := fmt.Sprintf(`SELECT MIN(CAST(%q AS DOUBLE)) AS lo, MAX(CAST(%q AS DOUBLE)) AS hi FROM %s`,
-		field, field, table,
+	// Pattern is consistent with binding.go's identifier interpolation:
+	// whitelistedIdent is the per-request SafeIdentRE tripwire, defense in
+	// depth on top of the manifest gate.
+	fieldIdent := whitelistedIdent(field)
+	tableIdent := whitelistedIdent(table)
+	sqlStr := fmt.Sprintf(
+		`SELECT MIN(CAST(%[1]s AS DOUBLE)) AS lo, MAX(CAST(%[1]s AS DOUBLE)) AS hi FROM %[2]s`,
+		fieldIdent, tableIdent,
 	)
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
 	defer cancel()

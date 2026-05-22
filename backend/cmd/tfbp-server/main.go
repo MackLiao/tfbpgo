@@ -95,6 +95,23 @@ func run() error {
 		Metrics:         metrics,
 		StaticFS:        static.FS(),
 	}
+
+	// Eager-load the per-(db, field) introspection cache before binding the
+	// listener. Without this, the first cold burst on /datasets/{db}/fields
+	// races N goroutines through information_schema for the same (db, field)
+	// pair (the lazy introspectField has a release-then-reacquire lock gap
+	// to keep DB I/O off the mutex). Warming closes that gap by making every
+	// subsequent introspectField call a pure map lookup. Per-entry failures
+	// are non-fatal — introspectField retries on the request path.
+	warmStart := time.Now()
+	if err := srv.WarmIntrospectionCache(startupCtx); err != nil {
+		return fmt.Errorf("startup_failed (WarmIntrospectionCache): %w", err)
+	}
+	slog.Info("startup_introspect_warmed",
+		"fields", len(report.Manifests.Fields),
+		"duration_ms", time.Since(warmStart).Milliseconds(),
+	)
+
 	r := srv.Routes()
 
 	// Background goroutines share one stop channel; main joins via WaitGroup

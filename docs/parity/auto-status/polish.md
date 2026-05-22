@@ -86,3 +86,24 @@ unless they cause downstream breakage.
   the fixture has only one dataset per data_type and dedupeAndCapCSV
   collapses CSV duplicates, so they cannot produce a 200 against the
   fixture without widening it (Phase 1 Task 21 work).
+
+## From A5 multi-review (commit 292aaac)
+
+- **Error context wrapping** (go-reviewer IMPORTANT). Several `return nil, err`
+  sites in `select_datasets.go` (handlers around `buildDatasetRegulatorsResponse`,
+  `queryMatrixDiagonal`/`Cross`, `buildBreakdownResponse`, `listColumns`)
+  bubble raw errors without dataset/query context. Wrap with `fmt.Errorf`
+  for actionable logs.
+
+- **`initIntrospect` design** (go-reviewer NICE-TO-HAVE). Move the cache
+  initialization into the `Server` constructor so future methods don't
+  forget to call `initIntrospect()` before use.
+
+- **Matrix filter test coverage** (go-reviewer NICE-TO-HAVE).
+  `TestSelectionMatrix_WithCallingcardsFilter` could also assert the
+  cross-cell NCommon value to pin the filter-arm INTERSECT semantics.
+
+- **Cross-pair filter regression coverage** (db-reviewer flagged as
+  CRITICAL). Resolved by `TestSelectionMatrix_FilteredCrossPair` added in
+  the A5 follow-up commit — confirms `buildSquirrelWhere` only emits `?`
+  placeholders so the arg count holds with filtered inputs on both sides.

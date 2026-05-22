@@ -179,3 +179,16 @@ Read before working, append a section before finishing.
 - Tests: backend go test ./... ✓, parity (Go harness) ✓, frontend tsc ✓.
 - Commit: 9c288cf
 - Status: A3 multi-review fixes DONE.
+
+### 2026-05-22 01:36 PDT — implementer A5 multi-review fixes
+- security: computeNumericRange uses whitelistedIdent (pattern consistent
+  with binding.go).
+- go: WarmIntrospectionCache at server bootstrap; cold misses no longer
+  double-query.
+- db: added TestSelectionMatrix_FilteredCrossPair as regression for
+  filtered cross-pair arg-count concerns flagged by db-reviewer.
+- Remaining items deferred to polish.md.
+- Tests: backend go test ./... -race ✓, parity ✓ (operator step; harness
+  green at A5 commit 292aaac, no parity-affecting changes in this commit).
+- Commit: <SHA>
+- Status: A5 multi-review fixes DONE.

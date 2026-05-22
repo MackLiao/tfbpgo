@@ -198,6 +198,62 @@ func TestSelectionMatrix_WithCallingcardsFilter(t *testing.T) {
 	require.Equal(t, int64(3), byName["callingcards"].NRegulators)
 }
 
+// TestSelectionMatrix_FilteredCrossPair guards the cross-dataset matrix
+// arg-count when BOTH sides carry non-empty filters. buildSquirrelWhere only
+// emits ? placeholders, so the Replacer-rendered SQL and the manually-built
+// args slice must stay in lockstep (see queryMatrixCross's positional-args
+// table comment). This is a regression for the db-reviewer concern raised
+// in the A5 multi-review: if either arm started emitting bound idents
+// inline, the arg count would drift and surface as a "wrong number of
+// arguments" error at query time.
+func TestSelectionMatrix_FilteredCrossPair(t *testing.T) {
+	s := newTestServer(t)
+	rr := httptest.NewRecorder()
+	q := url.Values{}
+	q.Set("datasets", "callingcards,hackett")
+	// Both arms filtered: callingcards by condition=YPD (drops cc_extra,
+	// leaving 6 rows); hackett by time in [40,50] (keeps the integer 45,
+	// which is the only time value in the fixture).
+	q.Set("filters",
+		`{"callingcards":{"condition":{"type":"categorical","value":["YPD"]}},`+
+			`"hackett":{"time":{"type":"numeric","value":[40,50]}}}`)
+	req := httptest.NewRequest("GET", apiVPath(s, "/selection/matrix")+"?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	// A 500 here would imply the args slice diverged from the rendered
+	// template; the message would be "wrong number of arguments" from
+	// duckdb. 200 implicitly proves the arg count held.
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.MatrixResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+
+	// Diagonals: both datasets keep at least one sample/regulator under
+	// their respective filters.
+	byName := map[string]domain.MatrixDiagonalCell{}
+	for _, c := range resp.Diagonal {
+		byName[c.DBName] = c
+	}
+	cc, ok := byName["callingcards"]
+	require.True(t, ok)
+	require.Greater(t, cc.NRegulators, int64(0), "callingcards regulators under YPD filter")
+	require.Greater(t, cc.NSamples, int64(0), "callingcards samples under YPD filter")
+	require.Equal(t, int64(6), cc.NSamples, "7 rows minus cc_extra (SC) = 6")
+
+	hk, ok := byName["hackett"]
+	require.True(t, ok)
+	require.Greater(t, hk.NRegulators, int64(0), "hackett regulators in time [40,50]")
+	require.Greater(t, hk.NSamples, int64(0), "hackett samples in time [40,50]")
+
+	// Cross cell: at least one common regulator survives both filters,
+	// and both sample-count subqueries return >= 1.
+	require.Len(t, resp.CrossDataset, 1)
+	cross := resp.CrossDataset[0]
+	require.Equal(t, "callingcards__hackett", cross.PairID)
+	require.GreaterOrEqual(t, cross.NCommon, int64(1), "expected >=1 common regulator across filtered arms")
+	require.GreaterOrEqual(t, cross.SamplesA, int64(1), "callingcards samples in cross with hackett")
+	require.GreaterOrEqual(t, cross.SamplesB, int64(1), "hackett samples in cross with callingcards")
+}
+
 // ---------------------------------------------------------------------------
 // SelectionBreakdown
 // ---------------------------------------------------------------------------
