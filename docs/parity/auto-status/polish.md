@@ -107,3 +107,50 @@ unless they cause downstream breakage.
   CRITICAL). Resolved by `TestSelectionMatrix_FilteredCrossPair` added in
   the A5 follow-up commit — confirms `buildSquirrelWhere` only emits `?`
   placeholders so the arg count holds with filtered inputs on both sides.
+
+## From B4 (commit pending — Select Datasets rebuild)
+
+P1/P2 features from docs/parity/select_datasets.md §2 that were intentionally
+deferred during the overnight B4 task. Each is one line of context.
+
+- **Default-active datasets / default filters** (rows 3, 4). Need
+  schema_version=4 bump exposing `dataset_manifest.default_active` +
+  `dataset_manifest.default_filters` so first-time visitors land on Shiny's
+  preselection (`vdb_init.py:40-68`). Duplicates the A5 polish note.
+- **Apply-to-all toggle on common fields** (rows 12, 14). Per-field
+  switch in the modal header that propagates a common-field filter to
+  every active dataset. Complex; needs cross-dataset field common-set
+  computation and a sane resolution rule when a dataset has its own
+  override.
+- **from_pair annotation** (rows 15, 30, 31). Pairwise common-regulator
+  apply writes `regulator_locus_tag` with a `from_pair: [A, B]`
+  annotation; modal reads it to switch UI mode. FilterSpec wire shape
+  needs an extra annotation field.
+- **Pairwise highlight cell coloring** (row 30). Active pair gets a
+  highlight background in the matrix once its tags are applied. Cheap
+  once `from_pair` lands.
+- **Sidebar search box** (row 24). Substring filter over display name
+  with "No datasets match your search" empty state (row 34).
+- **Sidebar collapse/expand** (row 23). Chevron toggle to hide the
+  datasets sidebar from non-Select routes.
+- **CSV+README export tarball** (rows 35, 36). Streamed tar.gz per
+  dataset; requires `/api/v/{v}/export` (audit §7 row 8). Already
+  flagged under A5 polish above.
+- **Diagonal cell click → breakdown modal** (row 28). Backend already
+  serves `/api/v/{v}/selection/breakdown`; the UI was scoped out for
+  overnight budget reasons.
+- **Cascade narrowing inside modal** (row 19). Upstream categorical
+  selectize narrows downstream condition checkbox choices; needs
+  column-role metadata + `level_definitions` (same schema_version=4
+  bump).
+- **Sort datasets by display_name** (row 1). Currently backend orders
+  by `db_name`; minor visual nit, no behavioral change.
+- **FIELD_TYPE_OVERRIDES via backend** (row 11). Already handled in A5
+  (the field response already says `kind="categorical"` for
+  `hackett.time`). Listed only for completeness.
+- **Description tooltip on row** (row 22). Need `description` on
+  field/dataset manifest (schema_version=4 bump).
+- **Per-row staged Apply gate** (rows 18, 20). The B4 MVP writes the
+  modal's "Apply Filters" directly to the URL, so each modal apply is
+  a commit. The Shiny pattern coalesces toggles + filter edits before
+  firing downstream queries; audit §8 already flagged this as UNCLEAR.

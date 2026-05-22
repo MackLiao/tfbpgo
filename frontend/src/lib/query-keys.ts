@@ -58,4 +58,18 @@ export const qk = {
   topn: (b: string[], p: string[], topN: number, eff: number, pv: number, filters: string) =>
     [v(), "topn", b.join(","), p.join(","), topN, eff, pv, filters] as const,
   dto: () => [v(), "dto"] as const,
+
+  // ----- Select Datasets (Task B4) ---------------------------------------
+  // datasets are sorted into the matrix key so cache hits survive param-order
+  // permutation (mirrors qk.bindingCorr / qk.perturbationCorrelations).
+  selectionMatrix: (datasets: string[], filters: string) =>
+    [v(), "selectionMatrix", [...datasets].sort().join(","), filters] as const,
+  datasetFields: (db: string) => [v(), "datasetFields", db] as const,
+  datasetRegulators: (db: string) => [v(), "datasetRegulators", db] as const,
+  // Pair is sorted into the key so /regulators/resolve?common=A:B and B:A
+  // share a cache entry (the server is order-symmetric for intersect anyway).
+  regulatorsResolveCommon: (dbA: string, dbB: string) => {
+    const [a, b] = dbA <= dbB ? [dbA, dbB] : [dbB, dbA];
+    return [v(), "regulatorsResolveCommon", a, b] as const;
+  },
 };
