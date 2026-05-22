@@ -22,7 +22,7 @@ Read before working, append a section before finishing.
 | B1  | Comparison module rebuild                  | DONE        | 79eeea9; depends on A4+A6 |
 | B2  | Binding module rebuild                     | DONE        | 2432163; depends on A2+A3+A6 |
 | B3  | Perturbation module rebuild                | PENDING     | depends on A2+A3+A6 |
-| B4  | Select Datasets module rebuild             | PENDING     | depends on A5 |
+| B4  | Select Datasets module rebuild             | DONE        | 9e00aad; depends on A5; polish notes in [polish.md](polish.md) |
 
 ---
 
@@ -309,4 +309,58 @@ Read before working, append a section before finishing.
 - Files touched: 9 (4 new, 1 deleted, 1 rewrite, 3 modified:
   query-keys, Binding.test.tsx pruning, STATUS).
 - Commit: 3e1c639
+- Status: DONE.
+
+### 2026-05-22 02:10 PDT — implementer B4
+- Rebuilt Select Datasets route around the Shiny two-pane shape: 300px
+  sidebar with per-row checkbox + Filter button + active-filter badge,
+  workspace pane with the intersection matrix table. Replaces the
+  card-grid sketch from Phase 2.
+- New: frontend/src/components/DatasetFilterModal.tsx — <dialog>-based
+  modal; fetches /datasets/{db}/fields and renders one control per
+  field by kind (categorical → checkbox list over filter_level_cache
+  levels, numeric → two range inputs clamped to numericMin/numericMax,
+  bool → checkbox). Footer: Cancel / Reset / Apply Filters. Pending
+  state local; Apply commits to URL via parent callback.
+- New: frontend/src/plots/SelectionMatrix.tsx — HTML <table> backed by
+  /selection/matrix. Diagonal cells: "{N} regulators / {M} samples".
+  Upper-triangle off-diagonal: clickable "{N} common regulators".
+  Lower-triangle: blank. Empty / loading / error states all covered.
+- New: frontend/src/components/CommonRegulatorsModal.tsx — fetches
+  /regulators/resolve?common=A:B and renders the locus_tag grid plus
+  a "Select N common regulators" button that writes ?regulators=
+  (CSV) to the URL via parent callback.
+- Rewrote: frontend/src/routes/Select.tsx — owns the URL contract
+  (?binding=, ?perturbation=, ?filters=, ?regulators=). Toggling a
+  dataset OFF also clears its filter block from ?filters= (parity row
+  38). Modal "Apply" writes filters[db] = next directly; the page-
+  level staged Apply gate is intentionally NOT implemented (deviation
+  documented inline + in polish.md; audit §8 already flagged the
+  staging question as UNCLEAR).
+- New tests: frontend/src/test/Select.test.tsx — 4 cases (loading
+  skeleton heading, sections appear after /datasets loads, Filter
+  button opens modal + fires /datasets/{db}/fields, matrix renders
+  diagonal+cross from a mocked /selection/matrix payload).
+- Stubs HTMLDialogElement.{showModal,close} in beforeEach since jsdom
+  doesn't ship them; verified the modal mounts in tests.
+- Query keys: added qk.selectionMatrix (datasets sorted into the key,
+  mirrors qk.bindingCorr), qk.datasetFields, qk.datasetRegulators,
+  qk.regulatorsResolveCommon (pair sorted into the key for
+  symmetric-cache).
+- Deferred to polish.md (13 items, one-line each): default-active /
+  default filters, apply-to-all, from_pair annotation, pairwise
+  highlight, sidebar search box, sidebar collapse, export tarball,
+  diagonal breakdown modal, cascade narrowing, sort by display_name,
+  FIELD_TYPE_OVERRIDES (already done in A5), description tooltip,
+  staged Apply gate.
+- Verify: pnpm types:gen ✓; pnpm exec tsc --noEmit ✓; pnpm exec
+  vitest run ✓ (24 tests, 7 files — +4 vs B3); pnpm exec vite build
+  ✓.
+- Bundle: plotly chunk 523.35 KB gzip (unchanged from B3, well under
+  the 530 KB ceiling); index chunk 78.72 KB gzip (was 76.00 KB after
+  B3 — +2.72 KB for the 3 new components + route rewrite + tests
+  not in the index chunk).
+- Files touched: 7 (3 new components/plots, 1 new test, 1 rewrite,
+  2 modified: query-keys, polish).
+- Commit: 9e00aad
 - Status: DONE.
