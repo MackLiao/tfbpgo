@@ -350,3 +350,48 @@ Multi-review nice-to-haves cleanup. 8 items in one commit:
   against a fresh local server.
 - Commit: 4135f8f
 - Status: DONE.
+
+### 2026-05-22 — implementer C9
+Per-pair → UNION-ALL consolidation for `/binding/corr` and
+`/perturbation/correlations`. Resolves the A3 IMPORTANT perf note
+flagged by the database-reviewer.
+
+- `renderCorrUnionAllSQL(method, dataType, []pairSpec)` wraps each
+  per-pair render as `SELECT *, '{dbA}__{dbB}' AS pair_key FROM (…)`
+  and joins them with `UNION ALL`. Args are concatenated in pair-order
+  (positional `?` binding holds because DuckDB binds left-to-right).
+- `buildCorrResponse` rewritten: pre-resolves all (col, extraWhere,
+  args) up front (wraps any per-pair error with pair context), builds
+  one UNION-ALL statement, runs a single `SelectContext`, partitions
+  rows by `pair_key` into the sorted(datasets)-choose-2 response
+  envelope. Wire shape unchanged.
+- Metrics: single observation labelled `corr_union_{method}` (separate
+  label space from the legacy per-pair `corr_pair_{method}` so the
+  transition is visible in Prometheus).
+- The `pair_key` literal is built from `whitelistedIdent(dbA)__dbB`
+  identifiers (SafeIdentRE-validated upstream → apostrophe-free, no
+  quote-escape needed).
+- Domain: new internal `domain.CorrPairPointWithKey` embeds
+  `CorrPairPoint` and adds the `pair_key` db tag. Not part of the wire
+  shape — stripped before serialization.
+
+- Perf note: with `MaxOpenConns=2` on t3.small and N=4 active datasets,
+  the cold-cache `/corr` request now does 1 DB roundtrip instead of 6.
+  The cache HIT path is unchanged. Hot keys still singleflight-collapse
+  upstream.
+- Tests: 3 new render-level unit tests
+  (`TestRenderCorrUnionAllSQL_{OnePairUnionWrapper,MultiPairUnionShape,
+  ArgsConcatenatedInOrder}`) pin the wrapper shape, the joiner count,
+  and the positional-arg concatenation order. End-to-end multi-dataset
+  numerical parity is already covered by the SQL-level parity tests in
+  `backend/internal/queries/correlation_parity_test.go` (the inner
+  template renderer is unchanged).
+- Files: backend/internal/api/{binding_corr,correlation,binding_corr_test}.go,
+  backend/internal/domain/correlation.go,
+  docs/parity/auto-status/polish.md (1 RESOLVED stamp).
+- Verify: `cd backend && go build ./... && go test ./... -count=1 -race` ✓
+  (all packages green); `cd frontend && pnpm exec tsc --noEmit` ✓;
+  `pnpm exec vitest run` ✓ (34/34); `make parity` ✓ 15/15 against a
+  fresh local server.
+- Commit: 00036f2
+- Status: DONE.
