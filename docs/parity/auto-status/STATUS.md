@@ -106,5 +106,5 @@ Read before working, append a section before finishing.
 - Tests: backend go test ./... ✓ (added ~20 handler/unit tests across
   binding_corr_test.go + perturbation_corr_test.go); parity ✓;
   frontend tsc --noEmit ✓.
-- Commit: <pending>
+- Commit: 218bf3c
 - Status: DONE.
