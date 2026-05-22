@@ -1,89 +1,104 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { qk } from "@/lib/query-keys";
-import { ComparisonHeatmap } from "@/plots/ComparisonHeatmap";
-import { DTOPlot } from "@/plots/DTOPlot";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
+import { ComparisonSidebar, type ComparisonSidebarChange } from "@/components/ComparisonSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FilterChips } from "@/components/FilterChips";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+
+// Comparison route — faceted boxplot replacement for the old heatmap.
+//
+// Parity reference: reference/tfbpshiny/modules/comparison/{ui.py,
+// server/workspace.py, server/sidebar.py}.
+//
+// URL is the canonical state: all four sidebar params (`top_n`, `effect`,
+// `pvalue`, `facet_by`) are deep-linkable and writeable. The DTO tab from
+// the previous iteration is removed — Shiny has no equivalent, see
+// docs/parity/comparison.md §2 row 18. (`api.dto` remains in client.ts for
+// potential future use but is unused on the frontend.)
+
+const DEFAULTS = {
+  topN: 25,
+  effect: 0,
+  pvalue: 0.05,
+  facetBy: "binding" as const,
+};
+
+function parseFacetBy(raw: string | null): "binding" | "perturbation" {
+  return raw === "perturbation" ? "perturbation" : "binding";
+}
 
 export function Comparison() {
   const [params, setParams] = useSearchParams();
   const binding = (params.get("binding") ?? "").split(",").filter(Boolean);
   const perturbation = (params.get("perturbation") ?? "").split(",").filter(Boolean);
-  const topN = Number(params.get("top_n") ?? 25);
-  const effect = Number(params.get("effect") ?? 0);
-  const pvalue = Number(params.get("pvalue") ?? 0.05);
+  const topN = clampNumber(params.get("top_n"), DEFAULTS.topN, 1, 500);
+  const effect = clampNumber(params.get("effect"), DEFAULTS.effect, 0, 5);
+  const pvalue = clampNumber(params.get("pvalue"), DEFAULTS.pvalue, 0.001, 1);
+  const facetBy = parseFacetBy(params.get("facet_by"));
   const filters = params.get("filters") ?? "";
-
-  const [tab, setTab] = useState<string>("topn");
 
   const topnQuery = useQuery({
     queryKey: qk.topn(binding, perturbation, topN, effect, pvalue, filters),
     queryFn: () => {
-      const base = {
-        binding,
-        perturbation,
-        top_n: topN,
-        effect,
-        pvalue,
-      };
+      const base = { binding, perturbation, top_n: topN, effect, pvalue };
       return api.topn(filters ? { ...base, filters } : base);
     },
     enabled: binding.length > 0 && perturbation.length > 0,
   });
 
-  const dtoQuery = useQuery({
-    queryKey: qk.dto(),
-    queryFn: () => api.dto(),
-  });
+  const handleSidebarChange = (next: ComparisonSidebarChange): void => {
+    setParams((prev) => {
+      const out = new URLSearchParams(prev);
+      if (next.topN !== undefined) out.set("top_n", String(next.topN));
+      if (next.effect !== undefined) out.set("effect", String(next.effect));
+      if (next.pvalue !== undefined) out.set("pvalue", String(next.pvalue));
+      if (next.facetBy !== undefined) out.set("facet_by", next.facetBy);
+      return out;
+    });
+  };
 
   return (
-    <section className="space-y-4">
-      <FilterChips
-        availableDatasets={[...binding, ...perturbation]}
-        selected={{}}
-        onResolved={(tags) => {
-          const next = new URLSearchParams(params);
-          next.set("regulators", tags.slice(0, 30).join(","));
-          setParams(next);
-        }}
+    <section className="grid grid-cols-[260px_1fr] gap-4">
+      <ComparisonSidebar
+        topN={topN}
+        effect={effect}
+        pvalue={pvalue}
+        facetBy={facetBy}
+        onChange={handleSidebarChange}
       />
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="topn">Top-N</TabsTrigger>
-          <TabsTrigger value="dto">DTO</TabsTrigger>
-        </TabsList>
-        <TabsContent value="topn">
-          <ErrorBoundary>
-            {!binding.length || !perturbation.length ? (
-              <p className="text-sm text-slate-600">
-                Pick at least one binding and one perturbation dataset on the Select page to
-                render the Top-N heatmap.
-              </p>
-            ) : null}
-            {topnQuery.error ? (
-              <p className="text-red-600">{(topnQuery.error as Error).message}</p>
-            ) : null}
-            {topnQuery.isPending && binding.length > 0 && perturbation.length > 0 ? (
-              <Skeleton className="h-96 w-full" />
-            ) : null}
-            {topnQuery.data ? <ComparisonHeatmap resp={topnQuery.data} /> : null}
-          </ErrorBoundary>
-        </TabsContent>
-        <TabsContent value="dto">
-          <ErrorBoundary>
-            {dtoQuery.error ? (
-              <p className="text-red-600">{(dtoQuery.error as Error).message}</p>
-            ) : null}
-            {dtoQuery.isPending ? <Skeleton className="h-96 w-full" /> : null}
-            {dtoQuery.data ? <DTOPlot rows={dtoQuery.data.rows} /> : null}
-          </ErrorBoundary>
-        </TabsContent>
-      </Tabs>
+      <ErrorBoundary>
+        {!binding.length || !perturbation.length ? (
+          <p className="text-sm text-slate-600">
+            Pick at least one binding and one perturbation dataset on the Select page to
+            render the Top-N comparison boxplot.
+          </p>
+        ) : null}
+        {topnQuery.error ? (
+          <p className="text-red-600">{(topnQuery.error as Error).message}</p>
+        ) : null}
+        {topnQuery.isPending && binding.length > 0 && perturbation.length > 0 ? (
+          <Skeleton className="h-96 w-full" />
+        ) : null}
+        {topnQuery.data ? (
+          <ComparisonBoxplot resp={topnQuery.data} facetBy={facetBy} />
+        ) : null}
+      </ErrorBoundary>
     </section>
   );
+}
+
+function clampNumber(
+  raw: string | null,
+  fallback: number,
+  lo: number,
+  hi: number,
+): number {
+  if (raw === null || raw === "") return fallback;
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return fallback;
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
 }

@@ -129,6 +129,9 @@ export const api = {
     if (q.filters) s.set("filters", q.filters);
     return get<Schemas["TopNResponse"]>(vpath("/comparison/topn"), s);
   },
+  // `api.dto` is intentionally unconsumed on the frontend (DTO tab removed
+  // in Task B1 — Shiny has no equivalent; see docs/parity/comparison.md §2
+  // row 18). Backend endpoint is preserved for future use.
   dto: (): Promise<Schemas["DTOResponse"]> => get<Schemas["DTOResponse"]>(vpath("/comparison/dto")),
 
   // ----- Correlation endpoints (Phase A3) ---------------------------------
