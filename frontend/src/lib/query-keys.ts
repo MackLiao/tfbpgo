@@ -11,6 +11,26 @@ export const qk = {
     [v(), "resolve", q.common ?? "", q.intersect ?? "", (q.regulators ?? []).join(",")] as const,
   binding: (regulator: string, datasets: string[], filters: string) =>
     [v(), "binding", regulator, datasets.join(","), filters] as const,
+  // Binding correlation distribution across all sorted(datasets) choose 2 pairs.
+  // Datasets are sorted into the key so cache hits survive param-order permutation.
+  bindingCorr: (
+    datasets: string[],
+    method: string,
+    col: string,
+    filters: string,
+  ) => [v(), "bindingCorr", [...datasets].sort().join(","), method, col, filters] as const,
+  // One key per (regulator, sorted pair, method, col, filters) — TanStack
+  // Query coalesces concurrent identical fetches at this granularity.
+  bindingScatter: (
+    regulator: string,
+    pair: readonly [string, string],
+    method: string,
+    col: string,
+    filters: string,
+  ) => {
+    const [a, b] = pair[0] <= pair[1] ? [pair[0], pair[1]] : [pair[1], pair[0]];
+    return [v(), "bindingScatter", regulator, a, b, method, col, filters] as const;
+  },
   perturbation: (regulator: string, datasets: string[], filters: string) =>
     [v(), "perturbation", regulator, datasets.join(","), filters] as const,
   topn: (b: string[], p: string[], topN: number, eff: number, pv: number, filters: string) =>

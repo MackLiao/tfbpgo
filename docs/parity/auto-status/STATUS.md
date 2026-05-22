@@ -19,8 +19,8 @@ Read before working, append a section before finishing.
 | A4  | Comparison hackett filter parity fix       | DONE        | independent |
 | A5  | Select Datasets backend endpoints          | DONE        | depends on A1; polish notes in [polish.md](polish.md) |
 | A6  | Plotly bundle: register box trace          | DONE        | bundle now 523 KB gzip (11 KB over the 512 KB soft target); see [polish.md](polish.md) |
-| B1  | Comparison module rebuild                  | PENDING     | depends on A4+A6 |
-| B2  | Binding module rebuild                     | PENDING     | depends on A2+A3+A6 |
+| B1  | Comparison module rebuild                  | DONE        | 79eeea9; depends on A4+A6 |
+| B2  | Binding module rebuild                     | DONE        | depends on A2+A3+A6 |
 | B3  | Perturbation module rebuild                | PENDING     | depends on A2+A3+A6 |
 | B4  | Select Datasets module rebuild             | PENDING     | depends on A5 |
 
@@ -192,3 +192,75 @@ Read before working, append a section before finishing.
   green at A5 commit 292aaac, no parity-affecting changes in this commit).
 - Commit: 6f167e6
 - Status: A5 multi-review fixes DONE.
+
+### 2026-05-22 01:50 PDT — implementer B1
+- Rebuilt Comparison route: heatmap replaced by faceted boxplot per
+  Shiny workspace.py:221-323.
+- New: frontend/src/plots/ComparisonBoxplot.tsx (per-(facet, x_val) Box
+  traces, jittered points, shared y-axis via domain partitioning,
+  one-legend-across-subplots, chronological facet/x ordering with
+  graceful fallback for non-canonical db_names).
+- New: frontend/src/components/ComparisonSidebar.tsx — top_n numeric
+  (1..500 step 5), effect slider (0..5 step 0.1), pvalue slider
+  (0.001..1 step 0.001), facet_by radio. All four push to URL.
+- New: frontend/src/lib/comparison-palette.ts — verbatim mirror of
+  workspace.py:30-60 + queries.py:339-353 (BINDING/PERTURBATION
+  LABEL_MAP + PALETTE + ORDER constants).
+- Rewrote: frontend/src/routes/Comparison.tsx — 260px sidebar grid,
+  reads/writes top_n/effect/pvalue/facet_by URL keys, drops Tabs (no
+  DTO tab) and FilterChips (dead-write removed). api.dto client entry
+  preserved with explanatory comment; backend endpoint untouched.
+- Deleted: ComparisonHeatmap.tsx, DTOPlot.tsx, FilterChips.tsx
+  (sole consumer was Comparison; verified via grep before deletion).
+- Cell-key collision bug (heatmap regulator+pair collapse) is gone by
+  construction — boxplot plots every row as a point, no keying.
+- Tests: pnpm exec vitest run ✓ (14 tests, 5 files); pnpm exec tsc
+  --noEmit ✓; pnpm exec vite build ✓.
+- Bundle delta: plotly chunk unchanged at 523.92 KB gzip (box trace
+  was already registered in A6); index chunk 73.02 KB gzip (slightly
+  smaller — three deleted source files net out the additions).
+- Files touched: 10 (3 new, 3 deleted, 4 modified).
+- Commit: 79eeea9
+- Status: DONE.
+
+### 2026-05-22 01:55 PDT — implementer B2
+- Rebuilt Binding route: replaced single scatter with Shiny shape per
+  workspace.py:218-610 (boxplot of pairwise correlations + per-pair
+  scatter grid).
+- New: frontend/src/plots/BindingCorrBoxplot.tsx — one go.Box per active
+  dataset pair (boxpoints="all", jitter=0.4, pointpos=0); customdata =
+  regulator locus tag so Plotly click writes ?regulator= back to URL
+  (replaces Shiny's post_script bridge). Selected-regulator overlay
+  trace draws large black dot per pair. Empty state = centered "Select
+  at least two binding datasets..." annotation.
+- New: frontend/src/plots/BindingScatterPair.tsx — single 400x400 scatter
+  with r=N.NNN annotation top-right (paper 0.98/0.98), two-line title,
+  per-axis "{display}: {col}" labels; collapses to empty <span/> when
+  zero points (Shiny ui.span() parity).
+- New: frontend/src/plots/BindingScatterRow.tsx — useQueries fan-out for
+  one /binding/scatter per sorted(datasets) choose 2 pair; flex-wrap
+  layout; skeleton + error placeholders per pair.
+- New: frontend/src/components/BindingSidebar.tsx — Effect/P-value radio,
+  Pearson/Spearman radio, RegulatorPicker; "Binding" heading matches
+  Shiny sidebar_heading.
+- Rewrote: frontend/src/routes/Binding.tsx — 300px sidebar grid;
+  ?col=, ?corr=, ?regulator=, ?binding=, ?filters= all URL-backed;
+  "Binding Correlation" h1; missing-datasets notice between boxplot
+  and scatter row (workspace.py:451-491 set algebra: dataset is
+  missing only when EVERY pair it appears in lacks the regulator);
+  fetches /datasets once to build displayName lookup.
+- Deleted: frontend/src/plots/BindingScatter.tsx.
+- Query keys: added qk.bindingCorr + qk.bindingScatter to
+  lib/query-keys.ts, both sort datasets/pair into the key so cache hits
+  survive param-order permutation.
+- Tests: pnpm exec tsc --noEmit ✓; pnpm exec vitest run ✓ (17 tests,
+  5 files — added 3 new Binding cases: empty state, corr fetch URL,
+  Spearman radio writes ?corr=, boxplot trace+overlay rendering with
+  mocked corr response); pnpm exec vite build ✓.
+- Bundle: plotly chunk unchanged at 523.35 KB gzip (box trace already
+  registered in A6); index chunk grew slightly to 75.97 KB gzip (was
+  73.02 KB after B1 — net +2.95 KB for the 4 new components). Well
+  under the 530 KB ceiling called out in the task brief.
+- Files touched: 9 (4 new components/plots, 1 rewrite, 1 delete,
+  3 modified: query-keys, test, STATUS).
+- Status: DONE.
