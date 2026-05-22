@@ -13,6 +13,17 @@ type CorrPairPoint struct {
 	Correlation       float64 `json:"correlation" db:"correlation"`
 }
 
+// CorrPairPointWithKey extends CorrPairPoint with a `pair_key` discriminator
+// projected by the outer SELECT of the UNION-ALL corr query. The key is the
+// "{db_a}__{db_b}" string the Go handler partitions on after the single
+// roundtrip executes. Internal to the API package's UNION-ALL consolidation
+// (Task C9); not part of the wire shape — it is stripped before JSON
+// serialization.
+type CorrPairPointWithKey struct {
+	CorrPairPoint
+	PairKey string `db:"pair_key"`
+}
+
 // CorrPair groups CorrPairPoint rows by the (dbA, dbB, colA, colB) tuple
 // that produced them. v1 emits one CorrPair per (dbA, dbB) drawn from
 // sorted(datasets) choose 2.

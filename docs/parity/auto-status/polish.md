@@ -38,6 +38,12 @@ unless they cause downstream breakage.
   MaxOpenConns=2 on t3.small this could matter on cold-cache requests with
   4+ datasets. Benchmark during cutover; consolidate to a single UNION-ALL
   query in Phase C if numbers warrant.
+  **RESOLVED — Task C9.** `buildCorrResponse` now renders one UNION-ALL
+  across every (dbA, dbB) pair (each inner segment wrapped with
+  `SELECT *, '{dbA}__{dbB}' AS pair_key FROM (…)`) and executes a single
+  `SelectContext`. Rows are partitioned by `pair_key` in Go before
+  serialization. Wire shape is unchanged. Mirrors Shiny's
+  `corr_all_pairs_sql` (reference/tfbpshiny/modules/binding/queries.py:331-390).
 - **Error context wrapping** (go-reviewer NICE-TO-HAVE).
   `buildCorrResponse`/`buildScatterResponse` `return nil, err` lose pair
   context. Wrap with `fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)` at

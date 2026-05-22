@@ -363,6 +363,63 @@ func TestSortedPairs(t *testing.T) {
 	require.Equal(t, [2]string{"a", "b"}, got3[0])
 }
 
+// ---------- C9: UNION-ALL consolidation ----------
+
+// TestRenderCorrUnionAllSQL_OnePairUnionWrapper asserts the rendered SQL
+// for N=1 pair is the inner template wrapped exactly once with the
+// pair_key projection. We don't expect a literal "UNION ALL" token in the
+// 1-pair case (joiner has nothing to join).
+func TestRenderCorrUnionAllSQL_OnePairUnionWrapper(t *testing.T) {
+	specs := []pairSpec{
+		{dbA: "callingcards", dbB: "callingcards",
+			colA: "callingcards_enrichment", colB: "callingcards_enrichment"},
+	}
+	sqlStr, args := renderCorrUnionAllSQL("pearson", "binding", specs)
+	require.NotContains(t, sqlStr, "UNION ALL", "1 pair must not emit a UNION ALL joiner")
+	require.Contains(t, sqlStr, "'callingcards__callingcards' AS pair_key")
+	require.Contains(t, sqlStr, "SELECT *,") // outer wrapper present
+	require.Empty(t, args, "no filters → no positional args")
+}
+
+// TestRenderCorrUnionAllSQL_MultiPairUnionShape: with N>=2 pairs the
+// rendered SQL must contain (pairs-1) "UNION ALL" joiners and one
+// pair_key projection per inner segment.
+func TestRenderCorrUnionAllSQL_MultiPairUnionShape(t *testing.T) {
+	specs := []pairSpec{
+		{dbA: "a", dbB: "b", colA: "x", colB: "x"},
+		{dbA: "a", dbB: "c", colA: "x", colB: "x"},
+		{dbA: "b", dbB: "c", colA: "x", colB: "x"},
+	}
+	sqlStr, _ := renderCorrUnionAllSQL("pearson", "binding", specs)
+	require.Equal(t, 2, strings.Count(sqlStr, "UNION ALL"),
+		"3 pairs → 2 UNION ALL joiners (one between each adjacent pair)")
+	require.Contains(t, sqlStr, "'a__b' AS pair_key")
+	require.Contains(t, sqlStr, "'a__c' AS pair_key")
+	require.Contains(t, sqlStr, "'b__c' AS pair_key")
+}
+
+// TestRenderCorrUnionAllSQL_ArgsConcatenatedInOrder pins the positional-
+// binding contract: args are concatenated in pair-order, and within a
+// pair, argsA precedes argsB (the same convention renderCorrPairSQL uses).
+// DuckDB binds `?` placeholders left-to-right across the whole UNION
+// statement, so any reordering would shift filter values to the wrong
+// column.
+func TestRenderCorrUnionAllSQL_ArgsConcatenatedInOrder(t *testing.T) {
+	specs := []pairSpec{
+		{dbA: "a", dbB: "b", colA: "x", colB: "x",
+			extraWhereA: " AND foo = ?", extraWhereB: " AND bar IN (?, ?)",
+			argsA: []any{"p0a"}, argsB: []any{"p0b1", "p0b2"}},
+		{dbA: "a", dbB: "c", colA: "x", colB: "x",
+			extraWhereA: " AND foo = ?", extraWhereB: " AND baz = ?",
+			argsA: []any{"p1a"}, argsB: []any{"p1b"}},
+	}
+	_, args := renderCorrUnionAllSQL("pearson", "binding", specs)
+	require.Equal(t,
+		[]any{"p0a", "p0b1", "p0b2", "p1a", "p1b"},
+		args,
+		"args must be (pair0.A, pair0.B, pair1.A, pair1.B, …) in render order")
+}
+
 // ---------- 4xx response shape ----------
 
 // Pins the same M1 invariant as TestBinding_4xxResponsesAreJSON: every 400

@@ -126,10 +126,22 @@ func (s *Server) serveCorr(w http.ResponseWriter, r *http.Request, dataType stri
 	s.writeCachedJSON(w, r, body, hit, err)
 }
 
-// buildCorrResponse runs one corr_pair_{method}.sql per (dbA, dbB) pair drawn
-// from sorted(dsList) choose 2. Pairs are appended in stable sorted order so
-// the JSON byte body (and therefore the cache value) is deterministic across
-// param-ordering permutations.
+// buildCorrResponse renders ONE UNION-ALL query over every (dbA, dbB) pair
+// in sorted(dsList) choose 2 and executes it as a single SelectContext call.
+// Each inner per-pair SQL is the existing corr_pair_{method}.sql template;
+// the outer wrapper projects an extra `pair_key = '{db_a}__{db_b}'` column
+// that the Go handler partitions on after the result lands.
+//
+// Why one query: with MaxOpenConns=2 on a t3.small, N=4 active datasets used
+// to mean 6 sequential DB roundtrips (and a singleflight-held cache slot
+// blocking other waiters for the duration). One UNION-ALL is what Shiny's
+// corr_all_pairs_sql does — see
+// reference/tfbpshiny/modules/binding/queries.py:331-390. Cache HIT path is
+// unchanged; this only affects cold-cache requests.
+//
+// Pairs are emitted in stable sorted (i < j) order so the JSON byte body —
+// and therefore the cache value — is deterministic across param-ordering
+// permutations of the input CSV.
 func (s *Server) buildCorrResponse(
 	ctx context.Context,
 	dataType, method, col string,
@@ -137,63 +149,94 @@ func (s *Server) buildCorrResponse(
 	filters domain.FiltersByDB,
 ) ([]byte, error) {
 	resp := domain.CorrResponse{Method: method, Col: col}
-	// runPair executes one (dbA, dbB) query. Extracted into a closure so the
-	// per-pair `defer cancel()` runs at iteration boundaries — matches the
-	// pattern in buildScatterResponse and avoids the loop-local cancel()
-	// pitfall where the timeout context outlives its useful scope.
-	runPair := func(dbA, dbB string) error {
+	pairOrder := sortedPairs(datasets)
+	if len(pairOrder) == 0 {
+		// Defensive: serveCorr enforces len(datasets) >= 2 so this branch
+		// is unreachable in production. Returning an empty pairs array
+		// keeps the wire shape consistent if a future caller bypasses
+		// validation.
+		return json.Marshal(resp)
+	}
+
+	// Pre-resolve every per-pair piece (col/extraWhere/args). Each step can
+	// still fail individually (manifest miss, malformed filter) — wrap with
+	// pair context so the structured log stays actionable.
+	specs := make([]pairSpec, 0, len(pairOrder))
+	pairCols := make([][2]string, 0, len(pairOrder)) // (colA, colB) for the response envelope
+	for _, pair := range pairOrder {
+		dbA, dbB := pair[0], pair[1]
 		rowA, _ := s.Whitelist.Dataset(dbA)
 		rowB, _ := s.Whitelist.Dataset(dbB)
 		colA, err := resolveMeasurementCol(rowA, col)
 		if err != nil {
-			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
+			return nil, fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		colB, err := resolveMeasurementCol(rowB, col)
 		if err != nil {
-			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
+			return nil, fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		extraWhereA, argsA, err := buildSquirrelWhere(filters[dbA])
 		if err != nil {
-			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
+			return nil, fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		extraWhereB, argsB, err := buildSquirrelWhere(filters[dbB])
 		if err != nil {
-			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
+			return nil, fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
-		sqlStr, args := renderCorrPairSQL(method, dataType, pairSpec{
+		specs = append(specs, pairSpec{
 			dbA: dbA, dbB: dbB,
 			colA: colA, colB: colB,
 			extraWhereA: extraWhereA, extraWhereB: extraWhereB,
 			argsA: argsA, argsB: argsB,
 		})
+		pairCols = append(pairCols, [2]string{colA, colB})
+	}
 
-		dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
-		defer cancel()
-		t0 := time.Now()
-		points := []domain.CorrPairPoint{}
-		err = s.Pool.DB.SelectContext(dbCtx, &points, sqlStr, args...)
-		elapsed := time.Since(t0)
-		AddDBMillis(ctx, elapsed.Milliseconds())
-		if s.Metrics != nil {
-			s.Metrics.DBDuration.
-				WithLabelValues(dataType + "/corr_pair_" + method).
-				Observe(elapsed.Seconds())
-		}
-		if err != nil {
-			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
-		}
-		resp.Pairs = append(resp.Pairs, domain.CorrPair{
-			DBA: dbA, DBB: dbB,
-			ColA: colA, ColB: colB,
-			Points: points,
-		})
-		return nil
+	sqlStr, args := renderCorrUnionAllSQL(method, dataType, specs)
+
+	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
+	defer cancel()
+	t0 := time.Now()
+	rows := []domain.CorrPairPointWithKey{}
+	err := s.Pool.DB.SelectContext(dbCtx, &rows, sqlStr, args...)
+	elapsed := time.Since(t0)
+	AddDBMillis(ctx, elapsed.Milliseconds())
+	if s.Metrics != nil {
+		// Single observation labelled "corr_union_{method}" so the
+		// per-pair vs UNION-ALL transition is visible in metrics
+		// (separate label space from the legacy "corr_pair_{method}").
+		s.Metrics.DBDuration.
+			WithLabelValues(dataType + "/corr_union_" + method).
+			Observe(elapsed.Seconds())
 	}
-	for _, pair := range sortedPairs(datasets) {
-		if err := runPair(pair[0], pair[1]); err != nil {
-			return nil, err
+	if err != nil {
+		return nil, fmt.Errorf("corr union (%d pairs): %w", len(specs), err)
+	}
+
+	// Partition by pair_key. Build an index from key → response slot so we
+	// preserve sorted(datasets)-choose-2 order in resp.Pairs regardless of
+	// the row order DuckDB returns from the UNION-ALL.
+	keyToSlot := make(map[string]int, len(specs))
+	resp.Pairs = make([]domain.CorrPair, len(specs))
+	for i, sp := range specs {
+		key := sp.dbA + "__" + sp.dbB
+		keyToSlot[key] = i
+		resp.Pairs[i] = domain.CorrPair{
+			DBA: sp.dbA, DBB: sp.dbB,
+			ColA: pairCols[i][0], ColB: pairCols[i][1],
+			Points: []domain.CorrPairPoint{},
 		}
 	}
+	for _, row := range rows {
+		slot, ok := keyToSlot[row.PairKey]
+		if !ok {
+			// Should be impossible — every row's pair_key was emitted by
+			// our own outer SELECT projection. Treat as data corruption.
+			return nil, fmt.Errorf("corr union: unexpected pair_key %q", row.PairKey)
+		}
+		resp.Pairs[slot].Points = append(resp.Pairs[slot].Points, row.CorrPairPoint)
+	}
+
 	return json.Marshal(resp)
 }
 

@@ -146,6 +146,42 @@ func renderCorrPairSQL(method, dataType string, pair pairSpec) (string, []any) {
 	return sqlStr, args
 }
 
+// renderCorrUnionAllSQL renders ONE UNION-ALL query covering every pair in
+// `pairs`. Each inner per-pair SQL is wrapped as:
+//
+//	SELECT *, '{db_a}__{db_b}' AS pair_key FROM ( <renderCorrPairSQL> )
+//
+// and the segments are joined with `UNION ALL`. The returned args slice is
+// the concatenation of each pair's args, in the same order as `pairs` — this
+// matches DuckDB's positional `?` binding (left-to-right across the whole
+// statement).
+//
+// The `pair_key` literal is built from the dataset db_names, which are
+// already SafeIdentRE-validated ([A-Za-z0-9_]+) via the dataset_manifest
+// whitelist, so the embedded string is apostrophe-free and needs no
+// quote-escaping. This mirrors the existing `{{db_a_literal}}` substitution
+// in the per-pair template.
+//
+// Mirrors Shiny's corr_all_pairs_sql shape (one UNION-ALL roundtrip across
+// itertools.combinations(sorted(datasets), 2)) — see
+// reference/tfbpshiny/modules/binding/queries.py:331-390. With MaxOpenConns=2
+// on t3.small and N=4 datasets (6 pairs), this turns 6 sequential
+// SelectContext calls into 1.
+func renderCorrUnionAllSQL(method, dataType string, pairs []pairSpec) (string, []any) {
+	segments := make([]string, 0, len(pairs))
+	args := make([]any, 0, len(pairs)*2)
+	for _, p := range pairs {
+		inner, innerArgs := renderCorrPairSQL(method, dataType, p)
+		// pair_key uses the dbA/dbB identifiers verbatim — both are
+		// whitelistedIdent-validated upstream (callers pass values that
+		// passed CheckDataset → SafeIdentRE), so no escaping is required.
+		key := whitelistedIdent(p.dbA) + "__" + whitelistedIdent(p.dbB)
+		segments = append(segments, "SELECT *, '"+key+"' AS pair_key FROM (\n"+inner+"\n)")
+		args = append(args, innerArgs...)
+	}
+	return strings.Join(segments, "\nUNION ALL\n"), args
+}
+
 // renderScatterSQL fills the regulator_scatter_{method}.sql template. The
 // regulator binds positionally TWICE (once per inner subquery) — the
 // returned args slice is therefore: [regulator, argsA..., regulator, argsB...].
