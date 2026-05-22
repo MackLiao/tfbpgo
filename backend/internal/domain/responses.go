@@ -1,5 +1,7 @@
 package domain
 
+import "encoding/json"
+
 type DatasetEntry struct {
 	DBName        string   `json:"dbName"`
 	DataType      string   `json:"dataType"`
@@ -12,12 +14,15 @@ type DatasetEntry struct {
 	//
 	// DefaultActive: pre-select on first visit. DefaultFilters: raw
 	// JSON {field: FilterSpec} the frontend applies as the initial
-	// filter state (empty string when no preset). ConditionCols:
-	// parsed from the CSV form in the manifest into a clean array so
-	// the JSON contract is straightforward.
-	DefaultActive  bool     `json:"defaultActive"`
-	DefaultFilters string   `json:"defaultFilters"`
-	ConditionCols []string `json:"conditionCols"`
+	// filter state — wire-encoded as a JSON object (or null when the
+	// artifact has no preset). Typed as json.RawMessage so we forward
+	// the bytes from the manifest without double-encoding through a
+	// Go string. ConditionCols: parsed from the CSV form in the
+	// manifest into a clean array so the JSON contract is
+	// straightforward.
+	DefaultActive  bool            `json:"defaultActive"`
+	DefaultFilters json.RawMessage `json:"defaultFilters"`
+	ConditionCols  []string        `json:"conditionCols"`
 }
 
 type DatasetsResponse struct {

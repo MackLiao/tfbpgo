@@ -1065,13 +1065,16 @@ export interface components {
              */
             defaultActive: boolean;
             /**
-             * @description v4: opaque JSON `{field: FilterSpec}` to apply as the initial
-             *     filter state on first visit, or the empty string when no preset
-             *     applies. Forwarded verbatim from `dataset_manifest`; clients
-             *     parse on demand. Mirrors `DEFAULT_DATASET_FILTERS`
-             *     (`vdb_init.py:55-68`).
+             * @description v4: opaque JSON `{field: FilterSpec}` object to apply as the
+             *     initial filter state on first visit, or `null` when the
+             *     artifact has no preset. Forwarded verbatim from
+             *     `dataset_manifest` (as a JSON object on the wire, NOT a
+             *     JSON-encoded string); clients consume directly. Mirrors
+             *     `DEFAULT_DATASET_FILTERS` (`vdb_init.py:55-68`).
              */
-            defaultFilters: string;
+            defaultFilters: {
+                [key: string]: unknown;
+            } | null;
             /**
              * @description v4: ordered list of field names whose values together form the
              *     sample-condition label shown in binding/perturbation hover
@@ -1275,11 +1278,15 @@ export interface components {
              */
             description?: string;
             /**
-             * @description v4: opaque JSON `{level: label}` mapping from
-             *     `field_manifest.level_definitions` (raw string the frontend
-             *     parses on demand). Capped at 16 KB. Omitted when empty.
+             * @description v4: opaque JSON `{level: label}` object from
+             *     `field_manifest.level_definitions`. Emitted as a JSON
+             *     object (NOT a JSON-encoded string) so clients consume
+             *     directly. Capped at 16 KB server-side. Omitted when the
+             *     manifest value is empty.
              */
-            levelDefinitions?: string;
+            levelDefinitions?: {
+                [key: string]: unknown;
+            };
             /**
              * @description v4: raw `field_manifest.ui_kind_override` value. When non-empty
              *     it overrides DuckDB-type-driven `kind` inference. Empty

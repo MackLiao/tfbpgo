@@ -791,13 +791,16 @@ components:
             Mirrors Shiny's `DEFAULT_ACTIVE_DATASETS`
             (`reference/tfbpshiny/utils/vdb_init.py:40-50`).
         defaultFilters:
-          type: string
+          type: object
+          nullable: true
+          additionalProperties: true
           description: |
-            v4: opaque JSON `{field: FilterSpec}` to apply as the initial
-            filter state on first visit, or the empty string when no preset
-            applies. Forwarded verbatim from `dataset_manifest`; clients
-            parse on demand. Mirrors `DEFAULT_DATASET_FILTERS`
-            (`vdb_init.py:55-68`).
+            v4: opaque JSON `{field: FilterSpec}` object to apply as the
+            initial filter state on first visit, or `null` when the
+            artifact has no preset. Forwarded verbatim from
+            `dataset_manifest` (as a JSON object on the wire, NOT a
+            JSON-encoded string); clients consume directly. Mirrors
+            `DEFAULT_DATASET_FILTERS` (`vdb_init.py:55-68`).
         conditionCols:
           type: array
           description: |
@@ -1169,11 +1172,14 @@ components:
             render — this string may contain any UTF-8. Omitted when
             empty.
         levelDefinitions:
-          type: string
+          type: object
+          additionalProperties: true
           description: |
-            v4: opaque JSON `{level: label}` mapping from
-            `field_manifest.level_definitions` (raw string the frontend
-            parses on demand). Capped at 16 KB. Omitted when empty.
+            v4: opaque JSON `{level: label}` object from
+            `field_manifest.level_definitions`. Emitted as a JSON
+            object (NOT a JSON-encoded string) so clients consume
+            directly. Capped at 16 KB server-side. Omitted when the
+            manifest value is empty.
         uiKindOverride:
           type: string
           enum: ["", categorical, numeric, bool]

@@ -120,6 +120,14 @@ unless they cause downstream breakage.
   the A5 follow-up commit — confirms `buildSquirrelWhere` only emits `?`
   placeholders so the arg count holds with filtered inputs on both sides.
 
+## From C1 multi-review fixes (commit pending — fix(schema-v4))
+
+- **`kindForDBType` comment ambiguity** (multi-review NICE-TO-HAVE, item 5).
+  The doc comment in `backend/internal/api/select_datasets.go` says callers
+  should consult `uiKindOverride` first and that the override arg is
+  honored inside `kindForDBType` itself — which is true but mildly
+  redundant. One-line doc cleanup; cosmetic only.
+
 ## From B4 (commit pending — Select Datasets rebuild)
 
 P1/P2 features from docs/parity/select_datasets.md §2 that were intentionally

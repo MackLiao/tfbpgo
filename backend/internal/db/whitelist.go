@@ -12,9 +12,9 @@ import (
 // artifact cannot blow up the response body. Frontend MUST HTML-escape
 // Description on render.
 const (
-	maxDefaultFiltersBytes  = 16 * 1024
-	maxLevelDefinitionBytes = 16 * 1024
-	maxDescriptionBytes     = 1 * 1024
+	maxDefaultFiltersBytes   = 16 * 1024
+	maxLevelDefinitionsBytes = 16 * 1024
+	maxDescriptionBytes      = 1 * 1024
 )
 
 // allowedUIKindOverride is the closed set of values
@@ -82,9 +82,23 @@ func NewWhitelist(m *Manifests) (*Whitelist, error) {
 		// the sample-condition label. DefaultFilters is opaque JSON and
 		// must NOT be interpolated into SQL; we only cap its size as
 		// defense-in-depth against a hand-edited artifact.
+		//
+		// We TrimSpace each token before regex check, but ALSO reject an
+		// empty token (e.g. "a,,b" or trailing comma) so the artifact
+		// pipeline can't silently emit drift. Rationale: the artifact
+		// pipeline owns the canonical CSV; any whitespace or empty
+		// element in `condition_cols` indicates a build-side bug and
+		// should be visible at startup, not papered over.
 		if d.ConditionCols != "" {
 			for _, c := range strings.Split(d.ConditionCols, ",") {
-				if !SafeIdentRE.MatchString(c) {
+				trimmed := strings.TrimSpace(c)
+				if trimmed == "" {
+					return nil, fmt.Errorf("manifest contains empty condition_cols entry for %q (raw=%q)", d.DBName, d.ConditionCols)
+				}
+				if trimmed != c {
+					return nil, fmt.Errorf("manifest contains whitespace in condition_cols entry for %q: %q", d.DBName, c)
+				}
+				if !SafeIdentRE.MatchString(trimmed) {
 					return nil, fmt.Errorf("manifest contains unsafe condition_cols entry for %q: %q", d.DBName, c)
 				}
 			}
@@ -106,8 +120,8 @@ func NewWhitelist(m *Manifests) (*Whitelist, error) {
 		if _, ok := allowedNumericLevelSort[f.NumericLevelSort]; !ok {
 			return nil, fmt.Errorf("manifest numeric_level_sort out of set for %q.%q: %q", f.DBName, f.Field, f.NumericLevelSort)
 		}
-		if len(f.LevelDefinitions) > maxLevelDefinitionBytes {
-			return nil, fmt.Errorf("manifest level_definitions for %q.%q exceeds %d-byte cap (%d)", f.DBName, f.Field, maxLevelDefinitionBytes, len(f.LevelDefinitions))
+		if len(f.LevelDefinitions) > maxLevelDefinitionsBytes {
+			return nil, fmt.Errorf("manifest level_definitions for %q.%q exceeds %d-byte cap (%d)", f.DBName, f.Field, maxLevelDefinitionsBytes, len(f.LevelDefinitions))
 		}
 		if len(f.Description) > maxDescriptionBytes {
 			return nil, fmt.Errorf("manifest description for %q.%q exceeds %d-byte cap (%d)", f.DBName, f.Field, maxDescriptionBytes, len(f.Description))

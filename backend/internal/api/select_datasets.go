@@ -253,10 +253,15 @@ func (s *Server) buildDatasetFieldsResponse(ctx context.Context, dbName string) 
 			Field:            f.Field,
 			Role:             f.Role,
 			Description:      f.Description,
-			LevelDefinitions: f.LevelDefinitions,
 			UIKindOverride:   f.UIKindOverride,
 			NumericLevelSort: f.NumericLevelSort,
 			Levels:           levelsByField[f.Field],
+		}
+		// LevelDefinitions is forwarded as a JSON object (not a
+		// JSON-encoded string). Leave nil when empty so `omitempty`
+		// strips the field rather than emitting `null`.
+		if f.LevelDefinitions != "" {
+			fm.LevelDefinitions = json.RawMessage(f.LevelDefinitions)
 		}
 		if ok {
 			fm.DBType = intro.dbType

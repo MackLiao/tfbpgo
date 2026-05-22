@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -29,12 +30,26 @@ func (s *Server) buildDatasetsResponse() ([]byte, error) {
 	for _, d := range s.Manifests.Datasets {
 		// Parse condition_cols CSV → []string on the server so the JSON
 		// contract is clean. The manifest gate has already validated
-		// every entry against SafeIdentRE.
-		var cc []string
+		// every entry against SafeIdentRE; TrimSpace mirrors the
+		// startup check (NewWhitelist), so a stray space anywhere on
+		// the line cannot drift between the two boundaries.
+		cc := []string{}
 		if d.ConditionCols != "" {
-			cc = strings.Split(d.ConditionCols, ",")
-		} else {
-			cc = []string{}
+			for _, tok := range strings.Split(d.ConditionCols, ",") {
+				tok = strings.TrimSpace(tok)
+				if tok == "" {
+					continue
+				}
+				cc = append(cc, tok)
+			}
+		}
+		// DefaultFilters lives in the manifest as a Go string carrying
+		// JSON bytes. Forward as json.RawMessage so the wire format is
+		// a JSON object, not a JSON-encoded string. Empty manifest
+		// value → nil RawMessage → JSON null.
+		var df json.RawMessage
+		if d.DefaultFilters != "" {
+			df = json.RawMessage(d.DefaultFilters)
 		}
 		out.Datasets = append(out.Datasets, domain.DatasetEntry{
 			DBName:         d.DBName,
@@ -45,7 +60,7 @@ func (s *Server) buildDatasetsResponse() ([]byte, error) {
 			SampleIDField:  d.SampleIDField,
 			Fields:         fieldsByDB[d.DBName],
 			DefaultActive:  d.DefaultActive,
-			DefaultFilters: d.DefaultFilters,
+			DefaultFilters: df,
 			ConditionCols:  cc,
 		})
 	}

@@ -64,6 +64,22 @@ before starting, append a section before finishing.
   `pnpm exec vite build` ✓.
 - Status: DONE.
 
+### 2026-05-22 09:05 PDT — implementer C1 multi-review fixes
+- defaultFilters/levelDefinitions now json.RawMessage (object on wire,
+  not string). OpenAPI + frontend types regenerated.
+- Six v4 NewWhitelist Rejects* tests added (closing reviewer IMPORTANT 2):
+  unsafe condition_cols entry, oversized default_filters/description/
+  level_definitions, out-of-set ui_kind_override/numeric_level_sort.
+  Plus whitespace + empty-token rejection on condition_cols CSV.
+- condition_cols CSV split trims whitespace consistently in NewWhitelist
+  and datasets.go (closes security MEDIUM 1).
+- Renamed `maxLevelDefinitionBytes` → `maxLevelDefinitionsBytes`.
+- Re-recorded /datasets parity snapshot for the new shape.
+- Tests: backend go test ./... -race ✓, data_prep pytest ✓ (60/60),
+  frontend tsc + vitest ✓ (24/24), parity ✓ (15/15).
+- Commit: <SHA>
+- Status: C1 multi-review fixes DONE.
+
 ### 2026-05-22 — implementer C2
 - Home module rebuilt to match Shiny `modules/home/ui.py:65-115`:
   Bootstrap-style feature cards via `Card` from `ui/card.tsx`; bold
