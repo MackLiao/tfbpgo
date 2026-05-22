@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
-import { Binding } from "@/routes/Binding";
+import { Perturbation } from "@/routes/Perturbation";
 import { setArtifactVersion } from "@/api/client";
 
-// Stub PlotLazy — actual Plotly rendering is jsdom-incompatible and would
-// dominate test time. The point of these tests is the URL→fetch contract
-// and the radio-click → URL-write contract, not Plotly internals.
+// Mirrors test/Binding.test.tsx. Stub PlotLazy — actual Plotly rendering is
+// jsdom-incompatible and would dominate test time. The point of these tests
+// is the URL→fetch contract and the radio-click → URL-write contract, not
+// Plotly internals.
 vi.mock("@/plots/PlotLazy", () => ({
   PlotLazy: (props: { data?: unknown[]; layout?: unknown; onClick?: unknown }) => (
     <div
@@ -30,7 +31,7 @@ function makeClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-describe("Binding route URL keys", () => {
+describe("Perturbation route URL keys", () => {
   beforeEach(() => {
     setArtifactVersion("test");
   });
@@ -40,24 +41,24 @@ describe("Binding route URL keys", () => {
 
     render(
       <QueryClientProvider client={makeClient()}>
-        <MemoryRouter initialEntries={["/binding"]}>
-          <Binding />
+        <MemoryRouter initialEntries={["/perturbation"]}>
+          <Perturbation />
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
     expect(
-      screen.getByText(/Select at least two binding datasets/i),
+      screen.getByText(/Select at least two perturbation datasets/i),
     ).toBeInTheDocument();
   });
 
-  it("fires /binding/corr with the active datasets when >= 2 are selected", async () => {
+  it("fires /perturbation/correlations with the active datasets when >= 2 are selected", async () => {
     const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
       fakeFetch((url) => {
         calls.push(url);
-        if (url.includes("/binding/corr"))
+        if (url.includes("/perturbation/correlations"))
           return { method: "pearson", col: "effect", pairs: [] };
         if (url.endsWith("/datasets")) return { datasets: [] };
         return {};
@@ -66,18 +67,18 @@ describe("Binding route URL keys", () => {
 
     render(
       <QueryClientProvider client={makeClient()}>
-        <MemoryRouter initialEntries={["/binding?binding=callingcards,hackett"]}>
-          <Binding />
+        <MemoryRouter initialEntries={["/perturbation?perturbation=hackett,kemmeren"]}>
+          <Perturbation />
         </MemoryRouter>
       </QueryClientProvider>,
     );
 
     await waitFor(() => {
-      expect(calls.some((u) => u.includes("/binding/corr"))).toBe(true);
+      expect(calls.some((u) => u.includes("/perturbation/correlations"))).toBe(true);
     });
-    const corrCall = calls.find((u) => u.includes("/binding/corr"));
+    const corrCall = calls.find((u) => u.includes("/perturbation/correlations"));
     expect(corrCall).toBeDefined();
-    expect(corrCall!).toContain("datasets=callingcards%2Chackett");
+    expect(corrCall!).toContain("datasets=hackett%2Ckemmeren");
     expect(corrCall!).toContain("method=pearson");
     expect(corrCall!).toContain("col=effect");
   });
@@ -86,7 +87,7 @@ describe("Binding route URL keys", () => {
     vi.stubGlobal(
       "fetch",
       fakeFetch((url) => {
-        if (url.includes("/binding/corr"))
+        if (url.includes("/perturbation/correlations"))
           return { method: "pearson", col: "effect", pairs: [] };
         if (url.endsWith("/datasets")) return { datasets: [] };
         return {};
@@ -100,13 +101,13 @@ describe("Binding route URL keys", () => {
 
     render(
       <QueryClientProvider client={makeClient()}>
-        <MemoryRouter initialEntries={["/binding?binding=callingcards,hackett"]}>
+        <MemoryRouter initialEntries={["/perturbation?perturbation=hackett,kemmeren"]}>
           <Routes>
             <Route
-              path="/binding"
+              path="/perturbation"
               element={
                 <>
-                  <Binding />
+                  <Perturbation />
                   <LocationProbe />
                 </>
               }
@@ -133,41 +134,41 @@ describe("Binding route URL keys", () => {
         if (url.endsWith("/datasets")) {
           return {
             datasets: [
-              { dbName: "callingcards", displayName: "Calling Cards" },
               { dbName: "hackett", displayName: "Hackett" },
+              { dbName: "kemmeren", displayName: "Kemmeren" },
             ],
           };
         }
-        if (url.includes("/binding/corr")) {
+        if (url.includes("/perturbation/correlations")) {
           return {
             method: "pearson",
             col: "effect",
             pairs: [
               {
-                dbA: "callingcards",
-                dbB: "hackett",
-                colA: "callingcards_enrichment",
+                dbA: "hackett",
+                dbB: "kemmeren",
+                colA: "effect",
                 colB: "effect",
                 points: [
                   {
-                    dbA: "callingcards",
-                    dbAId: "cc_0",
-                    dbB: "hackett",
-                    dbBId: "h_0",
+                    dbA: "hackett",
+                    dbAId: "h_0",
+                    dbB: "kemmeren",
+                    dbBId: "k_0",
                     regulatorLocusTag: "YBR289W",
-                    correlation: 0.42,
+                    correlation: 0.37,
                   },
                 ],
               },
             ],
           };
         }
-        if (url.includes("/binding/scatter"))
+        if (url.includes("/perturbation/scatter"))
           return {
             regulator: "YBR289W",
-            dbA: "callingcards",
-            dbB: "hackett",
-            colA: "callingcards_enrichment",
+            dbA: "hackett",
+            dbB: "kemmeren",
+            colA: "effect",
             colB: "effect",
             method: "pearson",
             r: 0,
@@ -181,10 +182,10 @@ describe("Binding route URL keys", () => {
       <QueryClientProvider client={makeClient()}>
         <MemoryRouter
           initialEntries={[
-            "/binding?binding=callingcards,hackett&regulator=YBR289W",
+            "/perturbation?perturbation=hackett,kemmeren&regulator=YBR289W",
           ]}
         >
-          <Binding />
+          <Perturbation />
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -199,6 +200,3 @@ describe("Binding route URL keys", () => {
     });
   });
 });
-
-// Perturbation route tests moved to test/Perturbation.test.tsx after the
-// B3 rebuild (correlation + scatter parity with Binding).

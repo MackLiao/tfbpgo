@@ -33,6 +33,28 @@ export const qk = {
   },
   perturbation: (regulator: string, datasets: string[], filters: string) =>
     [v(), "perturbation", regulator, datasets.join(","), filters] as const,
+  // Perturbation correlation distribution across all sorted(datasets) choose 2 pairs.
+  // Mirrors `bindingCorr`; datasets are sorted into the key so cache hits survive
+  // param-order permutation.
+  perturbationCorrelations: (
+    datasets: string[],
+    method: string,
+    col: string,
+    filters: string,
+  ) =>
+    [v(), "perturbationCorrelations", [...datasets].sort().join(","), method, col, filters] as const,
+  // One key per (regulator, sorted pair, method, col, filters). Mirrors
+  // `bindingScatter`.
+  perturbationScatter: (
+    regulator: string,
+    pair: readonly [string, string],
+    method: string,
+    col: string,
+    filters: string,
+  ) => {
+    const [a, b] = pair[0] <= pair[1] ? [pair[0], pair[1]] : [pair[1], pair[0]];
+    return [v(), "perturbationScatter", regulator, a, b, method, col, filters] as const;
+  },
   topn: (b: string[], p: string[], topN: number, eff: number, pv: number, filters: string) =>
     [v(), "topn", b.join(","), p.join(","), topN, eff, pv, filters] as const,
   dto: () => [v(), "dto"] as const,

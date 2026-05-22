@@ -265,3 +265,48 @@ Read before working, append a section before finishing.
   3 modified: query-keys, test, STATUS).
 - Commit: 2432163
 - Status: DONE.
+
+### 2026-05-22 02:00 PDT — implementer B3
+- Rebuilt Perturbation route to mirror B2 (Binding) 1:1: replaced the
+  placeholder volcano scatter with the Shiny shape from
+  reference/tfbpshiny/modules/perturbation/server/workspace.py:199-581
+  (boxplot of pairwise correlations + selected-regulator overlay +
+  per-pair scatter grid + missing-dataset notice).
+- New: frontend/src/plots/PerturbationCorrBoxplot.tsx — copy of
+  BindingCorrBoxplot with the "Select at least two perturbation
+  datasets..." empty state string; same click-customdata bridge to
+  ?regulator=.
+- New: frontend/src/plots/PerturbationScatterPair.tsx — copy of
+  BindingScatterPair (400x400, r=… annotation, two-line title).
+- New: frontend/src/plots/PerturbationScatterRow.tsx — useQueries fan-out
+  hitting api.perturbationScatter for each sorted(datasets) choose 2 pair.
+- New: frontend/src/components/PerturbationSidebar.tsx — Effect/P-value +
+  Pearson/Spearman radios + RegulatorPicker, heading "Perturbation".
+- Rewrote: frontend/src/routes/Perturbation.tsx — ?perturbation= for
+  datasets, ?regulator=, ?col=, ?corr=, ?filters= flowed through; same
+  "Perturbation Correlation" h1 + missing-datasets notice between the
+  boxplot and scatter row.
+- Deleted: frontend/src/plots/PerturbationVolcano.tsx.
+- Each new component carries a one-line `// Mirrors plots/Binding... 1:1`
+  header comment per the B3 plan (Option A — duplication, not generic
+  extraction, matches the Shiny two-workspace.py-files pattern).
+- Query keys: added qk.perturbationCorrelations + qk.perturbationScatter
+  to lib/query-keys.ts mirroring bindingCorr/bindingScatter (datasets/
+  pair sorted into the key so cache hits survive param permutation).
+- Tests: new frontend/src/test/Perturbation.test.tsx (4 cases:
+  empty state, /perturbation/correlations fetch URL with active datasets,
+  Spearman radio writes ?corr=, boxplot trace+overlay rendering with
+  mocked corr response). Stale `describe("Perturbation route URL keys")`
+  block removed from Binding.test.tsx (it tested the old
+  /perturbation?regulator= contract which no longer exists). Removed the
+  unused Perturbation import there as well.
+- Verify: pnpm types:gen ✓; pnpm exec tsc --noEmit ✓; pnpm exec vitest
+  run ✓ (20 tests, 6 files — +3 vs B2); pnpm exec vite build ✓.
+- Bundle: plotly chunk 523.92 KB gzip (was 523.35 KB after B2 — +0.57
+  KB, well under the 530 KB ceiling); index chunk 76.00 KB gzip (was
+  75.97 KB after B2 — flat, since the new components mirror existing
+  ones and tree-shake against the same plot primitives).
+- Files touched: 9 (4 new, 1 deleted, 1 rewrite, 3 modified:
+  query-keys, Binding.test.tsx pruning, STATUS).
+- Commit: <SHA-PENDING>
+- Status: DONE.
