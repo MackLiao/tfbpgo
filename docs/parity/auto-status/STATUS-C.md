@@ -17,7 +17,7 @@ before starting, append a section before finishing.
 | C1  | schema_version=4 — unlock deferred items           | DONE        | foundation: unlocks default-active, description tooltips, cascade narrowing, condition-cols hover, FIELD_TYPE_OVERRIDES via artifact |
 | C2  | Home module rebuild                                | DONE        | feature cards + binding/perturbation imgs + wine pill nav + 3-line logo + github badge |
 | C3  | Binding/Perturbation P1 polish                     | PENDING     | depends on C1 (condition_cols); narrow RegulatorPicker independent |
-| C4  | Select Datasets — schema-v4-dependent features     | PENDING     | depends on C1 |
+| C4  | Select Datasets — schema-v4-dependent features     | DONE        | rows 1/3/4/9/28 closed; cascade narrowing (row 19) deferred to polish.md |
 | C5  | Select Datasets — remaining UX features            | PENDING     | depends on C4 (apply-to-all, sidebar) |
 | C6  | Export endpoint + tarball UI                       | PENDING     | independent; large surface |
 | C7  | Multi-review nice-to-haves cleanup                 | PENDING     | independent; small surface across many files |
@@ -79,6 +79,33 @@ before starting, append a section before finishing.
   frontend tsc + vitest ✓ (24/24), parity ✓ (15/15).
 - Commit: 5c2e23f
 - Status: C1 multi-review fixes DONE.
+
+### 2026-05-22 09:20 PDT — implementer C4
+- Built P1/P2 Select Datasets items unlocked by schema_version=4.
+- New files: frontend/src/components/DatasetBreakdownModal.tsx (audit row
+  28; modeled on CommonRegulatorsModal — diagonal cell click opens
+  `/selection/breakdown`), frontend/src/lib/sort-levels.ts (numeric vs
+  lex sort for categorical level labels).
+- Modified files: frontend/src/routes/Select.tsx (first-visit defaults
+  via useRef-guarded effect — preselects defaultActive datasets and
+  seeds defaultFilters when URL has no ?binding=/?perturbation=; sort
+  datasets by display_name client-side; wired BreakdownModal),
+  frontend/src/components/DatasetFilterModal.tsx (title= on FieldLabel
+  for description, levelDefinitions labels on categorical checkboxes,
+  numericLevelSort honored), frontend/src/plots/SelectionMatrix.tsx
+  (diagonal cells become clickable when onDiagonalClick prop set).
+- Polish.md updated with the cascade-narrowing deferral (row 19) and a
+  note on dataset-level description tooltips (row 22 — needs schema v5).
+- Tests: extended Select.test.tsx with 4 new specs — first-visit
+  defaults write URL + filters; URL with ?binding= skips defaults;
+  description renders as title=; diagonal click opens breakdown modal
+  with mocked response.
+- Verify: pnpm types:gen ✓, pnpm exec tsc --noEmit ✓, pnpm exec vitest
+  run ✓ (28/28), pnpm exec vite build ✓ (plotly chunk 513.81 KB
+  gzipped, no regression).
+- Commit: d3acce8
+- Status: DONE. Row 19 (cascade narrowing) partial — JSON labels done,
+  runtime narrowing deferred.
 
 ### 2026-05-22 — implementer C2
 - Home module rebuilt to match Shiny `modules/home/ui.py:65-115`:
