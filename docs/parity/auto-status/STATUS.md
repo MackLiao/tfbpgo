@@ -308,5 +308,5 @@ Read before working, append a section before finishing.
   ones and tree-shake against the same plot primitives).
 - Files touched: 9 (4 new, 1 deleted, 1 rewrite, 3 modified:
   query-keys, Binding.test.tsx pruning, STATUS).
-- Commit: <SHA-PENDING>
+- Commit: 3e1c639
 - Status: DONE.
