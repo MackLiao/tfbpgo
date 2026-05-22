@@ -21,8 +21,10 @@ Read before working, append a section before finishing.
 | A6  | Plotly bundle: register box trace          | DONE        | bundle now 523 KB gzip (11 KB over the 512 KB soft target); see [polish.md](polish.md) |
 | B1  | Comparison module rebuild                  | DONE        | 79eeea9; depends on A4+A6 |
 | B2  | Binding module rebuild                     | DONE        | 2432163; depends on A2+A3+A6 |
-| B3  | Perturbation module rebuild                | PENDING     | depends on A2+A3+A6 |
+| B3  | Perturbation module rebuild                | DONE        | 3e1c639; depends on A2+A3+A6 |
 | B4  | Select Datasets module rebuild             | DONE        | 9e00aad; depends on A5; polish notes in [polish.md](polish.md) |
+
+**Run complete — all 10 tasks done. See [SUMMARY.md](SUMMARY.md) for the morning review.**
 
 ---
 
