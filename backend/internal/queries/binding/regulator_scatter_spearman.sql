@@ -40,6 +40,12 @@ WITH
     FROM a
     INNER JOIN b
       ON a.target_locus_tag = b.target_locus_tag
+    WHERE a.{{col_a}} IS NOT NULL
+      AND b.{{col_b}} IS NOT NULL
+      AND NOT isinf(a.{{col_a}})
+      AND NOT isinf(b.{{col_b}})
+      AND NOT isnan(a.{{col_a}})
+      AND NOT isnan(b.{{col_b}})
   )
 SELECT
   target_locus_tag,

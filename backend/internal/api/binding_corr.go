@@ -85,6 +85,18 @@ func (s *Server) serveCorr(w http.ResponseWriter, r *http.Request, dataType stri
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Symmetric with serveScatter: strip regulator_locus_tag from each
+	// per-side filter dict BEFORE the field-whitelist check. Shiny's
+	// /corr page populates the regulator via a different control than
+	// the field-filters dict, so a caller that round-trips the same
+	// `filters=` JSON across endpoints would otherwise hit a 400 on
+	// CheckField (regulator_locus_tag is a real column but not a
+	// field_manifest entry). Mirrors workspace.py:536-540 logic.
+	if filters != nil {
+		for dbName := range filters {
+			filters[dbName] = stripRegulatorFilter(filters[dbName])
+		}
+	}
 	for dbName, fs := range filters {
 		for fld := range fs {
 			if err := s.Whitelist.CheckField(dbName, fld); err != nil {
@@ -125,25 +137,28 @@ func (s *Server) buildCorrResponse(
 	filters domain.FiltersByDB,
 ) ([]byte, error) {
 	resp := domain.CorrResponse{Method: method, Col: col}
-	for _, pair := range sortedPairs(datasets) {
-		dbA, dbB := pair[0], pair[1]
+	// runPair executes one (dbA, dbB) query. Extracted into a closure so the
+	// per-pair `defer cancel()` runs at iteration boundaries — matches the
+	// pattern in buildScatterResponse and avoids the loop-local cancel()
+	// pitfall where the timeout context outlives its useful scope.
+	runPair := func(dbA, dbB string) error {
 		rowA, _ := s.Whitelist.Dataset(dbA)
 		rowB, _ := s.Whitelist.Dataset(dbB)
 		colA, err := resolveMeasurementCol(rowA, col)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		colB, err := resolveMeasurementCol(rowB, col)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		extraWhereA, argsA, err := buildSquirrelWhere(filters[dbA])
 		if err != nil {
-			return nil, err
+			return err
 		}
 		extraWhereB, argsB, err := buildSquirrelWhere(filters[dbB])
 		if err != nil {
-			return nil, err
+			return err
 		}
 		sqlStr, args := renderCorrPairSQL(method, dataType, pairSpec{
 			dbA: dbA, dbB: dbB,
@@ -153,10 +168,10 @@ func (s *Server) buildCorrResponse(
 		})
 
 		dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
+		defer cancel()
 		t0 := time.Now()
 		points := []domain.CorrPairPoint{}
 		err = s.Pool.DB.SelectContext(dbCtx, &points, sqlStr, args...)
-		cancel()
 		elapsed := time.Since(t0)
 		AddDBMillis(ctx, elapsed.Milliseconds())
 		if s.Metrics != nil {
@@ -165,13 +180,19 @@ func (s *Server) buildCorrResponse(
 				Observe(elapsed.Seconds())
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		resp.Pairs = append(resp.Pairs, domain.CorrPair{
 			DBA: dbA, DBB: dbB,
 			ColA: colA, ColB: colB,
 			Points: points,
 		})
+		return nil
+	}
+	for _, pair := range sortedPairs(datasets) {
+		if err := runPair(pair[0], pair[1]); err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(resp)
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
@@ -241,6 +242,17 @@ func pearsonR(points []domain.ScatterPoint) float64 {
 	num := sxy - sx*sy/n
 	denomA := sx2 - sx*sx/n
 	denomB := sy2 - sy*sy/n
+	// Clamp denomA/denomB to >=0 before sqrt: with floating-point round-off
+	// near zero-variance series these can land at e.g. -2.7e-17, which would
+	// produce NaN under math.Sqrt. The downstream IsNaN/IsInf guards remain
+	// as defense-in-depth, but the clamp eliminates the only NaN path
+	// reachable from finite finite-variance inputs.
+	if denomA < 0 {
+		denomA = 0
+	}
+	if denomB < 0 {
+		denomB = 0
+	}
 	denom := math.Sqrt(denomA * denomB)
 	if denom == 0 || math.IsNaN(denom) || math.IsInf(denom, 0) {
 		return 0
@@ -271,12 +283,11 @@ func pearsonR(points []domain.ScatterPoint) float64 {
 func sortedPairs(datasets []string) [][2]string {
 	sorted := make([]string, len(datasets))
 	copy(sorted, datasets)
-	// Use sort.Strings via a tiny inline helper to avoid a separate import
-	// in this file; the caller already brings sort in via canonValues.
-	// We rely on the upstream slice ordering for now — datasets passed in
-	// from canonValues path are dedupeAndCapCSV outputs, which preserve
-	// first-seen order; sort here for determinism.
-	sortStringsAsc(sorted)
+	// Sort ascending for determinism. Inputs from the canonValues path are
+	// dedupeAndCapCSV outputs (first-seen order); sorting here makes the
+	// pair sequence — and therefore the resulting JSON body and cache key —
+	// independent of caller-side ordering.
+	sort.Strings(sorted)
 	pairs := make([][2]string, 0, len(sorted)*(len(sorted)-1)/2)
 	for i := 0; i < len(sorted); i++ {
 		for j := i + 1; j < len(sorted); j++ {
@@ -284,15 +295,4 @@ func sortedPairs(datasets []string) [][2]string {
 		}
 	}
 	return pairs
-}
-
-// sortStringsAsc is a tiny insertion-sort helper to keep this file
-// dependency-free of `sort`. The slice sizes seen here are always
-// <= MaxDatasets (bounded by the manifest), so O(n^2) is fine.
-func sortStringsAsc(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
 }

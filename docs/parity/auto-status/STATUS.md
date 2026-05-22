@@ -15,7 +15,7 @@ Read before working, append a section before finishing.
 |-----|--------------------------------------------|-------------|-------|
 | A1  | schema_version=3 — externalize column maps | DONE        | 1976f59 + c784d9e (review fixes); polish notes in [polish.md](polish.md) |
 | A2  | Pearson/Spearman correlation SQL           | DONE        | depends on A1 |
-| A3  | correlation endpoints                      | PENDING     | depends on A1+A2 |
+| A3  | correlation endpoints                      | DONE        | 218bf3c + multi-review fixes; polish notes in [polish.md](polish.md) |
 | A4  | Comparison hackett filter parity fix       | PENDING     | independent |
 | A5  | Select Datasets backend endpoints          | PENDING     | depends on A1 |
 | A6  | Plotly bundle: register box trace          | PENDING     | independent |
@@ -108,3 +108,14 @@ Read before working, append a section before finishing.
   frontend tsc --noEmit ✓.
 - Commit: 218bf3c
 - Status: DONE.
+
+### 2026-05-22 00:54 PDT — implementer A3 multi-review fixes
+- CRITICAL: scatter SQL templates now filter NULL/Inf/NaN (matches
+  corr_pair templates). Closes a json.Marshal 500 path on Inf measurements.
+- pearsonR clamp + defer cancel() + symmetric stripRegulatorFilter in
+  /corr handlers + golden URLs added + sortStringsAsc removed + OpenAPI
+  pair ordering documented.
+- Remaining items (perf, error context, doc-descriptions) deferred to polish.md.
+- Tests: backend go test ./... ✓, parity (Go harness) ✓, frontend tsc ✓.
+- Commit: 9c288cf
+- Status: A3 multi-review fixes DONE.

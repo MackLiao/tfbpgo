@@ -18,3 +18,13 @@
 /api/v/{V}/comparison/topn?binding=callingcards&perturbation=hackett&top_n=10
 /api/v/{V}/comparison/topn?binding=callingcards&perturbation=hackett&top_n=25&effect=0.5
 /api/v/{V}/comparison/dto
+# Correlation endpoints (A3). The fixture has exactly one binding dataset
+# (callingcards) and one perturbation dataset (hackett); dedupeAndCapCSV
+# collapses CSV duplicates, so /binding/corr and /perturbation/correlations
+# cannot produce a 200 against the fixture (they require >= 2 distinct
+# datasets after dedup). The scatter endpoints accept self-pairs without
+# dedup, so we cover the A3 surface there.
+/api/v/{V}/binding/scatter?regulator=YBR289W&pair=callingcards,callingcards&method=pearson&col=effect
+/api/v/{V}/binding/scatter?regulator=YBR289W&pair=callingcards,callingcards&method=spearman&col=effect
+/api/v/{V}/perturbation/scatter?regulator=YBR289W&pair=hackett,hackett&method=pearson&col=effect
+/api/v/{V}/perturbation/scatter?regulator=YBR289W&pair=hackett,hackett&method=spearman&col=effect

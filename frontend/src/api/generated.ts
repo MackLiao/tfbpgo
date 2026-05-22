@@ -505,7 +505,11 @@ export interface paths {
                     regulator: string;
                     /**
                      * @description Comma-separated pair of binding dataset db_names (exactly 2 entries).
-                     *     Both must have `data_type=binding`. Order is preserved (dbA, dbB).
+                     *     Both must have `data_type=binding`. **Order is significant**: the
+                     *     first entry becomes `dbA` (rendered as the scatter plot's x-axis,
+                     *     `val_a` in each point), and the second becomes `dbB` (y-axis,
+                     *     `val_b`). `pair=A,B` and `pair=B,A` produce transposed responses
+                     *     and therefore distinct cache entries.
                      */
                     pair: string;
                     method: "pearson" | "spearman";
@@ -629,7 +633,13 @@ export interface paths {
             parameters: {
                 query: {
                     regulator: string;
-                    /** @description Comma-separated pair of perturbation dataset db_names. */
+                    /**
+                     * @description Comma-separated pair of perturbation dataset db_names (exactly 2
+                     *     entries). **Order is significant**: the first entry becomes `dbA`
+                     *     (x-axis, `val_a` in each point), and the second becomes `dbB`
+                     *     (y-axis, `val_b`). `pair=A,B` and `pair=B,A` produce transposed
+                     *     responses and distinct cache entries.
+                     */
                     pair: string;
                     method: "pearson" | "spearman";
                     col: "effect" | "pvalue";
