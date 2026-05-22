@@ -888,6 +888,13 @@ export interface components {
             pairKey: string;
             bindingSampleId: string;
             regulatorLocusTag: string;
+            /**
+             * @description Display name from `regulator_display_names` (LEFT JOIN on
+             *     `regulator_locus_tag`). Null when the locus tag has no entry in
+             *     that table. Used by the Comparison module for the per-point
+             *     hover tooltip (parity with Shiny `get_regulator_display_name`).
+             */
+            regulatorDisplayName: string | null;
             perturbationSampleId: string;
             /**
              * Format: int64

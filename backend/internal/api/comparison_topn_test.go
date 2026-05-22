@@ -143,6 +143,50 @@ func TestComparisonTopN_HarbisonAppliesFilters(t *testing.T) {
 		"args count must match placeholders after H2 fix")
 }
 
+// TestComparisonTopN_HackettFilterParity pins the A4 fix: when the
+// perturbation dataset has hackett_time_filter=true, user-supplied
+// filters[pDB] MUST NOT be applied to the perturbation CTE — Shiny does
+// this at reference/tfbpshiny/modules/comparison/queries.py:432. Before
+// the fix the Go path applied filters unconditionally, producing
+// silently divergent output.
+//
+// Pre-fix this test FAILS: the rendered SQL contains the hackett "time"
+// filter clause in the perturbation block. Post-fix it PASSES: the
+// hackett-side filter is dropped while binding-side filters still appear
+// (regression guard against accidentally dropping all filters).
+func TestComparisonTopN_HackettFilterParity(t *testing.T) {
+	tmpl := queries.Get("comparison/topn.sql")
+	srv := newServerWithFixtureWhitelist(t)
+	bcfg := bindingConfigs["callingcards"]
+	pcfg := pertConfigs["hackett"]
+
+	filters := domain.FiltersByDB{
+		"hackett": map[string]domain.FilterSpec{
+			"time": {Type: "numeric", Value: []byte(`[40, 50]`)},
+		},
+		// Binding-side filter — guard against the fix accidentally dropping
+		// filters for the binding dataset too.
+		"callingcards": map[string]domain.FilterSpec{
+			"target_locus_tag": {Type: "categorical", Value: []byte(`["YBR289W"]`)},
+		},
+	}
+	rendered, _, err := srv.buildOnePair(
+		tmpl, "callingcards", "hackett", bcfg, pcfg,
+		25, 0.0, 0.05, filters,
+	)
+	require.NoError(t, err)
+	// The hackett-side filter MUST be absent from the rendered SQL after
+	// the A4 parity fix; this assertion fails pre-fix.
+	require.NotContainsf(t, rendered, `"time"`,
+		"hackett perturbation filter must be dropped when "+
+			"hackett_time_filter=true (parity with queries.py:432); got SQL:\n%s",
+		rendered)
+	// Binding-side filter on callingcards MUST still appear — regression
+	// guard that we only dropped the hackett-side filter, not all filters.
+	require.Containsf(t, rendered, `"target_locus_tag"`,
+		"binding-side filter must still be applied; got SQL:\n%s", rendered)
+}
+
 // TestBuildSquirrelWhereRaw_RejectsUnknownType pins the H3 fix: an
 // unknown filter spec.Type used to silently produce an empty WHERE
 // clause (dropping the user-requested filter). It now returns an error.

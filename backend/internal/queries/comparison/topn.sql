@@ -40,6 +40,7 @@ SELECT
     '{{pair_key}}'                                  AS pair_key,
     b.binding_sample_id                             AS binding_sample_id,
     b.regulator_locus_tag                           AS regulator_locus_tag,
+    rdn.display_name                                AS regulator_display_name,
     pert.perturbation_sample_id                     AS perturbation_sample_id,
     COUNT(*)                                        AS n,
     SUM(pert.is_responsive)::INTEGER                AS n_responsive,
@@ -48,4 +49,6 @@ FROM top_n_binding b
 JOIN perturbation pert
     ON  b.regulator_locus_tag = pert.regulator_locus_tag
     AND b.target_locus_tag    = pert.target_locus_tag
-GROUP BY b.binding_sample_id, b.regulator_locus_tag, pert.perturbation_sample_id
+LEFT JOIN regulator_display_names rdn
+    ON  rdn.regulator_locus_tag = b.regulator_locus_tag
+GROUP BY b.binding_sample_id, b.regulator_locus_tag, rdn.display_name, pert.perturbation_sample_id

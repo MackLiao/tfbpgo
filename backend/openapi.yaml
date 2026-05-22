@@ -770,6 +770,7 @@ components:
         - pairKey
         - bindingSampleId
         - regulatorLocusTag
+        - regulatorDisplayName
         - perturbationSampleId
         - n
         - nResponsive
@@ -782,6 +783,13 @@ components:
           type: string
         regulatorLocusTag:
           type: string
+        regulatorDisplayName:
+          type: ["string", "null"]
+          description: |
+            Display name from `regulator_display_names` (LEFT JOIN on
+            `regulator_locus_tag`). Null when the locus tag has no entry in
+            that table. Used by the Comparison module for the per-point
+            hover tooltip (parity with Shiny `get_regulator_display_name`).
         perturbationSampleId:
           type: string
         n:

@@ -16,7 +16,7 @@ Read before working, append a section before finishing.
 | A1  | schema_version=3 — externalize column maps | DONE        | 1976f59 + c784d9e (review fixes); polish notes in [polish.md](polish.md) |
 | A2  | Pearson/Spearman correlation SQL           | DONE        | depends on A1 |
 | A3  | correlation endpoints                      | DONE        | 218bf3c + multi-review fixes; polish notes in [polish.md](polish.md) |
-| A4  | Comparison hackett filter parity fix       | PENDING     | independent |
+| A4  | Comparison hackett filter parity fix       | DONE        | independent |
 | A5  | Select Datasets backend endpoints          | PENDING     | depends on A1 |
 | A6  | Plotly bundle: register box trace          | PENDING     | independent |
 | B1  | Comparison module rebuild                  | PENDING     | depends on A4+A6 |
@@ -107,6 +107,28 @@ Read before working, append a section before finishing.
   binding_corr_test.go + perturbation_corr_test.go); parity ✓;
   frontend tsc --noEmit ✓.
 - Commit: 218bf3c
+- Status: DONE.
+
+### 2026-05-22 01:10 PDT — implementer A4
+- Hackett-filter parity (docs/parity/comparison.md §7.2): skip filters[pDB]
+  when pcfg.HackettTimeFilter, mirroring Shiny queries.py:432. Regression
+  test TestComparisonTopN_HackettFilterParity added; constructs a hackett
+  time-range filter alongside a callingcards target_locus_tag filter and
+  asserts the hackett `"time"` clause is absent from the rendered SQL while
+  the binding-side `"target_locus_tag"` clause still appears. Fails pre-fix.
+- regulator_display_name added to TopN rows via LEFT JOIN against
+  regulator_display_names in topn.sql; TopNRow.RegulatorDisplayName *string
+  (nullable so locus tags missing from regulator_display_names produce
+  JSON null). OpenAPI schema extended with type: [string, null]; frontend
+  types regenerated (TopNRow.regulatorDisplayName: string | null).
+- Re-recorded /comparison/topn parity snapshots
+  (5f76e2fcca423df8.expected, 9cbf36b2908efdb5.expected) plus the stale
+  /api/version snapshot (5694bd8f8cc07635.expected — schemaVersion bumped
+  2->3 in A1 but never re-snapshotted; included here to keep `make parity`
+  green). Out-of-scope unrecorded A3 scatter snapshots left untouched.
+- Tests: backend go test ./... ✓, tests/parity Go harness ✓, snapshot
+  parity (run_parity.sh diff) ✓, frontend tsc --noEmit ✓.
+- Commit: 3a3e940
 - Status: DONE.
 
 ### 2026-05-22 00:54 PDT — implementer A3 multi-review fixes

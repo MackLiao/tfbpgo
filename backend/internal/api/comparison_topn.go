@@ -267,8 +267,21 @@ func (s *Server) buildOnePair(
 	// responsive expression — depends on perturbation dataset's effect/pvalue cols
 	respExpr := buildResponsiveExpr(s, pDB, effectThr, pvalThr, &args)
 
-	// pert filter where
-	pWhere, pArgs, err := buildSquirrelWhereRaw(filters[pDB])
+	// pert filter where.
+	//
+	// Hackett-filter parity: mirror
+	// reference/tfbpshiny/modules/comparison/queries.py:432
+	//   p_filters = None if p_cfg.get("hackett_time_filter") else filters.get(p_db)
+	// When the perturbation dataset is hackett-shaped (hackett_time_filter=true)
+	// Shiny deliberately drops user filters[pDB] from the perturbation CTE —
+	// the hackett-analysis-set JOIN already constrains the row set, and
+	// applying e.g. a `time` numeric range here would double-filter and
+	// produce silently divergent output. See docs/parity/comparison.md §7.2.
+	var pertFilters map[string]domain.FilterSpec
+	if !pcfg.HackettTimeFilter {
+		pertFilters = filters[pDB]
+	}
+	pWhere, pArgs, err := buildSquirrelWhereRaw(pertFilters)
 	if err != nil {
 		return "", nil, err
 	}
