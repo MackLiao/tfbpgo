@@ -16,7 +16,7 @@ before starting, append a section before finishing.
 |-----|----------------------------------------------------|-------------|-------|
 | C1  | schema_version=4 — unlock deferred items           | DONE        | foundation: unlocks default-active, description tooltips, cascade narrowing, condition-cols hover, FIELD_TYPE_OVERRIDES via artifact |
 | C2  | Home module rebuild                                | DONE        | feature cards + binding/perturbation imgs + wine pill nav + 3-line logo + github badge |
-| C3  | Binding/Perturbation P1 polish                     | PENDING     | depends on C1 (condition_cols); narrow RegulatorPicker independent |
+| C3  | Binding/Perturbation P1 polish                     | DONE        | sample-conditions endpoint + overlay hover; ActivePairRegulatorPicker; corr LEFT-JOIN deferred (locus tags only) |
 | C4  | Select Datasets — schema-v4-dependent features     | DONE        | rows 1/3/4/9/28 closed; cascade narrowing (row 19) deferred to polish.md |
 | C5  | Select Datasets — remaining UX features            | PENDING     | depends on C4 (apply-to-all, sidebar) |
 | C6  | Export endpoint + tarball UI                       | PENDING     | independent; large surface |
@@ -133,4 +133,51 @@ before starting, append a section before finishing.
   gzipped; PNGs land in dist root).
 - Acceptance: docs/parity/home.md §2 P1 rows 6–9 and 13 closed; P2
   rows 14 (GitHub badge) and 15 (3-line logo) also addressed.
+- Status: DONE.
+
+### 2026-05-22 09:30 PDT — implementer C3
+- New endpoint `GET /api/v/{v}/datasets/{db}/sample-conditions` builds
+  the `{sample_id: condition_label}` map from dataset_manifest.condition_cols
+  (schema v4) — mirrors reference/tfbpshiny/utils/sample_conditions.py:55-94.
+  Sample-id join key sourced from manifest.sample_id_field (gm_id for
+  callingcards, sample_id otherwise). Identifier safety: per-col
+  whitelistedIdent at the SQL site + SafeIdentRE at startup via
+  NewWhitelist. CheckField was intentionally skipped because
+  hackett.mechanism/restriction live in HIDDEN_FILTER_FIELDS and are
+  absent from field_manifest (would 400 every request).
+- Overlay hovertext on selected-regulator dots now reads
+  `"<symbol><br>r = X.XXX<br><displayA>: <condA><br><displayB>: <condB>"`
+  in both BindingCorrBoxplot and PerturbationCorrBoxplot. Every
+  DB-sourced string is HTML-escaped via new lib/html-escape.ts (Plotly
+  renders hovertext as HTML by default).
+- ActivePairRegulatorPicker narrows the regulator selectize to
+  regulators present in the corr response. Renders a native <select>
+  when < 50 options, typeahead-filtered list otherwise. Mounted in
+  Binding + Perturbation sidebars via new optional `regulatorPickerSlot`
+  prop on BindingSidebar/PerturbationSidebar; falls back to the global
+  RegulatorPicker before corrQuery.data resolves.
+- Server-side LEFT JOIN of regulator_display_names into corr response
+  was scoped out (4 SQL templates + struct + tests would be a larger
+  surface). Corr endpoint is not in golden_urls.txt so no snapshot
+  rerecord required. Picker uses bare locus tag labels; future iteration
+  can thread regulator symbols when needed.
+- Files: backend/internal/api/sample_conditions.go (new),
+  backend/internal/api/sample_conditions_test.go (new),
+  backend/internal/api/router.go, backend/internal/domain/select_datasets.go,
+  backend/openapi.yaml, frontend/src/api/{client,generated}.ts,
+  frontend/src/lib/{query-keys,html-escape}.ts (html-escape new),
+  frontend/src/components/{ActivePairRegulatorPicker (new),
+  BindingSidebar,PerturbationSidebar}.tsx,
+  frontend/src/plots/{BindingCorrBoxplot,PerturbationCorrBoxplot}.tsx,
+  frontend/src/routes/{Binding,Perturbation}.tsx,
+  frontend/src/test/Binding.test.tsx.
+- Tests: backend `go build ./... && go test ./... -race` ✓ (4 new
+  sample-conditions specs), frontend `pnpm types:gen` ✓,
+  `pnpm exec tsc --noEmit` ✓, `pnpm exec vitest run` ✓ (29 tests, 5 in
+  Binding.test including new narrowed-picker assertion), `pnpm exec
+  vite build` ✓ (plotly chunk 513.81 KB gzipped — no delta),
+  `make parity` ✓ 15/15 against fresh local server.
+- Commit: 3e4b80a
+- Acceptance: docs/parity/binding.md rows 10, 21, 42 (and perturbation
+  equivalents).
 - Status: DONE.
