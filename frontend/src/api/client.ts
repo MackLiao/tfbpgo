@@ -196,4 +196,31 @@ export const api = {
     if (q.filters) s.set("filters", q.filters);
     return get<Schemas["ScatterResponse"]>(vpath("/perturbation/scatter"), s);
   },
+
+  // ----- Select Datasets endpoints (Phase A5) -----------------------------
+  // Backend handlers: /api/v/{v}/datasets/{db}/{fields,regulators} and
+  // /api/v/{v}/selection/{matrix,breakdown}. Consumed by the Phase-B Select
+  // Datasets rebuild (Task B4); not wired into any UI yet.
+  datasetFields: (q: { db: string }): Promise<Schemas["DatasetFieldsResponse"]> =>
+    get<Schemas["DatasetFieldsResponse"]>(vpath(`/datasets/${encodeURIComponent(q.db)}/fields`)),
+  datasetRegulators: (q: { db: string }): Promise<Schemas["DatasetRegulatorsResponse"]> =>
+    get<Schemas["DatasetRegulatorsResponse"]>(
+      vpath(`/datasets/${encodeURIComponent(q.db)}/regulators`),
+    ),
+  selectionMatrix: (q: {
+    datasets: string[];
+    filters?: string;
+  }): Promise<Schemas["MatrixResponse"]> => {
+    const s = new URLSearchParams({ datasets: q.datasets.join(",") });
+    if (q.filters) s.set("filters", q.filters);
+    return get<Schemas["MatrixResponse"]>(vpath("/selection/matrix"), s);
+  },
+  selectionBreakdown: (q: {
+    dataset: string;
+    filters?: string;
+  }): Promise<Schemas["BreakdownResponse"]> => {
+    const s = new URLSearchParams({ dataset: q.dataset });
+    if (q.filters) s.set("filters", q.filters);
+    return get<Schemas["BreakdownResponse"]>(vpath("/selection/breakdown"), s);
+  },
 };

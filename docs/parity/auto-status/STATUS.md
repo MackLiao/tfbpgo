@@ -17,7 +17,7 @@ Read before working, append a section before finishing.
 | A2  | Pearson/Spearman correlation SQL           | DONE        | depends on A1 |
 | A3  | correlation endpoints                      | DONE        | 218bf3c + multi-review fixes; polish notes in [polish.md](polish.md) |
 | A4  | Comparison hackett filter parity fix       | DONE        | independent |
-| A5  | Select Datasets backend endpoints          | PENDING     | depends on A1 |
+| A5  | Select Datasets backend endpoints          | DONE        | depends on A1; polish notes in [polish.md](polish.md) |
 | A6  | Plotly bundle: register box trace          | DONE        | bundle now 523 KB gzip (11 KB over the 512 KB soft target); see [polish.md](polish.md) |
 | B1  | Comparison module rebuild                  | PENDING     | depends on A4+A6 |
 | B2  | Binding module rebuild                     | PENDING     | depends on A2+A3+A6 |
@@ -138,6 +138,36 @@ Read before working, append a section before finishing.
   budget after B1 replaces ComparisonHeatmap).
 - Tests: backend `go test ./...` ✓ (untouched); `vite build` ✓.
 - Status: DONE — pending commit alongside A5.
+
+### 2026-05-22 01:30 PDT — implementer A5
+- Four endpoints + handlers + tests + OpenAPI + frontend client typed helpers.
+  - GET /api/v/{v}/datasets/{db}/fields       — column-metadata
+  - GET /api/v/{v}/datasets/{db}/regulators   — per-dataset regulator labels
+  - GET /api/v/{v}/selection/matrix           — diagonal + pairwise overlap counts
+  - GET /api/v/{v}/selection/breakdown        — multi-sample regulator breakdown
+- Mirrors Shiny select_datasets/queries.py for breakdown / matrix shape
+  (matrix_diagonal_query, matrix_cross_dataset_query, regulator_breakdown_query,
+  regulator_display_labels_query).
+- Field metadata combines DB introspection (information_schema.columns,
+  data_type column — not the PRAGMA-style column_type) + filter_level_cache
+  + FIELD_TYPE_OVERRIDES (one entry: hackett.time → categorical despite
+  the underlying INTEGER column).
+- Numeric min/max via aggregate query, cached per (db, field) for Server
+  lifetime. introspection cache shared with the same lazy sync.Once init.
+- Matrix SQL uses dataset_manifest.sample_id_field (gm_id for callingcards,
+  sample_id for the rest) — the Shiny reference hard-codes `sample_id`
+  because VirtualDB renames the column at load, but our artifact preserves
+  raw names. Re-verified via SafeIdentRE through whitelistedIdent.
+- Breakdown drops manifest fields absent from `{db}_meta` (e.g.
+  callingcards_enrichment lives only on the data table); validates each
+  remaining field through s.Whitelist.CheckField + whitelistedIdent before
+  interpolation.
+- Tests: backend `go test ./...` ✓ (15 new tests in select_datasets_test.go);
+  Go parity harness `tests/parity` ✓; snapshot parity `run_parity.sh` ✓
+  (15/15 URLs pass; 4 untouched A3-scatter recordings deferred per polish.md).
+  Frontend `pnpm types:gen` + `pnpm exec tsc --noEmit` ✓.
+- Commit: pending
+- Status: DONE.
 
 ### 2026-05-22 00:54 PDT — implementer A3 multi-review fixes
 - CRITICAL: scatter SQL templates now filter NULL/Inf/NaN (matches

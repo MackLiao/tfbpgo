@@ -173,6 +173,240 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v/{v}/datasets/{db}/fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-field metadata for one dataset's filter modal
+         * @description Returns one entry per `field_manifest` row for the dataset, joined
+         *     with runtime DuckDB type introspection (`information_schema.columns`),
+         *     the `filter_level_cache` snapshot, and — for numeric fields — a
+         *     computed `MIN/MAX` aggregate. The `kind` field is the categorical/
+         *     numeric/bool bucket the filter modal renders; `FIELD_TYPE_OVERRIDES`
+         *     (currently only `hackett.time`) wins over the raw DB type.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                    /** @description Dataset db_name. Must be in `dataset_manifest`. */
+                    db: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Field metadata for the dataset. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DatasetFieldsResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v/{v}/datasets/{db}/regulators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Distinct regulators (locus tag + symbol) for one dataset
+         * @description Powers the filter modal's per-dataset Regulator selectize. Returns
+         *     every distinct `(regulator_locus_tag, regulator_symbol)` pair in
+         *     `{db}_meta` ordered by locus_tag, plus a server-built `display`
+         *     string (`"SYMBOL (LOCUS_TAG)"` when symbol differs from the locus
+         *     tag, else just the locus tag). Mirrors Shiny's
+         *     `regulator_display_labels_query` in
+         *     `reference/tfbpshiny/modules/select_datasets/queries.py:188-205`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                    db: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Distinct regulators present in the dataset. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DatasetRegulatorsResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v/{v}/selection/matrix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Diagonal regulator/sample counts + pairwise common regulator counts
+         * @description Returns the data behind the Select Datasets intersection-matrix
+         *     workspace. Mirrors Shiny's `_matrix_data()` shape: one
+         *     `MatrixDiagonalCell` per active dataset (distinct regulator +
+         *     distinct sample counts, post-filter) plus one `MatrixCrossCell` for
+         *     every `sorted(datasets) choose 2` pair (common regulators via SQL
+         *     INTERSECT, restricted distinct sample counts per side).
+         */
+        get: {
+            parameters: {
+                query: {
+                    /**
+                     * @description Comma-separated active dataset db_names. At least one entry; all
+                     *     must be present in `dataset_manifest`. Order is normalized to
+                     *     `sorted()` before pairs are computed so cache values are stable
+                     *     across param-order permutations.
+                     */
+                    datasets: string;
+                    /**
+                     * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
+                     *     string is capped at 16 KiB before unmarshal to prevent DoS.
+                     */
+                    filters?: components["parameters"]["Filters"];
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Diagonal + pairwise cross-dataset cells. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MatrixResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v/{v}/selection/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Multi-sample regulator breakdown for one dataset's diagonal modal
+         * @description Powers the diagonal-cell modal of the Select Datasets workspace.
+         *     Returns `n_multi` (number of regulators with > 1 sample) plus one
+         *     entry per candidate column with the count of regulators whose
+         *     per-row distinct value for that column is > 1 (i.e. the columns
+         *     that actually differentiate samples within a multi-sample
+         *     regulator). Mirrors Shiny's `regulator_breakdown_query`
+         *     (`reference/tfbpshiny/modules/select_datasets/queries.py:133-185`).
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Dataset db_name. Must be in `dataset_manifest`. */
+                    dataset: string;
+                    /**
+                     * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
+                     *     string is capped at 16 KiB before unmarshal to prevent DoS.
+                     */
+                    filters?: components["parameters"]["Filters"];
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Multi-sample regulator breakdown. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BreakdownResponse"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v/{v}/regulators": {
         parameters: {
             query?: never;
@@ -995,6 +1229,97 @@ export interface components {
              */
             r: number;
             points: components["schemas"]["ScatterPoint"][];
+        };
+        /**
+         * @description One field's combined manifest + introspection metadata. `dbType` is
+         *     the raw DuckDB column type ("VARCHAR", "DOUBLE", "INTEGER", ...) at
+         *     first request time; `kind` is the categorical/numeric/bool bucket
+         *     the filter modal should render, after `FIELD_TYPE_OVERRIDES` is
+         *     applied (currently only `hackett.time` is overridden).
+         */
+        FieldMeta: {
+            field: string;
+            /** @description Raw DuckDB type ("VARCHAR", "DOUBLE", ...). Empty when the column is absent from both `{db}` and `{db}_meta`. */
+            dbType: string;
+            /** @enum {string} */
+            kind: "categorical" | "numeric" | "bool";
+            /** @description Either `""` or `"experimental_condition"` (from `field_manifest.role`). */
+            role: string;
+            /** @description filter_level_cache values for the field, sorted by the build pipeline. Omitted when the field has no cached levels. */
+            levels?: string[];
+            /**
+             * Format: double
+             * @description Aggregate `MIN(field)` for numeric-kind fields. Null when the column is all-null/empty.
+             */
+            numericMin?: number | null;
+            /**
+             * Format: double
+             * @description Aggregate `MAX(field)` for numeric-kind fields.
+             */
+            numericMax?: number | null;
+        };
+        DatasetFieldsResponse: {
+            dbName: string;
+            fields: components["schemas"]["FieldMeta"][];
+        };
+        DatasetRegulator: {
+            locusTag: string;
+            symbol: string;
+            /** @description Server-rendered `"SYMBOL (LOCUS_TAG)"` (or just LOCUS_TAG when symbol is missing/equal). */
+            display: string;
+        };
+        DatasetRegulatorsResponse: {
+            dbName: string;
+            regulators: components["schemas"]["DatasetRegulator"][];
+        };
+        MatrixDiagonalCell: {
+            dbName: string;
+            /** Format: int64 */
+            nRegulators: number;
+            /** Format: int64 */
+            nSamples: number;
+        };
+        MatrixCrossCell: {
+            /** @description Composite `"{dbA}__{dbB}"` key. */
+            pairId: string;
+            dbA: string;
+            dbB: string;
+            /**
+             * Format: int64
+             * @description Distinct regulators present in both datasets (post-filter).
+             */
+            nCommon: number;
+            /**
+             * Format: int64
+             * @description Distinct sample count on the A side restricted to the common-regulator set.
+             */
+            samplesA: number;
+            /** Format: int64 */
+            samplesB: number;
+        };
+        MatrixResponse: {
+            diagonal: components["schemas"]["MatrixDiagonalCell"][];
+            crossDataset: components["schemas"]["MatrixCrossCell"][];
+        };
+        BreakdownColumn: {
+            field: string;
+            /**
+             * Format: int64
+             * @description Count of multi-sample regulators whose per-regulator distinct
+             *     value for this column is > 1. Equivalently: how many regulators
+             *     this column actually differentiates within the multi-sample
+             *     subset. 0 means the column is uniform across that subset.
+             */
+            distinctValues: number;
+        };
+        BreakdownResponse: {
+            dbName: string;
+            /**
+             * Format: int64
+             * @description Number of regulators with more than one sample (post-filter).
+             */
+            nMulti: number;
+            columns: components["schemas"]["BreakdownColumn"][];
         };
         /**
          * @description One field-level filter clause. `value` is polymorphic and depends on

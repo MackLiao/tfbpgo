@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
@@ -25,6 +26,14 @@ type Server struct {
 	// StaticFS, when non-nil, is mounted as a fallback http.FileServer for
 	// any unmatched routes. Phase 2 populates this with the embedded React bundle.
 	StaticFS fs.FS
+
+	// --- A5 Select Datasets handler state ---
+	// Lazy memoization of per-(db, field) DuckDB type introspection and
+	// numeric min/max aggregates. Initialized once via introspectInitOnce
+	// the first time DatasetFields is hit.
+	introspectInitOnce sync.Once
+	fieldIntrospect    *fieldIntrospectCache
+	fieldNumeric       *fieldNumericRangeCache
 }
 
 func (s *Server) Routes() http.Handler {
@@ -55,6 +64,13 @@ func (s *Server) Routes() http.Handler {
 	r.Route("/api/v/{v}", func(r chi.Router) {
 		r.Use(s.RequireArtifactVersion)
 		r.Get("/datasets", s.Datasets)
+		// Per-dataset Select-Datasets endpoints (A5). Registered before the
+		// catch-all /regulators routes so chi resolves the /datasets/{db}
+		// prefix correctly.
+		r.Get("/datasets/{db}/fields", s.DatasetFields)
+		r.Get("/datasets/{db}/regulators", s.DatasetRegulators)
+		r.Get("/selection/matrix", s.SelectionMatrix)
+		r.Get("/selection/breakdown", s.SelectionBreakdown)
 		r.Get("/regulators/resolve", s.RegulatorsResolve)
 		r.Get("/regulators", s.Regulators)
 		// Order: /binding/corr and /binding/scatter must register before

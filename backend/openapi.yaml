@@ -25,6 +25,11 @@ tags:
     description: Binding and perturbation data queries
   - name: comparison
     description: Binding x perturbation comparison endpoints
+  - name: select_datasets
+    description: |
+      Per-dataset metadata + selection-matrix endpoints that drive the
+      Phase-B Select Datasets module (filter modal, intersection matrix,
+      regulator breakdown). Added in Phase A5.
 
 paths:
   /healthz:
@@ -91,6 +96,137 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DatasetsResponse"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
+  /api/v/{v}/datasets/{db}/fields:
+    get:
+      tags: [select_datasets]
+      summary: Per-field metadata for one dataset's filter modal
+      description: |
+        Returns one entry per `field_manifest` row for the dataset, joined
+        with runtime DuckDB type introspection (`information_schema.columns`),
+        the `filter_level_cache` snapshot, and — for numeric fields — a
+        computed `MIN/MAX` aggregate. The `kind` field is the categorical/
+        numeric/bool bucket the filter modal renders; `FIELD_TYPE_OVERRIDES`
+        (currently only `hackett.time`) wins over the raw DB type.
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: db
+          in: path
+          required: true
+          description: Dataset db_name. Must be in `dataset_manifest`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Field metadata for the dataset.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetFieldsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
+  /api/v/{v}/datasets/{db}/regulators:
+    get:
+      tags: [select_datasets]
+      summary: Distinct regulators (locus tag + symbol) for one dataset
+      description: |
+        Powers the filter modal's per-dataset Regulator selectize. Returns
+        every distinct `(regulator_locus_tag, regulator_symbol)` pair in
+        `{db}_meta` ordered by locus_tag, plus a server-built `display`
+        string (`"SYMBOL (LOCUS_TAG)"` when symbol differs from the locus
+        tag, else just the locus tag). Mirrors Shiny's
+        `regulator_display_labels_query` in
+        `reference/tfbpshiny/modules/select_datasets/queries.py:188-205`.
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: db
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Distinct regulators present in the dataset.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetRegulatorsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
+  /api/v/{v}/selection/matrix:
+    get:
+      tags: [select_datasets]
+      summary: Diagonal regulator/sample counts + pairwise common regulator counts
+      description: |
+        Returns the data behind the Select Datasets intersection-matrix
+        workspace. Mirrors Shiny's `_matrix_data()` shape: one
+        `MatrixDiagonalCell` per active dataset (distinct regulator +
+        distinct sample counts, post-filter) plus one `MatrixCrossCell` for
+        every `sorted(datasets) choose 2` pair (common regulators via SQL
+        INTERSECT, restricted distinct sample counts per side).
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: datasets
+          in: query
+          required: true
+          description: |
+            Comma-separated active dataset db_names. At least one entry; all
+            must be present in `dataset_manifest`. Order is normalized to
+            `sorted()` before pairs are computed so cache values are stable
+            across param-order permutations.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Filters"
+      responses:
+        "200":
+          description: Diagonal + pairwise cross-dataset cells.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatrixResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
+  /api/v/{v}/selection/breakdown:
+    get:
+      tags: [select_datasets]
+      summary: Multi-sample regulator breakdown for one dataset's diagonal modal
+      description: |
+        Powers the diagonal-cell modal of the Select Datasets workspace.
+        Returns `n_multi` (number of regulators with > 1 sample) plus one
+        entry per candidate column with the count of regulators whose
+        per-row distinct value for that column is > 1 (i.e. the columns
+        that actually differentiate samples within a multi-sample
+        regulator). Mirrors Shiny's `regulator_breakdown_query`
+        (`reference/tfbpshiny/modules/select_datasets/queries.py:133-185`).
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: dataset
+          in: query
+          required: true
+          description: Dataset db_name. Must be in `dataset_manifest`.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Filters"
+      responses:
+        "200":
+          description: Multi-sample regulator breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BreakdownResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "410":
           $ref: "#/components/responses/StaleArtifactVersion"
 
@@ -969,6 +1105,154 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ScatterPoint"
+
+    FieldMeta:
+      type: object
+      required: [field, dbType, kind, role]
+      description: |
+        One field's combined manifest + introspection metadata. `dbType` is
+        the raw DuckDB column type ("VARCHAR", "DOUBLE", "INTEGER", ...) at
+        first request time; `kind` is the categorical/numeric/bool bucket
+        the filter modal should render, after `FIELD_TYPE_OVERRIDES` is
+        applied (currently only `hackett.time` is overridden).
+      properties:
+        field:
+          type: string
+        dbType:
+          type: string
+          description: Raw DuckDB type ("VARCHAR", "DOUBLE", ...). Empty when the column is absent from both `{db}` and `{db}_meta`.
+        kind:
+          type: string
+          enum: [categorical, numeric, bool]
+        role:
+          type: string
+          description: Either `""` or `"experimental_condition"` (from `field_manifest.role`).
+        levels:
+          type: array
+          description: filter_level_cache values for the field, sorted by the build pipeline. Omitted when the field has no cached levels.
+          items:
+            type: string
+        numericMin:
+          type: ["number", "null"]
+          format: double
+          description: Aggregate `MIN(field)` for numeric-kind fields. Null when the column is all-null/empty.
+        numericMax:
+          type: ["number", "null"]
+          format: double
+          description: Aggregate `MAX(field)` for numeric-kind fields.
+
+    DatasetFieldsResponse:
+      type: object
+      required: [dbName, fields]
+      properties:
+        dbName:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldMeta"
+
+    DatasetRegulator:
+      type: object
+      required: [locusTag, symbol, display]
+      properties:
+        locusTag:
+          type: string
+        symbol:
+          type: string
+        display:
+          type: string
+          description: Server-rendered `"SYMBOL (LOCUS_TAG)"` (or just LOCUS_TAG when symbol is missing/equal).
+
+    DatasetRegulatorsResponse:
+      type: object
+      required: [dbName, regulators]
+      properties:
+        dbName:
+          type: string
+        regulators:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatasetRegulator"
+
+    MatrixDiagonalCell:
+      type: object
+      required: [dbName, nRegulators, nSamples]
+      properties:
+        dbName:
+          type: string
+        nRegulators:
+          type: integer
+          format: int64
+        nSamples:
+          type: integer
+          format: int64
+
+    MatrixCrossCell:
+      type: object
+      required: [pairId, dbA, dbB, nCommon, samplesA, samplesB]
+      properties:
+        pairId:
+          type: string
+          description: Composite `"{dbA}__{dbB}"` key.
+        dbA:
+          type: string
+        dbB:
+          type: string
+        nCommon:
+          type: integer
+          format: int64
+          description: Distinct regulators present in both datasets (post-filter).
+        samplesA:
+          type: integer
+          format: int64
+          description: Distinct sample count on the A side restricted to the common-regulator set.
+        samplesB:
+          type: integer
+          format: int64
+
+    MatrixResponse:
+      type: object
+      required: [diagonal, crossDataset]
+      properties:
+        diagonal:
+          type: array
+          items:
+            $ref: "#/components/schemas/MatrixDiagonalCell"
+        crossDataset:
+          type: array
+          items:
+            $ref: "#/components/schemas/MatrixCrossCell"
+
+    BreakdownColumn:
+      type: object
+      required: [field, distinctValues]
+      properties:
+        field:
+          type: string
+        distinctValues:
+          type: integer
+          format: int64
+          description: |
+            Count of multi-sample regulators whose per-regulator distinct
+            value for this column is > 1. Equivalently: how many regulators
+            this column actually differentiates within the multi-sample
+            subset. 0 means the column is uniform across that subset.
+
+    BreakdownResponse:
+      type: object
+      required: [dbName, nMulti, columns]
+      properties:
+        dbName:
+          type: string
+        nMulti:
+          type: integer
+          format: int64
+          description: Number of regulators with more than one sample (post-filter).
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/BreakdownColumn"
 
     FilterSpec:
       type: object

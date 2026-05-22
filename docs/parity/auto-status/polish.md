@@ -41,6 +41,30 @@ unless they cause downstream breakage.
 - **Cache canonicalization test fidelity** (go-reviewer NICE-TO-HAVE).
   `TestBindingScatter_CacheCanonicalization` re-issues an identical request;
   it tests HIT but not canonicalization. Re-write to permute param order.
+## From A5 (commit pending — Select Datasets backend)
+
+- **Default-active datasets / default filters** (audit §7 row 7). Shiny's
+  `vdb_init.py:40-68` has hard-coded defaults. A follow-up schema bump
+  (schema_version=4) should add `dataset_manifest.default_active BOOLEAN`
+  and `dataset_manifest.default_filters VARCHAR` (JSON-serialized). Out of
+  scope for the overnight Phase A; defer.
+- **`description` and `level_definitions` columns** on field_manifest
+  (audit §7 row 1). Need labretriever's `ColumnMeta` exposed in the
+  `build_duckdb` path; same schema_version=4 bump as above. Tooltip
+  rendering on the filter modal will need these.
+- **Export endpoint** (audit §7 row 8). Deferred — large surface, needs
+  streaming + tar.gz machinery (and another DB checkout from
+  `MaxOpenConns=2`, which is a t3.small starvation risk).
+- **FIELD_TYPE_OVERRIDES is currently a Go constant** with one entry
+  (`hackett.time → categorical`). The audit §7 row 11 flags that this
+  override map should live in the artifact (e.g. a new
+  `field_manifest.ui_kind_override` column) so the Go binary doesn't need
+  to be rebuilt to add a new override. Same schema_version=4 bump.
+- **Matrix SQL is N*(N-1)/2 + 1 separate queries** (one UNION ALL for the
+  diagonal, one UNION ALL for the cross), all on a single DB checkout.
+  Acceptable for the typical 2-7 active datasets; benchmark against the
+  Shiny single-UNION baseline during cutover and consolidate if hot.
+
 ## From A6 (commit pending — Plotly bundle)
 
 - **Bundle size at 523 KB gzipped** (was 512 KB target). Adding the `box`
