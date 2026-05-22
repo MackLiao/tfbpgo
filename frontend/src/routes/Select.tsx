@@ -21,6 +21,10 @@
 //   row 23 sidebar collapse/expand (persisted via ?selectSidebar=)
 //   row 24 sidebar search box (with "No datasets match..." empty state, row 34)
 //
+// Task C6 closes the export gap:
+//   row 35 per-dataset CSV+README export bundled as .tar.gz
+//   row 36 "Export Selected Datasets" footer button, visible when ≥1 selected
+//
 // URL contract:
 //   ?binding=A,B              CSV of active binding db_names (committed)
 //   ?perturbation=C,D         CSV of active perturbation db_names (committed)
@@ -547,6 +551,11 @@ export function Select() {
                   />
                 </>
               )}
+              <ExportSelectedButton
+                binding={committedBinding}
+                perturbation={committedPerturbation}
+                filtersRaw={filtersRaw}
+              />
             </>
           )}
         </aside>
@@ -682,5 +691,59 @@ function DatasetSection({
         })}
       </ul>
     </section>
+  );
+}
+
+interface ExportSelectedButtonProps {
+  binding: string[];
+  perturbation: string[];
+  filtersRaw: string;
+}
+
+/**
+ * Sidebar-footer "Export Selected Datasets" button (audit row 36).
+ *
+ * Visible only when ≥1 dataset is in the **committed** selection (URL),
+ * because the export endpoint reads the same params the URL carries.
+ * Staged-but-uncommitted selections deliberately don't drive the button
+ * — exporting datasets the user hasn't actually committed would be
+ * surprising.
+ *
+ * Click triggers a top-level navigation (`window.location.href = url`)
+ * so the browser handles the binary tar.gz stream natively; the
+ * response never lands in JS memory and the user gets the OS File Save
+ * dialog. This is the documented pattern in `api.exportUrl`.
+ */
+function ExportSelectedButton({
+  binding,
+  perturbation,
+  filtersRaw,
+}: ExportSelectedButtonProps) {
+  const all = [...binding, ...perturbation];
+  if (all.length === 0) return null;
+  const onClick = (): void => {
+    const url = filtersRaw
+      ? api.exportUrl({ datasets: all, filters: filtersRaw })
+      : api.exportUrl({ datasets: all });
+    // Top-level navigation so the browser owns the binary stream.
+    // We use assign() (not href setter) for testability — vitest's
+    // jsdom mocks window.location.assign cleanly.
+    window.location.assign(url);
+  };
+  return (
+    <div className="border-t border-slate-200 pt-3">
+      <Button
+        type="button"
+        size="sm"
+        onClick={onClick}
+        data-testid="export-selected"
+        className="w-full"
+      >
+        Export Selected Datasets ({all.length})
+      </Button>
+      <p className="mt-1 text-xs text-slate-500">
+        Downloads a .tar.gz with metadata, features, and README per dataset.
+      </p>
+    </div>
   );
 }

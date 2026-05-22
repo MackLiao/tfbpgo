@@ -693,6 +693,75 @@ paths:
         "410":
           $ref: "#/components/responses/StaleArtifactVersion"
 
+  /api/v/{v}/export:
+    get:
+      tags: [export]
+      summary: Stream a per-dataset .tar.gz with metadata + features + README
+      description: |
+        STREAMS a multi-dataset `.tar.gz` archive. One subdirectory per
+        requested dataset (named by `db_name`); each contains:
+
+        - **metadata.csv** — `SELECT * FROM {db}_meta {filters}`
+        - **annotated_features.csv** — `SELECT * FROM {db} {filters}`
+        - **README.md** — dataset name, display name, applied filters
+
+        Mirrors `reference/tfbpshiny/modules/select_datasets/export.py`
+        (lines 39–213). Gzip `compresslevel=1` matches the Shiny export.
+
+        Rows are streamed from the DuckDB cursor into the CSV writer one
+        row at a time (no full result-set materialisation). Each CSV
+        is buffered once-per-dataset because the tar stdlib API needs
+        the entry `Size` up front; peak memory is one dataset's CSV at
+        a time.
+
+        The handler detaches from the global 30-second router timeout
+        (via `context.WithoutCancel`) and applies its own **5-minute
+        timeout**, so a large export does not get cut off mid-stream.
+        It holds one of the two DB pool connections for the entire
+        export duration; the other connection remains available so the
+        rest of the API stays responsive.
+
+        Response is **never cached** (`Cache-Control: no-store`).
+      parameters:
+        - $ref: "#/components/parameters/ArtifactVersion"
+        - name: datasets
+          in: query
+          required: true
+          description: |
+            Comma-separated dataset `db_name`s. Each must appear in
+            `dataset_manifest`; unknown names → 400. Capped at the
+            total number of datasets in the manifest.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Filters"
+      responses:
+        "200":
+          description: |
+            Streamed gzip-compressed tar archive. `Content-Disposition`
+            is `attachment; filename="tfbp-export-<UTC-timestamp>.tar.gz"`.
+            No `Content-Length` is set (length unknown until the stream
+            completes).
+          headers:
+            Content-Disposition:
+              description: Forces the browser to treat the response as a download.
+              schema:
+                type: string
+                example: 'attachment; filename="tfbp-export-20260522-180000.tar.gz"'
+            Cache-Control:
+              description: Always `no-store`. Per-request uniques and large bodies make caching counter-productive.
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "410":
+          $ref: "#/components/responses/StaleArtifactVersion"
+
 components:
   parameters:
     ArtifactVersion:
@@ -1101,15 +1170,19 @@ components:
       properties:
         dbA:
           type: string
+          description: Dataset db_name on the A side of this pair.
         dbB:
           type: string
+          description: Dataset db_name on the B side of this pair.
         colA:
           type: string
           description: Measurement column actually used on the A side.
         colB:
           type: string
+          description: Measurement column actually used on the B side.
         points:
           type: array
+          description: Per-regulator correlation values for this pair.
           items:
             $ref: "#/components/schemas/CorrPairPoint"
 
@@ -1138,12 +1211,19 @@ components:
       properties:
         targetLocusTag:
           type: string
+          description: Target gene locus tag (one row per target shared between A and B).
         valA:
           type: number
           format: double
+          description: |
+            Measurement value on the A side. Raw value for Pearson; RANK()
+            output for Spearman.
         valB:
           type: number
           format: double
+          description: |
+            Measurement value on the B side. Raw value for Pearson; RANK()
+            output for Spearman.
 
     ScatterResponse:
       type: object
@@ -1151,14 +1231,19 @@ components:
       properties:
         regulator:
           type: string
+          description: Regulator locus_tag the scatter was computed for.
         dbA:
           type: string
+          description: Dataset db_name on the A side of the scatter pair.
         dbB:
           type: string
+          description: Dataset db_name on the B side of the scatter pair.
         colA:
           type: string
+          description: Measurement column actually used on the A side.
         colB:
           type: string
+          description: Measurement column actually used on the B side.
         method:
           type: string
           enum: [pearson, spearman]

@@ -19,7 +19,7 @@ before starting, append a section before finishing.
 | C3  | Binding/Perturbation P1 polish                     | DONE        | sample-conditions endpoint + overlay hover; ActivePairRegulatorPicker; corr LEFT-JOIN deferred (locus tags only) |
 | C4  | Select Datasets — schema-v4-dependent features     | DONE        | rows 1/3/4/9/28 closed; cascade narrowing (row 19) deferred to polish.md |
 | C5  | Select Datasets — remaining UX features            | DONE        | apply-to-all + sidebar search/collapse + from_pair + staged Apply (filter modal still writes URL directly per audit §8) |
-| C6  | Export endpoint + tarball UI                       | PENDING     | independent; large surface |
+| C6  | Export endpoint + tarball UI                       | DONE        | /api/v/{v}/export streams tar.gz; sidebar button on Select |
 | C7  | Multi-review nice-to-haves cleanup                 | PENDING     | independent; small surface across many files |
 | C8  | Plotly bundle recovery                             | DONE        | dropped `bar` post-B1; 523→514 KB gzipped |
 | C9  | Performance — corr/matrix → UNION-ALL              | PENDING     | independent; benchmark gated |
@@ -244,4 +244,60 @@ before starting, append a section before finishing.
   frontend/src/routes/Select.tsx, frontend/src/test/Select.test.tsx.
 - Audit rows closed: 12, 14, 15, 18, 20, 21, 23, 24, 30, 31, 34.
 - Commit: 0eab148
+- Status: DONE.
+
+### 2026-05-22 09:50 PDT — implementer C6
+- New endpoint `GET /api/v/{v}/export?datasets=<csv>&filters=<json>`
+  streams a `.tar.gz` archive (Content-Type `application/gzip`,
+  Content-Disposition `attachment; filename="tfbp-export-<ts>.tar.gz"`,
+  Cache-Control `no-store`). One subdir per requested `db_name`:
+  `metadata.csv` (`SELECT * FROM {db}_meta {filters}`),
+  `annotated_features.csv` (`SELECT * FROM {db} {filters}`), and a
+  short `README.md` summarising the dataset + applied filters. Mirrors
+  reference/tfbpshiny/modules/select_datasets/export.py:39-213.
+- Streaming: `archive/tar` + `compress/gzip` (level 1 to match Shiny's
+  `compresslevel=1`); rows iterate via `sqlx.QueryxContext` cursor
+  with `csv.Writer.Flush` every 1024 rows. tar requires per-entry
+  Size up front, so each CSV is buffered once-per-dataset — never the
+  whole archive.
+- 30s router-level `middleware.Timeout` was incompatible with multi-
+  minute exports, so the handler detaches via
+  `context.WithoutCancel(r.Context())` then applies its own 5-minute
+  `context.WithTimeout`. Trade-off documented inline: client-disconnect
+  no longer flows through ctx, but the next `w.Write` surfaces it as a
+  normal write error.
+- Security: reuses `parseFilters`, `Whitelist.CheckDataset`,
+  `Whitelist.CheckField`, and `whitelistedIdent` (defense-in-depth
+  SafeIdentRE re-verification before SQL interpolation). DoS caps:
+  `?datasets=` capped at `len(AllDatasets())` via the existing
+  `dedupeAndCapCSV` helper; `?filters=` capped at `MaxFiltersBytes`.
+  Empty `?datasets=` rejected with 400.
+- Caching: deliberately none — large bodies, low repeat rate. The
+  handler does not call `cache.GetOrLoad`.
+- Frontend: `api.exportUrl` returns a URL string (no fetch). New
+  `ExportSelectedButton` in the Select sidebar footer (visible only
+  when ≥1 dataset is in the **committed** URL selection) triggers
+  `window.location.assign(url)` so the browser owns the binary stream.
+  Top-level navigation keeps the tar.gz out of JS memory and gives the
+  user the OS Save dialog.
+- Tests: `backend/internal/api/export_test.go` — happy path asserts
+  Content-Type, Content-Disposition, Cache-Control; parses gzip+tar;
+  asserts 6 entries (2 datasets × 3 files); checks the metadata CSV
+  header includes a sample/regulator column; checks the README mentions
+  the db_name. Negative tests: unknown dataset → 400, missing
+  `datasets` → 400, bad filter field → 400. Frontend vitest run
+  unchanged (34 tests pass).
+- Verification: `go build ./... && go test ./... -race -count=1` ✓;
+  `pnpm types:gen` ✓; `pnpm exec tsc --noEmit` ✓ (after fixing
+  `exactOptionalPropertyTypes` for the optional `filters` field);
+  `pnpm exec vitest run` ✓.
+- Files: backend/internal/api/export.go (new),
+  backend/internal/api/export_test.go (new),
+  backend/internal/api/router.go,
+  backend/openapi.yaml,
+  frontend/src/api/client.ts,
+  frontend/src/api/generated.ts (regenerated),
+  frontend/src/routes/Select.tsx.
+- Audit rows closed: docs/parity/select_datasets.md rows 35, 36.
+- Commit: <pending>
 - Status: DONE.

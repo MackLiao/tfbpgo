@@ -1075,6 +1075,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v/{v}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream a per-dataset .tar.gz with metadata + features + README
+         * @description STREAMS a multi-dataset `.tar.gz` archive. One subdirectory per
+         *     requested dataset (named by `db_name`); each contains:
+         *
+         *     - **metadata.csv** — `SELECT * FROM {db}_meta {filters}`
+         *     - **annotated_features.csv** — `SELECT * FROM {db} {filters}`
+         *     - **README.md** — dataset name, display name, applied filters
+         *
+         *     Mirrors `reference/tfbpshiny/modules/select_datasets/export.py`
+         *     (lines 39–213). Gzip `compresslevel=1` matches the Shiny export.
+         *
+         *     Rows are streamed from the DuckDB cursor into the CSV writer one
+         *     row at a time (no full result-set materialisation). Each CSV
+         *     is buffered once-per-dataset because the tar stdlib API needs
+         *     the entry `Size` up front; peak memory is one dataset's CSV at
+         *     a time.
+         *
+         *     The handler detaches from the global 30-second router timeout
+         *     (via `context.WithoutCancel`) and applies its own **5-minute
+         *     timeout**, so a large export does not get cut off mid-stream.
+         *     It holds one of the two DB pool connections for the entire
+         *     export duration; the other connection remains available so the
+         *     rest of the API stays responsive.
+         *
+         *     Response is **never cached** (`Cache-Control: no-store`).
+         */
+        get: {
+            parameters: {
+                query: {
+                    /**
+                     * @description Comma-separated dataset `db_name`s. Each must appear in
+                     *     `dataset_manifest`; unknown names → 400. Capped at the
+                     *     total number of datasets in the manifest.
+                     */
+                    datasets: string;
+                    /**
+                     * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
+                     *     string is capped at 16 KiB before unmarshal to prevent DoS.
+                     */
+                    filters?: components["parameters"]["Filters"];
+                };
+                header?: never;
+                path: {
+                    /**
+                     * @description Artifact version (e.g. `2026-05-12.1`). Must equal the running
+                     *     artifact's `artifactVersion`; otherwise the endpoint returns 410.
+                     */
+                    v: components["parameters"]["ArtifactVersion"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /**
+                 * @description Streamed gzip-compressed tar archive. `Content-Disposition`
+                 *     is `attachment; filename="tfbp-export-<UTC-timestamp>.tar.gz"`.
+                 *     No `Content-Length` is set (length unknown until the stream
+                 *     completes).
+                 */
+                200: {
+                    headers: {
+                        /** @description Forces the browser to treat the response as a download. */
+                        "Content-Disposition"?: string;
+                        /** @description Always `no-store`. Per-request uniques and large bodies make caching counter-productive. */
+                        "Cache-Control"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/gzip": string;
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                410: components["responses"]["StaleArtifactVersion"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1266,11 +1357,15 @@ export interface components {
             correlation: number;
         };
         CorrPair: {
+            /** @description Dataset db_name on the A side of this pair. */
             dbA: string;
+            /** @description Dataset db_name on the B side of this pair. */
             dbB: string;
             /** @description Measurement column actually used on the A side. */
             colA: string;
+            /** @description Measurement column actually used on the B side. */
             colB: string;
+            /** @description Per-regulator correlation values for this pair. */
             points: components["schemas"]["CorrPairPoint"][];
         };
         CorrResponse: {
@@ -1286,17 +1381,31 @@ export interface components {
             pairs: components["schemas"]["CorrPair"][];
         };
         ScatterPoint: {
+            /** @description Target gene locus tag (one row per target shared between A and B). */
             targetLocusTag: string;
-            /** Format: double */
+            /**
+             * Format: double
+             * @description Measurement value on the A side. Raw value for Pearson; RANK()
+             *     output for Spearman.
+             */
             valA: number;
-            /** Format: double */
+            /**
+             * Format: double
+             * @description Measurement value on the B side. Raw value for Pearson; RANK()
+             *     output for Spearman.
+             */
             valB: number;
         };
         ScatterResponse: {
+            /** @description Regulator locus_tag the scatter was computed for. */
             regulator: string;
+            /** @description Dataset db_name on the A side of the scatter pair. */
             dbA: string;
+            /** @description Dataset db_name on the B side of the scatter pair. */
             dbB: string;
+            /** @description Measurement column actually used on the A side. */
             colA: string;
+            /** @description Measurement column actually used on the B side. */
             colB: string;
             /** @enum {string} */
             method: "pearson" | "spearman";

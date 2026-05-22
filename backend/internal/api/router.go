@@ -88,6 +88,10 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/perturbation", s.Perturbation)
 		r.Get("/comparison/topn", s.ComparisonTopN)
 		r.Get("/comparison/dto", s.ComparisonDTO)
+		// Export — streams a multi-dataset .tar.gz. The handler detaches
+		// from the 30s router-level Timeout via context.WithoutCancel and
+		// applies its own 5-minute deadline; see api.ExportTimeout.
+		r.Get("/export", s.Export)
 	})
 
 	// SPA mounted last so /api/*, /healthz, /readyz, /metrics,

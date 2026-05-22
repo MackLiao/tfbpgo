@@ -233,4 +233,16 @@ export const api = {
     if (q.filters) s.set("filters", q.filters);
     return get<Schemas["BreakdownResponse"]>(vpath("/selection/breakdown"), s);
   },
+
+  // ----- Export endpoint (Phase C6) ---------------------------------------
+  // Returns the URL string only — we deliberately do NOT fetch here. The
+  // browser handles the binary stream via top-level navigation
+  // (`window.location.href = url`) so the download UX is "click → File
+  // Save dialog" and the response never has to land in JS memory. See
+  // docs/parity/select_datasets.md rows 35, 36.
+  exportUrl: (q: { datasets: string[]; filters?: string }): string => {
+    const s = new URLSearchParams({ datasets: q.datasets.join(",") });
+    if (q.filters) s.set("filters", q.filters);
+    return vpath("/export") + (s.toString() ? `?${s.toString()}` : "");
+  },
 };
