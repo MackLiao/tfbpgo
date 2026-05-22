@@ -20,7 +20,7 @@ Read before working, append a section before finishing.
 | A5  | Select Datasets backend endpoints          | DONE        | depends on A1; polish notes in [polish.md](polish.md) |
 | A6  | Plotly bundle: register box trace          | DONE        | bundle now 523 KB gzip (11 KB over the 512 KB soft target); see [polish.md](polish.md) |
 | B1  | Comparison module rebuild                  | DONE        | 79eeea9; depends on A4+A6 |
-| B2  | Binding module rebuild                     | DONE        | depends on A2+A3+A6 |
+| B2  | Binding module rebuild                     | DONE        | 2432163; depends on A2+A3+A6 |
 | B3  | Perturbation module rebuild                | PENDING     | depends on A2+A3+A6 |
 | B4  | Select Datasets module rebuild             | PENDING     | depends on A5 |
 
@@ -263,4 +263,5 @@ Read before working, append a section before finishing.
   under the 530 KB ceiling called out in the task brief.
 - Files touched: 9 (4 new components/plots, 1 rewrite, 1 delete,
   3 modified: query-keys, test, STATUS).
+- Commit: 2432163
 - Status: DONE.
