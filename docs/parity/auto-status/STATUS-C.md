@@ -77,7 +77,7 @@ before starting, append a section before finishing.
 - Re-recorded /datasets parity snapshot for the new shape.
 - Tests: backend go test ./... -race ✓, data_prep pytest ✓ (60/60),
   frontend tsc + vitest ✓ (24/24), parity ✓ (15/15).
-- Commit: <SHA>
+- Commit: 5c2e23f
 - Status: C1 multi-review fixes DONE.
 
 ### 2026-05-22 — implementer C2
