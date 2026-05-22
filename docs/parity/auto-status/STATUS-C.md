@@ -18,7 +18,7 @@ before starting, append a section before finishing.
 | C2  | Home module rebuild                                | DONE        | feature cards + binding/perturbation imgs + wine pill nav + 3-line logo + github badge |
 | C3  | Binding/Perturbation P1 polish                     | DONE        | sample-conditions endpoint + overlay hover; ActivePairRegulatorPicker; corr LEFT-JOIN deferred (locus tags only) |
 | C4  | Select Datasets — schema-v4-dependent features     | DONE        | rows 1/3/4/9/28 closed; cascade narrowing (row 19) deferred to polish.md |
-| C5  | Select Datasets — remaining UX features            | PENDING     | depends on C4 (apply-to-all, sidebar) |
+| C5  | Select Datasets — remaining UX features            | DONE        | apply-to-all + sidebar search/collapse + from_pair + staged Apply (filter modal still writes URL directly per audit §8) |
 | C6  | Export endpoint + tarball UI                       | PENDING     | independent; large surface |
 | C7  | Multi-review nice-to-haves cleanup                 | PENDING     | independent; small surface across many files |
 | C8  | Plotly bundle recovery                             | DONE        | dropped `bar` post-B1; 523→514 KB gzipped |
@@ -180,4 +180,68 @@ before starting, append a section before finishing.
 - Commit: 3e4b80a
 - Acceptance: docs/parity/binding.md rows 10, 21, 42 (and perturbation
   equivalents).
+- Status: DONE.
+
+### 2026-05-22 09:40 PDT — implementer C5
+- Closed the remaining Select Datasets UX gaps from
+  docs/parity/select_datasets.md §2 rows 12, 14, 15, 18, 20, 21, 23, 24,
+  30, 31, 34.
+- New file: frontend/src/lib/filter-spec.ts — typed AnnotatedFilterSpec
+  helper centralizing the frontend-only `fromPair` annotation. Backend
+  ignores unknown JSON fields, so the annotation round-trips through
+  `?filters=` without a wire-shape bump.
+- DatasetFilterModal: per-field "Apply to all datasets" checkbox shown
+  only for categorical/numeric fields that exist across every active
+  dataset's field manifest (rows 12, 14). Bool fields intentionally
+  excluded — matches Shiny ui.py:63-69. Modal Apply now hands back
+  `{next, applyToAllFields}`; the page mirrors flagged specs into every
+  other active dataset that has the field. Inline `from_pair` cleanup
+  link surfaces on filters carrying the annotation (rows 15, 30).
+- CommonRegulatorsModal: `onSelectCommon` now receives `(tags, pair)`
+  so the caller can attach the originating display-name pair to the
+  resulting `regulator_locus_tag` filter (row 30). Existing `?regulators=`
+  side-channel preserved for the Phase B legacy consumers.
+- SelectionMatrix: new `highlightedPair` + `onHighlightedClear` props.
+  When set, the matrix cell for the originating pair gets an amber
+  bg-amber-100 highlight (row 30); clicking the highlighted cell fires
+  the clear callback instead of re-opening the common-regulators modal
+  (row 31).
+- Select.tsx:
+  - Staged Apply gate (rows 18, 20, 21): dataset checkbox toggles update
+    `pending{Binding,Perturbation}` local state; a sticky page-footer
+    "Apply / Reset" pair surfaces only when pending differs from
+    committed. Apply commits to URL and clears filter blocks for any
+    dataset that was removed (preserves the row-38 contract). Filter
+    modal Apply still writes URL directly — smallest-blast-radius
+    choice from the task spec / audit §8.
+  - Sidebar search box (row 24) — local state, `displayName.toLowerCase()
+    .includes(q)` predicate; empty state copy (row 34) "No datasets
+    match your search." when query is non-empty and no rows match.
+  - Sidebar collapse/expand (row 23) — header chevron toggles
+    `?selectSidebar=collapsed|<absent>`. URL state per CLAUDE.md "URL
+    is canonical state".
+  - useQueries fan-out on the committed-active datasets gives the
+    modal the common-fields intersection; the same map drives the
+    apply-to-all mirroring + the `regulator_locus_tag` write on
+    "Select N common regulators".
+  - `activeFromPair` memo finds the from_pair display-name pair in
+    `?filters=` and translates back to db_names so the matrix can match
+    against rowDb/colDb. `onClearFromPair` removes every
+    regulator_locus_tag block carrying the annotation plus the
+    `?regulators=` side-channel.
+- Tests: 5 new specs in Select.test.tsx — sidebar search filters list +
+  empty state; sidebar collapse hides list; staged Apply footer
+  appears/disappears with toggles; apply-to-all writes both datasets'
+  badges; from_pair URL produces highlighted cell and click-to-clear
+  removes both badges.
+- Verify: `pnpm exec tsc --noEmit` ✓, `pnpm exec vitest run` ✓ (34/34
+  passing; was 29 — 5 new C5 specs), `pnpm exec vite build` ✓ (plotly
+  chunk 513.81 KB gzipped, no regression).
+- Files: frontend/src/lib/filter-spec.ts (new),
+  frontend/src/components/DatasetFilterModal.tsx,
+  frontend/src/components/CommonRegulatorsModal.tsx,
+  frontend/src/plots/SelectionMatrix.tsx,
+  frontend/src/routes/Select.tsx, frontend/src/test/Select.test.tsx.
+- Audit rows closed: 12, 14, 15, 18, 20, 21, 23, 24, 30, 31, 34.
+- Commit: 0eab148
 - Status: DONE.
