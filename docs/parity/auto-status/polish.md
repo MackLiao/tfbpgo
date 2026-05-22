@@ -231,3 +231,100 @@ deferred during the overnight B4 task. Each is one line of context.
   modal's "Apply Filters" directly to the URL, so each modal apply is
   a commit. The Shiny pattern coalesces toggles + filter edits before
   firing downstream queries; audit §8 already flagged this as UNCLEAR.
+
+## From overall multi-review of `auto/overnight-phase-a` (2026-05-22)
+
+Eight items surfaced by a final cross-cutting review pass over the
+combined Phase A+B+C diff. Implemented in one focused commit; deferred
+items captured below.
+
+### Resolved in this commit
+
+- **F1 — `http.Server.WriteTimeout` (60s) < `api.ExportTimeout` (5m)**
+  (multi-review BLOCKER). The net/http server-level timeout fires from
+  the first response byte, so large /export tar.gz streams were being
+  hard-killed ~4 minutes before the handler's own deadline; clients
+  received a truncated archive with no error. **RESOLVED.**
+  `cmd/tfbp-server/main.go` raises `WriteTimeout` to 6 minutes (1 min
+  margin over the handler cap) with an inline comment explaining the
+  choice.
+- **F2 — `export.go` discards `whitelistedIdent` return value**
+  (multi-review IMPORTANT). The discarded values were a panic tripwire
+  (functionally safe) but inconsistent with `binding.go`/`correlation.go`
+  which feed the return value directly into `fmt.Sprintf`. **RESOLVED.**
+  `writeQueryToTar` now uses the return value at the SQL site for the
+  `{table}` identifier; the `{dbName}` parameter retains a tripwire
+  `_ = whitelistedIdent(dbName)` because it is not interpolated.
+- **F3 — `displayName` not HTML-escaped in scatter hovertemplate**
+  (multi-review LOW security). `BindingScatterPair.tsx` and
+  `PerturbationScatterPair.tsx` interpolated `displayNameA`/`B`
+  directly into a Plotly `hovertemplate` (rendered as HTML). A
+  malicious `display_name` in the artifact would execute on hover.
+  **RESOLVED.** Both files now wrap the names through `htmlEscape`
+  (existing helper in `lib/html-escape.ts`) with a code comment noting
+  why.
+- **F4 — `SafeIdentRE` not enforced on `sample_id_field`**
+  (multi-review LOW security). `NewWhitelist` validated every other
+  identifier-shaped manifest column but not `sample_id_field`, which
+  the `/sample-conditions` handler interpolates into SQL.
+  **RESOLVED.** `db/whitelist.go` now rejects an unsafe
+  `sample_id_field` at startup; added
+  `TestNewWhitelist_RejectsUnsafeSampleIDField` following the existing
+  pattern.
+- **F5 — Parity audit docs stale** (multi-review IMPORTANT). The audit
+  tables in `docs/parity/binding.md`, `perturbation.md`,
+  `select_datasets.md`, and `home.md` still marked Phase-C-closed rows
+  as MISSING/PARTIAL/Absent. **RESOLVED.** Updated cells per
+  SUMMARY-C.md; appended an "Audit table updated 2026-05-22 after
+  Phase C completion." footer to each touched file. Prose left intact.
+- **F6 — CLAUDE.md stale "Layout (`backend/` and `frontend/` not yet
+  created)" header** (multi-review NICE). Both directories exist.
+  **RESOLVED.** Parenthetical removed.
+- **F7 — `/export` concurrency uncapped** (multi-review MEDIUM
+  security). With `MaxOpenConns=2`, two concurrent /export callers
+  could squat on both pool slots and starve every other handler.
+  **RESOLVED.** `export.go` now serializes through a capacity-1
+  `exportSemaphore`; second caller waits on the channel and bails out
+  via `r.Context().Done()`. Cap is conservative — operator can bump
+  if needed.
+- **F8 — `/export` row count uncapped** (multi-review MEDIUM
+  security). `writeQueryToTar` ran `SELECT *` with no LIMIT — an
+  unfiltered all-dataset export could OOM. **RESOLVED.** Per-dataset
+  row cap of `ExportRowCap = 1_000_000`; on overflow the CSV emits a
+  final `# truncated at <N> rows; refine your filter and retry` row
+  and the next file in the tar continues. Per-archive README now
+  documents the limit.
+- **gofmt drift** (multi-review NICE). `internal/api/binding.go` and
+  `internal/observability/metrics.go` had cosmetic gofmt drift.
+  **RESOLVED.** `gofmt -w` run on both files; verified `gofmt -l .`
+  is clean.
+
+### Deferred to a future polish task
+
+- **`select_datasets.go` exceeds 800-line ceiling** (multi-review LOW).
+  Handler file has grown past the project's soft size budget through
+  schema-v4 and matrix work; an extraction pass would help future
+  audits. Defer to a dedicated refactor task — touching this in the
+  same commit as the security fixes would dilute the review surface.
+- **API naming `corr` vs `correlations`** (multi-review NICE). The
+  binding endpoint is `/binding/corr` while perturbation is
+  `/perturbation/correlations`. Documented in OpenAPI; defer the rename
+  to a versioned API change (no client-facing forcing function today).
+- **Shared `CorrBoxplot` generic** (multi-review NICE).
+  `BindingCorrBoxplot.tsx` and `PerturbationCorrBoxplot.tsx` diverge
+  only in trace color and route plumbing; could collapse to a
+  type-parameterized generic. Defer — the binding-vs-perturbation
+  divergence may grow during real-data UX validation.
+- **`BindingCorr` happy-path HTTP test gap** (multi-review LOW). The
+  fixture has only one dataset per data_type and `dedupeAndCapCSV`
+  collapses CSV duplicates, so an HTTP-level happy-path test for
+  `/binding/corr` cannot return 200 without a widened fixture. The
+  SQL-level parity tests in `correlation_parity_test.go` already pin
+  the numerical contract; defer until the fixture widens.
+- **`introspectField` release-then-reacquire lock-gap** (multi-review
+  LOW). The lazy `introspectField` path drops the mutex during DB I/O
+  to keep DB work off the lock; in principle two goroutines could
+  race through the gap on a cold (db, field) pair. The startup
+  `WarmIntrospectionCache` pre-populates every entry, so the practical
+  window is closed today. Defer the lock redesign until profiling
+  shows an actual problem.

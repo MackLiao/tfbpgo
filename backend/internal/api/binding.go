@@ -126,7 +126,6 @@ func (s *Server) buildBindingResponse(ctx context.Context, reg string, datasets 
 	return json.Marshal(resp)
 }
 
-
 func buildSquirrelWhere(fs map[string]domain.FilterSpec) (string, []any, error) {
 	if len(fs) == 0 {
 		return "", nil, nil

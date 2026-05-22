@@ -77,6 +77,14 @@ func NewWhitelist(m *Manifests) (*Whitelist, error) {
 		if d.PValueCol != "" && !SafeIdentRE.MatchString(d.PValueCol) {
 			return nil, fmt.Errorf("manifest contains unsafe pvalue_col for %q: %q", d.DBName, d.PValueCol)
 		}
+		// sample_id_field is interpolated into SQL by the
+		// /sample-conditions handler (sample_conditions.go) as the SELECT
+		// list's join key. Re-verify the manifest value at startup so a
+		// hand-edited DuckDB file cannot smuggle an injection payload
+		// through the column.
+		if d.SampleIDField != "" && !SafeIdentRE.MatchString(d.SampleIDField) {
+			return nil, fmt.Errorf("manifest contains unsafe sample_id_field for %q: %q", d.DBName, d.SampleIDField)
+		}
 		// v4: validate condition_cols entries (CSV) against SafeIdentRE
 		// because these are interpolated into SQL by handlers that emit
 		// the sample-condition label. DefaultFilters is opaque JSON and

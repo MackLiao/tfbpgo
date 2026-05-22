@@ -131,9 +131,15 @@ func run() error {
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    64 * 1024,
+		// WriteTimeout MUST exceed the longest per-handler deadline, otherwise
+		// net/http silently truncates the response from the server side after
+		// the first body byte. The /export handler runs up to api.ExportTimeout
+		// (5 minutes) on multi-dataset tar.gz streams; 6 minutes here gives a
+		// 1-minute margin over that handler-side cap. Per-request shaping is
+		// still done via context.WithTimeout inside individual handlers.
+		WriteTimeout:   6 * time.Minute,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 64 * 1024,
 	}
 
 	ctx, sigStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

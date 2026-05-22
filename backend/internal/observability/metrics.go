@@ -16,7 +16,7 @@ type Metrics struct {
 	HTTPRequestSize  *prometheus.HistogramVec
 	HTTPResponseSize *prometheus.HistogramVec
 
-	DBDuration  *prometheus.HistogramVec
+	DBDuration *prometheus.HistogramVec
 	// DBPoolWait observes the per-5s-tick MEAN wait duration. This is a
 	// distribution-of-means and its quantiles are NOT per-acquire p95/p99.
 	// Use the DBPoolWaitDurationSecondsTotal / DBPoolWaitCount counter

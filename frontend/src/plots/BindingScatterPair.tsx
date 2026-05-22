@@ -1,4 +1,5 @@
 import type { Schemas } from "@/api/client";
+import { htmlEscape } from "@/lib/html-escape";
 import { PlotLazy } from "./PlotLazy";
 
 // Per-pair scatter for the Binding module.
@@ -30,8 +31,13 @@ export function BindingScatterPair({
   const ys = resp.points.map((p) => p.valB);
   const texts = resp.points.map((p) => p.targetLocusTag);
 
+  // Plotly renders `hovertemplate` as HTML; HTML-escape any DB-sourced
+  // string before interpolation so a malicious display_name in the artifact
+  // cannot inject markup or script. Mirrors workspace.py:294-306.
+  const safeA = htmlEscape(displayNameA);
+  const safeB = htmlEscape(displayNameB);
   const hoverTemplate =
-    `${displayNameA}: %{x:.3f}<br>${displayNameB}: %{y:.3f}<extra></extra>`;
+    `${safeA}: %{x:.3f}<br>${safeB}: %{y:.3f}<extra></extra>`;
 
   const trace = {
     type: "scatter",

@@ -395,3 +395,62 @@ flagged by the database-reviewer.
   fresh local server.
 - Commit: 00036f2
 - Status: DONE.
+
+### 2026-05-22 — implementer overall-review fix-up
+
+Cross-cutting multi-review of `auto/overnight-phase-a` flagged 8 items
+(1 blocker, 2 important, 5 security/polish). All resolved in one focused
+commit; 4 deferred items captured in polish.md.
+
+Items closed in this commit:
+
+- **F1 (BLOCKER)** — `http.Server.WriteTimeout` raised from 60s to 6m
+  in `cmd/tfbp-server/main.go`. `ExportTimeout` (5m) was being silently
+  truncated at the server layer; 6m gives a 1-minute margin.
+- **F2 (IMPORTANT)** — `export.go` now uses `whitelistedIdent` return
+  value directly at the SQL site for the `{table}` identifier
+  (consistent with `binding.go`/`correlation.go`); `{dbName}` retains a
+  tripwire-only call since it is not interpolated.
+- **F3 (security LOW)** — `BindingScatterPair.tsx` +
+  `PerturbationScatterPair.tsx` now HTML-escape `displayNameA`/`B`
+  before interpolating into Plotly `hovertemplate` (rendered as HTML).
+- **F4 (security LOW)** — `NewWhitelist` rejects unsafe
+  `sample_id_field` values at startup;
+  `TestNewWhitelist_RejectsUnsafeSampleIDField` added.
+- **F5 (IMPORTANT)** — Parity audit cells refreshed in
+  `binding.md` (rows 10, 21, 42), `perturbation.md` (rows 10, 13, 26),
+  `select_datasets.md` (rows 1, 3, 4, 9, 12, 14, 15, 18, 20, 21, 22,
+  23, 24, 28, 30, 31, 34, 35, 36), `home.md` (rows 6–9, 13, 14, 15).
+  "Audit table updated 2026-05-22 after Phase C completion." footer
+  added to each.
+- **F6 (NICE)** — Removed stale "`backend/` and `frontend/` not yet
+  created" parenthetical from `CLAUDE.md`.
+- **F7 (security MEDIUM)** — `/export` now serializes through a
+  capacity-1 `exportSemaphore`; second concurrent caller waits on the
+  channel and bails via `r.Context().Done()`. Prevents pool exhaustion
+  with `MaxOpenConns=2`.
+- **F8 (security MEDIUM)** — Per-dataset CSV row cap of
+  `ExportRowCap = 1_000_000`; on overflow emits a `# truncated at <N>
+  rows; refine your filter and retry` marker row and proceeds to the
+  next file. Per-archive README documents the limit.
+- **gofmt drift** — `internal/api/binding.go` +
+  `internal/observability/metrics.go` formatted; `gofmt -l .` clean.
+
+Items deferred (captured in polish.md under the new "overall
+multi-review" section):
+
+- `select_datasets.go` size-budget extraction.
+- API naming `corr` vs `correlations` rename.
+- Shared `CorrBoxplot` generic across binding/perturbation.
+- `BindingCorr` happy-path HTTP test (blocked by fixture width).
+- `introspectField` lock-gap redesign (practical window already closed
+  by `WarmIntrospectionCache`).
+
+Verify: `cd backend && go build ./... && go test ./... -count=1 -race`
+✓ (all packages green); `cd frontend && pnpm exec tsc --noEmit` ✓;
+`pnpm exec vitest run` ✓ (34/34); `pnpm exec vite build` ✓ (plotly
+chunk 513.81 kB gzipped, no regression); `make parity` ✓ (15/15
+against fresh fixture-backed local server).
+
+Commit: <pending>
+Status: DONE.

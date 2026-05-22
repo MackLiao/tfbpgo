@@ -23,6 +23,23 @@ import (
 // automated polling).
 const ExportTimeout = 5 * time.Minute
 
+// ExportRowCap is the per-dataset row cap for the streamed CSV. When the
+// underlying SELECT yields more rows than this, the CSV stops at the cap
+// and a trailing `# truncated at <N> rows; refine your filter and retry`
+// marker row is emitted. Defends against OOM on an unfiltered all-dataset
+// export against the production artifact (some datasets carry several
+// million rows). Operator can re-export with tighter filters.
+const ExportRowCap = 1_000_000
+
+// exportSemaphore serializes /export requests so the handler can never
+// occupy both of the t3.small pool's MaxOpenConns=2 slots simultaneously.
+// Cap of 1 means at most one in-flight export; a second concurrent caller
+// blocks until the first finishes (or its own request context is cancelled).
+// Operators can raise this if production data shows the queue is the
+// bottleneck — but the conservative default keeps one connection free for
+// the rest of the API even during a 5-minute export.
+var exportSemaphore = make(chan struct{}, 1)
+
 // Export streams a multi-dataset .tar.gz archive. One subdirectory per
 // requested dataset (named by db_name); each contains:
 //
@@ -43,8 +60,27 @@ const ExportTimeout = 5 * time.Minute
 // Connection budget: holds one of the two pool connections for the full
 // export duration. Accepted because (a) user-initiated only, (b) capped
 // at 5 minutes via context, (c) the other connection remains available
-// to keep the rest of the API responsive.
+// to keep the rest of the API responsive, (d) at most one /export
+// is in-flight at a time (see exportSemaphore).
+//
+// Row budget: each per-dataset CSV is capped at ExportRowCap rows. On
+// overflow a final `# truncated at <N> rows; refine your filter and
+// retry` marker row is emitted and the next file in the tar continues.
+// Defends against OOM on unfiltered all-dataset exports.
 func (s *Server) Export(w http.ResponseWriter, r *http.Request) {
+	// Serialize against any other in-flight /export. With MaxOpenConns=2,
+	// allowing a second concurrent export would let two long-running
+	// streams squat on both pool slots and starve every other handler.
+	// The acquire is gated on the request context so a client disconnect
+	// or router-level deadline (30s middleware.Timeout) unblocks the queue.
+	select {
+	case exportSemaphore <- struct{}{}:
+		defer func() { <-exportSemaphore }()
+	case <-r.Context().Done():
+		writeJSONError(w, http.StatusRequestTimeout, "export queue timeout")
+		return
+	}
+
 	q := r.URL.Query()
 
 	dsRaw := q.Get("datasets")
@@ -169,14 +205,17 @@ func (s *Server) Export(w http.ResponseWriter, r *http.Request) {
 // `{dbName}` or `{dbName}_meta`. Both are re-checked against
 // SafeIdentRE as defense-in-depth before SQL interpolation.
 func (s *Server) writeQueryToTar(ctx context.Context, tw *tar.Writer, tarPath, table, dbName string, fs map[string]domain.FilterSpec) error {
+	// dbName is whitelist-checked at the request boundary; re-verify here as
+	// the per-request tripwire even though only `table` lands in the SQL
+	// string. Matches the pattern used in binding.go / correlation.go where
+	// every identifier passed to fmt.Sprintf flows through whitelistedIdent.
 	_ = whitelistedIdent(dbName)
-	_ = whitelistedIdent(table)
 
 	extraWhere, args, err := buildSquirrelWhere(fs)
 	if err != nil {
 		return fmt.Errorf("build where: %w", err)
 	}
-	sqlStr := fmt.Sprintf(`SELECT * FROM %s WHERE 1=1%s`, table, extraWhere)
+	sqlStr := fmt.Sprintf(`SELECT * FROM %s WHERE 1=1%s`, whitelistedIdent(table), extraWhere)
 
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
 	defer cancel()
@@ -206,7 +245,17 @@ func (s *Server) writeQueryToTar(ctx context.Context, tw *tar.Writer, tarPath, t
 	strRow := make([]string, len(cols))
 
 	rowCount := 0
+	truncated := false
 	for rows.Next() {
+		if rowCount >= ExportRowCap {
+			// Stop streaming further rows but keep the request alive:
+			// the README/metadata.csv siblings for this dataset still
+			// need to land, and subsequent datasets in the archive
+			// should still be exported. The trailing marker row signals
+			// the truncation to the consumer.
+			truncated = true
+			break
+		}
 		if err := rows.Scan(rowPtrs...); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
@@ -223,6 +272,22 @@ func (s *Server) writeQueryToTar(ctx context.Context, tw *tar.Writer, tarPath, t
 				return fmt.Errorf("csv flush: %w", err)
 			}
 		}
+	}
+	if truncated {
+		// Emit a single-column marker as the final CSV row. Encoded via
+		// csv.Writer so the leading `#` is properly quoted if the column
+		// count differs from the header. Consumers parsing the CSV will
+		// see the marker in the first cell of the last row.
+		marker := make([]string, len(cols))
+		marker[0] = fmt.Sprintf("# truncated at %d rows; refine your filter and retry", ExportRowCap)
+		if err := csvw.Write(marker); err != nil {
+			return fmt.Errorf("csv truncation marker: %w", err)
+		}
+		slog.Warn("export_truncated",
+			"table", table,
+			"dataset", dbName,
+			"cap", ExportRowCap,
+		)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("rows: %w", err)
@@ -312,6 +377,8 @@ func buildExportReadme(dbName string, row db.DatasetRow, fs map[string]domain.Fi
 			b.WriteString("\n```\n")
 		}
 	}
+	fmt.Fprintf(&b, "\n## Limits\n\n")
+	fmt.Fprintf(&b, "Each CSV is capped at %d rows. If the cap is hit, the final row carries a `# truncated …` marker — refine your filter and re-export.\n", ExportRowCap)
 	return b.String()
 }
 

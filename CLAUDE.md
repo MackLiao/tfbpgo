@@ -23,7 +23,7 @@ All four Phase 2 deferrals have been absorbed into Phase 3 (fixture widening —
 
 When in doubt about what a feature should do, run the reference app or read its source — do not guess.
 
-## Layout (`backend/` and `frontend/` not yet created)
+## Layout
 
 Three peer top-level directories, **not** a Go monorepo:
 

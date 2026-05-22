@@ -97,6 +97,20 @@ func TestNewWhitelist_RejectsUnsafePValueCol(t *testing.T) {
 	require.Contains(t, err.Error(), "unsafe pvalue_col")
 }
 
+// TestNewWhitelist_RejectsUnsafeSampleIDField locks defense-in-depth on
+// `dataset_manifest.sample_id_field`. The column is interpolated into
+// SQL by the /sample-conditions handler, so an unsafe value in a
+// hand-edited DuckDB file must be rejected at startup.
+func TestNewWhitelist_RejectsUnsafeSampleIDField(t *testing.T) {
+	_, err := NewWhitelist(&Manifests{
+		Datasets: []DatasetRow{
+			{DBName: "callingcards", SampleIDField: "gm_id; DROP TABLE foo; --"},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsafe sample_id_field")
+}
+
 // TestNewWhitelist_AllowsEmptyPValueCol — hackett/hughes_* legitimately
 // have an empty pvalue_col, which must NOT be rejected.
 func TestNewWhitelist_AllowsEmptyPValueCol(t *testing.T) {
