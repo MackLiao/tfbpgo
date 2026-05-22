@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
@@ -48,6 +49,33 @@ func AssertHandlerMapsCoverManifest(m *db.Manifests) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("handler-config drift vs dataset_manifest:\n  - %s",
 			strings.Join(missing, "\n  - "))
+	}
+
+	// Non-fatal: surface datasets that are manifest-eligible but absent from
+	// the topn-specific config maps (bindingConfigs / pertConfigs in
+	// comparison_topn.go). Those datasets still serve via /binding,
+	// /perturbation, /comparison/dto etc.; only /comparison/topn rejects
+	// them at request time. A startup log-warn surfaces drift earlier than
+	// the first 400 response in production logs.
+	for _, d := range m.Datasets {
+		switch d.DataType {
+		case "binding":
+			if _, ok := bindingConfigs[d.DBName]; !ok {
+				slog.Warn("startup_topn_config_missing",
+					"data_type", "binding",
+					"db_name", d.DBName,
+					"effect", "dataset cannot be used by /comparison/topn until added to bindingConfigs",
+				)
+			}
+		case "perturbation":
+			if _, ok := pertConfigs[d.DBName]; !ok {
+				slog.Warn("startup_topn_config_missing",
+					"data_type", "perturbation",
+					"db_name", d.DBName,
+					"effect", "dataset cannot be used by /comparison/topn until added to pertConfigs",
+				)
+			}
+		}
 	}
 	return nil
 }

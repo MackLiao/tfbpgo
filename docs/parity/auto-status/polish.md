@@ -9,6 +9,9 @@ unless they cause downstream breakage.
   With only two known values today (`''`, `'experimental_condition'`), free-form
   VARCHAR is fine. Add `CHECK (role IN ('', 'experimental_condition'))` to both
   `manifests.py` and `build_fixture.py` if the role vocabulary grows.
+  **RESOLVED — Task C7.** CHECK constraints added on `role`,
+  `ui_kind_override`, and `numeric_level_sort` in both `manifests.py` and
+  `build_fixture.py`. Fixture regenerated.
 
 - **Struct-field schema-version separator** (go-reviewer NICE-TO-HAVE).
   Grouping new v3 fields under `// --- schema_version=3+ ---` in
@@ -18,6 +21,9 @@ unless they cause downstream breakage.
   NICE-TO-HAVE). `AssertHandlerMapsCoverManifest` deliberately doesn't fail
   on missing `bindingConfigs`/`pertConfigs` entries (topn-eligibility is
   request-time), but a startup log-warn would surface drift earlier.
+  **RESOLVED — Task C7.** `AssertHandlerMapsCoverManifest` now emits a
+  non-fatal `slog.Warn("startup_topn_config_missing", ...)` for any
+  binding/perturbation dataset absent from `bindingConfigs`/`pertConfigs`.
 
 - **Parity-snapshot regeneration** (code-reviewer NICE-TO-HAVE). The
   committed `tests/parity/snapshots/` files weren't re-recorded after
@@ -36,11 +42,21 @@ unless they cause downstream breakage.
   `buildCorrResponse`/`buildScatterResponse` `return nil, err` lose pair
   context. Wrap with `fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)` at
   the DB error site for actionable logs.
+  **RESOLVED — Task C7.** All per-pair sites in `binding_corr.go`
+  (`buildCorrResponse`, `buildScatterResponse`) wrap with regulator + pair
+  context via `fmt.Errorf`.
 - **OpenAPI descriptions** (code-reviewer NICE-TO-HAVE). `CorrPair.dbB`,
   `CorrPair.colB`, all `ScatterPoint.*` fields lack `description:` entries.
+  **RESOLVED — Task C7.** `description:` added to `CorrPair.{dbA,dbB,colB,points}`,
+  `ScatterPoint.{targetLocusTag,valA,valB}`, and
+  `ScatterResponse.{regulator,dbA,dbB,colA,colB}`. Types regenerated.
 - **Cache canonicalization test fidelity** (go-reviewer NICE-TO-HAVE).
   `TestBindingScatter_CacheCanonicalization` re-issues an identical request;
   it tests HIT but not canonicalization. Re-write to permute param order.
+  **RESOLVED — Task C7.** Test now constructs two raw query strings with
+  permuted key order (and a comma-encoded variant) and asserts the second
+  request HITs the cache. A `require.NotEqual` guards against the
+  identical-request regression.
 ## From A5 (commit pending — Select Datasets backend)
 
 - **Default-active datasets / default filters** (audit §7 row 7). Shiny's
@@ -106,14 +122,22 @@ unless they cause downstream breakage.
   `queryMatrixDiagonal`/`Cross`, `buildBreakdownResponse`, `listColumns`)
   bubble raw errors without dataset/query context. Wrap with `fmt.Errorf`
   for actionable logs.
+  **RESOLVED — Task C7.** All five sites now wrap with dataset/pair/table
+  context.
 
 - **`initIntrospect` design** (go-reviewer NICE-TO-HAVE). Move the cache
   initialization into the `Server` constructor so future methods don't
   forget to call `initIntrospect()` before use.
+  **RESOLVED — Task C7.** `sync.Once` removed from `Server`; `initIntrospect`
+  is now an eager direct initializer invoked from `WarmIntrospectionCache`
+  at startup and from `newTestServer` in the test bootstrap. Handler call
+  sites no longer invoke `initIntrospect`.
 
 - **Matrix filter test coverage** (go-reviewer NICE-TO-HAVE).
   `TestSelectionMatrix_WithCallingcardsFilter` could also assert the
   cross-cell NCommon value to pin the filter-arm INTERSECT semantics.
+  **RESOLVED — Task C7.** Test now also asserts `cross.NCommon == 3`
+  (filtered callingcards ∩ unfiltered hackett).
 
 - **Cross-pair filter regression coverage** (db-reviewer flagged as
   CRITICAL). Resolved by `TestSelectionMatrix_FilteredCrossPair` added in
@@ -127,6 +151,8 @@ unless they cause downstream breakage.
   should consult `uiKindOverride` first and that the override arg is
   honored inside `kindForDBType` itself — which is true but mildly
   redundant. One-line doc cleanup; cosmetic only.
+  **RESOLVED — Task C7.** Comment simplified to: "kindForDBType returns
+  the UI kind, honoring uiKindOverride when non-empty."
 
 ## From C4 (Select Datasets — schema-v4-dependent features)
 

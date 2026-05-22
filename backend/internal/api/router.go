@@ -4,7 +4,6 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
@@ -28,12 +27,12 @@ type Server struct {
 	StaticFS fs.FS
 
 	// --- A5 Select Datasets handler state ---
-	// Lazy memoization of per-(db, field) DuckDB type introspection and
-	// numeric min/max aggregates. Initialized once via introspectInitOnce
-	// the first time DatasetFields is hit.
-	introspectInitOnce sync.Once
-	fieldIntrospect    *fieldIntrospectCache
-	fieldNumeric       *fieldNumericRangeCache
+	// Per-(db, field) DuckDB type introspection and numeric min/max
+	// aggregates. Both maps are eagerly allocated by initIntrospect()
+	// (invoked from WarmIntrospectionCache at startup), then concurrently
+	// read/written under per-cache mutexes for the lifetime of the Server.
+	fieldIntrospect *fieldIntrospectCache
+	fieldNumeric    *fieldNumericRangeCache
 }
 
 func (s *Server) Routes() http.Handler {

@@ -375,7 +375,10 @@ def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
             level_definitions  VARCHAR NOT NULL DEFAULT '',
             ui_kind_override   VARCHAR NOT NULL DEFAULT '',
             numeric_level_sort VARCHAR NOT NULL DEFAULT '',
-            PRIMARY KEY (db_name, field)
+            PRIMARY KEY (db_name, field),
+            CHECK (role IN ('', 'experimental_condition')),
+            CHECK (ui_kind_override IN ('', 'categorical', 'numeric', 'bool')),
+            CHECK (numeric_level_sort IN ('', 'numeric', 'string'))
         )
         """
     )

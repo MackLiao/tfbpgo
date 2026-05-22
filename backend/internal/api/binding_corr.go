@@ -146,19 +146,19 @@ func (s *Server) buildCorrResponse(
 		rowB, _ := s.Whitelist.Dataset(dbB)
 		colA, err := resolveMeasurementCol(rowA, col)
 		if err != nil {
-			return err
+			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		colB, err := resolveMeasurementCol(rowB, col)
 		if err != nil {
-			return err
+			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		extraWhereA, argsA, err := buildSquirrelWhere(filters[dbA])
 		if err != nil {
-			return err
+			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		extraWhereB, argsB, err := buildSquirrelWhere(filters[dbB])
 		if err != nil {
-			return err
+			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		sqlStr, args := renderCorrPairSQL(method, dataType, pairSpec{
 			dbA: dbA, dbB: dbB,
@@ -180,7 +180,7 @@ func (s *Server) buildCorrResponse(
 				Observe(elapsed.Seconds())
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("corr pair %s/%s: %w", dbA, dbB, err)
 		}
 		resp.Pairs = append(resp.Pairs, domain.CorrPair{
 			DBA: dbA, DBB: dbB,
@@ -307,11 +307,11 @@ func (s *Server) buildScatterResponse(
 	rowB, _ := s.Whitelist.Dataset(dbB)
 	colA, err := resolveMeasurementCol(rowA, col)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scatter %s pair %s/%s: %w", regulator, dbA, dbB, err)
 	}
 	colB, err := resolveMeasurementCol(rowB, col)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scatter %s pair %s/%s: %w", regulator, dbA, dbB, err)
 	}
 
 	// regulator_locus_tag was already stripped in serveScatter (before the
@@ -323,11 +323,11 @@ func (s *Server) buildScatterResponse(
 	fsB := stripRegulatorFilter(filters[dbB])
 	extraWhereA, argsA, err := buildSquirrelWhere(fsA)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scatter %s pair %s/%s: %w", regulator, dbA, dbB, err)
 	}
 	extraWhereB, argsB, err := buildSquirrelWhere(fsB)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scatter %s pair %s/%s: %w", regulator, dbA, dbB, err)
 	}
 
 	sqlStr, args := renderScatterSQL(method, dataType, regulator, pairSpec{
@@ -342,7 +342,7 @@ func (s *Server) buildScatterResponse(
 	t0 := time.Now()
 	points := []domain.ScatterPoint{}
 	if err := s.Pool.DB.SelectContext(dbCtx, &points, sqlStr, args...); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scatter %s pair %s/%s: %w", regulator, dbA, dbB, err)
 	}
 	elapsed := time.Since(t0)
 	AddDBMillis(ctx, elapsed.Milliseconds())

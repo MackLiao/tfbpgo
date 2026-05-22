@@ -57,10 +57,13 @@ type fieldNumericRangeCache struct {
 // introspectField returns the column type and the table the column lives in.
 // Looks up `{db}` first, falling back to `{db}_meta`. Returns ok=false when
 // neither table contains the column.
+//
+// Prereq: s.initIntrospect() must have been called before the listener is
+// bound (the server bootstrap invokes WarmIntrospectionCache, which calls
+// initIntrospect; tests use newTestServer which does the same).
 func (s *Server) introspectField(ctx context.Context, dbName, field string) (fieldIntrospection, bool, error) {
 	key := [2]string{dbName, field}
 
-	s.initIntrospect()
 	s.fieldIntrospect.mu.Lock()
 	if v, ok := s.fieldIntrospect.m[key]; ok {
 		s.fieldIntrospect.mu.Unlock()
@@ -100,11 +103,16 @@ func (s *Server) introspectField(ctx context.Context, dbName, field string) (fie
 	return found, found.table != "", nil
 }
 
+// initIntrospect allocates the per-(db, field) introspection and numeric-
+// range caches. Called by the server bootstrap (cmd/tfbp-server/main.go via
+// WarmIntrospectionCache) and the test bootstrap (newTestServer) so request
+// handlers can rely on s.fieldIntrospect / s.fieldNumeric being non-nil.
+// Not safe to call concurrently with handlers — call once before binding the
+// listener. Idempotent: re-running re-allocates empty maps (only the test
+// path exercises this, and it never has a concurrent reader at that point).
 func (s *Server) initIntrospect() {
-	s.introspectInitOnce.Do(func() {
-		s.fieldIntrospect = &fieldIntrospectCache{m: map[[2]string]fieldIntrospection{}}
-		s.fieldNumeric = &fieldNumericRangeCache{m: map[[2]string]fieldNumericRange{}}
-	})
+	s.fieldIntrospect = &fieldIntrospectCache{m: map[[2]string]fieldIntrospection{}}
+	s.fieldNumeric = &fieldNumericRangeCache{m: map[[2]string]fieldNumericRange{}}
 }
 
 // WarmIntrospectionCache populates the per-(db, field) type cache for every
@@ -127,11 +135,9 @@ func (s *Server) WarmIntrospectionCache(ctx context.Context) error {
 	return nil
 }
 
-// kindForDBType classifies a DuckDB type string into one of
-// "categorical" | "numeric" | "bool" using the same buckets the Shiny modal
-// uses. Callers should consult uiKindOverride from field_manifest first;
-// kindForDBType is the fallback when no override is set. The override
-// argument is honored here too so we can keep the lookup centralized.
+// kindForDBType returns the UI kind, honoring uiKindOverride when non-empty.
+// Falls back to a DuckDB type string classification into one of
+// "categorical" | "numeric" | "bool" using the same buckets the Shiny modal uses.
 func kindForDBType(uiKindOverride, dbType string) string {
 	if uiKindOverride != "" {
 		return uiKindOverride
@@ -161,7 +167,6 @@ func kindForDBType(uiKindOverride, dbType string) string {
 // memoizes the result per Server. Returns nil pointers when the table is
 // empty / all-null.
 func (s *Server) computeNumericRange(ctx context.Context, dbName, field, table string) (fieldNumericRange, error) {
-	s.initIntrospect()
 	key := [2]string{dbName, field}
 
 	s.fieldNumeric.mu.Lock()
@@ -317,7 +322,7 @@ func (s *Server) buildDatasetRegulatorsResponse(ctx context.Context, dbName stri
 		Symbol   string `db:"regulator_symbol"`
 	}{}
 	if err := s.Pool.DB.SelectContext(dbCtx, &rows, sqlStr); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("regulators query for %s: %w", dbName, err)
 	}
 	elapsed := time.Since(t0)
 	AddDBMillis(ctx, elapsed.Milliseconds())
@@ -424,7 +429,7 @@ func (s *Server) queryMatrixDiagonal(ctx context.Context, datasets []string, fil
 	for _, dbName := range datasets {
 		sampleCol, err := s.sampleIDField(dbName)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("matrix diagonal %s: %w", dbName, err)
 		}
 		where, whereArgs, err := buildSquirrelWhere(filters[dbName])
 		if err != nil {
@@ -502,11 +507,11 @@ func (s *Server) queryMatrixCross(ctx context.Context, datasets []string, filter
 	for _, pr := range pairs {
 		sampleA, err := s.sampleIDField(pr.a)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("matrix cross %s/%s: %w", pr.a, pr.b, err)
 		}
 		sampleB, err := s.sampleIDField(pr.b)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("matrix cross %s/%s: %w", pr.a, pr.b, err)
 		}
 		// Both INTERSECT arms and both sample-count subqueries need the same
 		// filter args — squirrel emits one copy per call so we pass them four
@@ -714,7 +719,7 @@ func (s *Server) buildBreakdownResponse(ctx context.Context, dbName string, filt
 	// and prefix WHERE/AND as needed. The args are the same in both arms.
 	whereExpr, whereArgs, err := buildSquirrelWhereRaw(filters[dbName])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("breakdown for %s: %w", dbName, err)
 	}
 
 	multiTable := metaTable
@@ -855,7 +860,7 @@ func (s *Server) listColumns(ctx context.Context, table string) (map[string]stru
 		`SELECT column_name FROM information_schema.columns WHERE table_name = ?`,
 		table,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listColumns %s: %w", table, err)
 	}
 	out := make(map[string]struct{}, len(rows))
 	for _, r := range rows {
@@ -888,5 +893,7 @@ func asInt64(v any) (int64, bool) {
 	}
 }
 
-// introspectInitOnce / fieldIntrospect / fieldNumeric live on the Server
-// (see router.go) so the test bootstrap doesn't need any additional plumbing.
+// fieldIntrospect / fieldNumeric live on the Server (see router.go);
+// initIntrospect allocates them and must run before any handler that reads
+// them (the server bootstrap calls WarmIntrospectionCache, which calls
+// initIntrospect; the test bootstrap in testing_helpers_test.go does the same).

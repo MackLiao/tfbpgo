@@ -202,6 +202,19 @@ func TestSelectionMatrix_WithCallingcardsFilter(t *testing.T) {
 	require.Equal(t, int64(6), byName["callingcards"].NSamples) // 7 - 1 (cc_extra)
 	// All 3 regulators still represented (each has at least one YPD sample).
 	require.Equal(t, int64(3), byName["callingcards"].NRegulators)
+
+	// Cross-cell NCommon pins the filter-arm INTERSECT semantics: filtered
+	// callingcards (YPD only — drops cc_extra/SC but keeps all 3 regulators
+	// since each has at least one YPD sample) ∩ unfiltered hackett (3
+	// regulators: YBR289W, YML007W, YGL073W) = 3 common regulators. If the
+	// filter arm ever leaked into / out of the INTERSECT subquery, this
+	// number would drift (e.g. count cc_extra's YBR289W twice, or zero out
+	// the entire arm).
+	require.Len(t, resp.CrossDataset, 1)
+	cross := resp.CrossDataset[0]
+	require.Equal(t, "callingcards__hackett", cross.PairID)
+	require.Equal(t, int64(3), cross.NCommon,
+		"3 regulators common to YPD-filtered callingcards and unfiltered hackett")
 }
 
 // TestSelectionMatrix_FilteredCrossPair guards the cross-dataset matrix

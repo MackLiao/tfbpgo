@@ -50,7 +50,7 @@ func newTestServer(t *testing.T) *Server {
 	wl, err := db.NewWhitelist(mfs)
 	require.NoError(t, err)
 
-	return &Server{
+	srv := &Server{
 		ArtifactVersion: mfs.Artifact.ArtifactVersion,
 		Pool:            pool,
 		Cache:           c,
@@ -58,4 +58,9 @@ func newTestServer(t *testing.T) *Server {
 		Manifests:       mfs,
 		Metrics:         observability.New(),
 	}
+	// Allocate the per-(db, field) introspection caches up front — matches
+	// the server bootstrap's call into WarmIntrospectionCache. Without this,
+	// the first DatasetFields request would NPE on s.fieldIntrospect.
+	srv.initIntrospect()
+	return srv
 }

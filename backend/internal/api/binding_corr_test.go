@@ -244,30 +244,40 @@ func TestBindingScatter_HappyPath_SelfPair(t *testing.T) {
 // ---------- Cache-key canonicalization ----------
 
 // Issue the same logical /binding/scatter request with the query-param keys
-// rearranged. The second response must come from the cache. We can't peek
-// at server-side counters without plumbing, so we assert via the X-Cache
-// response header set by writeCachedJSON.
+// rearranged in the raw URL string. The second response must come from the
+// cache because canonValues sorts/normalizes inputs into a cache key that is
+// independent of the URL's surface ordering. We can't peek at server-side
+// counters without plumbing, so we assert via the X-Cache response header
+// set by writeCachedJSON.
 func TestBindingScatter_CacheCanonicalization(t *testing.T) {
 	s := newTestServer(t)
-	q1 := url.Values{
-		"regulator": []string{"YBR289W"},
-		"pair":      []string{"callingcards,callingcards"},
-		"method":    []string{"pearson"},
-		"col":       []string{"effect"},
-	}
-	rr1 := doGET(t, s, scatterPath(s), q1)
+	path := scatterPath(s)
+
+	// First request: one param ordering in the raw query string.
+	raw1 := "regulator=YBR289W&pair=callingcards%2Ccallingcards&method=pearson&col=effect"
+	rr1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", path+"?"+raw1, nil)
+	s.Routes().ServeHTTP(rr1, req1)
 	require.Equal(t, 200, rr1.Code, rr1.Body.String())
 	require.Equal(t, "MISS", rr1.Header().Get("X-Cache"))
 
-	// Re-issue with the same params in a different URL-encoded ordering by
-	// switching the underlying url.Values iteration; url.Values.Encode sorts
-	// keys deterministically, so we instead vary param value extras that
-	// should be normalized out by canonValues. Easiest: re-issue identically
-	// and prove HIT — same logical request must produce a HIT.
-	rr2 := doGET(t, s, scatterPath(s), q1)
-	require.Equal(t, 200, rr2.Code)
-	require.Equal(t, "HIT", rr2.Header().Get("X-Cache"))
+	// Second request: same logical params, permuted ordering and re-encoded
+	// CSV value. The cache key is built from canonValues (allowlisted keys,
+	// sorted []string values), not from the raw query string, so the second
+	// must HIT despite the different surface form.
+	raw2 := "col=effect&method=pearson&pair=callingcards,callingcards&regulator=YBR289W"
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", path+"?"+raw2, nil)
+	s.Routes().ServeHTTP(rr2, req2)
+	require.Equal(t, 200, rr2.Code, rr2.Body.String())
+	require.Equal(t, "HIT", rr2.Header().Get("X-Cache"),
+		"permuted-param request must hit the cache (canonicalization)")
 	require.Equal(t, rr1.Body.String(), rr2.Body.String())
+
+	// Sanity: ensure the two raw query strings actually differ — otherwise
+	// we'd be testing the trivial identical-request HIT case.
+	require.NotEqual(t, raw1, raw2,
+		"raw query strings must differ; otherwise we aren't proving canonicalization")
 }
 
 // ---------- stripRegulatorFilter unit test ----------

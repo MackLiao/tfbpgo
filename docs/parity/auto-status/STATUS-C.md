@@ -20,7 +20,7 @@ before starting, append a section before finishing.
 | C4  | Select Datasets — schema-v4-dependent features     | DONE        | rows 1/3/4/9/28 closed; cascade narrowing (row 19) deferred to polish.md |
 | C5  | Select Datasets — remaining UX features            | DONE        | apply-to-all + sidebar search/collapse + from_pair + staged Apply (filter modal still writes URL directly per audit §8) |
 | C6  | Export endpoint + tarball UI                       | DONE        | /api/v/{v}/export streams tar.gz; sidebar button on Select |
-| C7  | Multi-review nice-to-haves cleanup                 | PENDING     | independent; small surface across many files |
+| C7  | Multi-review nice-to-haves cleanup                 | DONE        | 8 items across data_prep + backend + openapi + tests |
 | C8  | Plotly bundle recovery                             | DONE        | dropped `bar` post-B1; 523→514 KB gzipped |
 | C9  | Performance — corr/matrix → UNION-ALL              | PENDING     | independent; benchmark gated |
 
@@ -300,4 +300,53 @@ before starting, append a section before finishing.
   frontend/src/routes/Select.tsx.
 - Audit rows closed: docs/parity/select_datasets.md rows 35, 36.
 - Commit: <pending>
+- Status: DONE.
+
+### 2026-05-22 — implementer C7
+Multi-review nice-to-haves cleanup. 8 items in one commit:
+
+1. CHECK constraints on `field_manifest.role`, `ui_kind_override`,
+   `numeric_level_sort` in `data_prep/src/data_prep/manifests.py` and
+   `build_fixture.py`. Fixture regenerated via build_fixture.
+2. Non-fatal `slog.Warn("startup_topn_config_missing", ...)` in
+   `AssertHandlerMapsCoverManifest` for binding/perturbation datasets
+   absent from `bindingConfigs`/`pertConfigs`.
+3. `fmt.Errorf` context wrapping at error-propagating sites in
+   `binding_corr.go` (`buildCorrResponse` per-pair, `buildScatterResponse`)
+   and `select_datasets.go` (`buildDatasetRegulatorsResponse`,
+   `queryMatrixDiagonal`, `queryMatrixCross`, `buildBreakdownResponse`,
+   `listColumns`).
+4. OpenAPI `description:` added to `CorrPair.{dbA,dbB,colB,points}`,
+   `ScatterPoint.{targetLocusTag,valA,valB}`,
+   `ScatterResponse.{regulator,dbA,dbB,colA,colB}` (note: openapi
+   already absorbed into the C6 export commit; types regen confirmed
+   no shape change beyond descriptions).
+5. `TestBindingScatter_CacheCanonicalization` rewritten to construct two
+   raw query strings with permuted key order (and a comma-encoded
+   variant) and assert the second request HITs the cache. Added
+   `require.NotEqual(raw1, raw2)` so the test cannot silently regress to
+   the identical-request HIT case.
+6. `kindForDBType` comment simplified to "returns the UI kind, honoring
+   uiKindOverride when non-empty."
+7. `initIntrospect` refactor: `sync.Once` removed from `Server`;
+   initialization runs eagerly in `WarmIntrospectionCache` (server
+   bootstrap) and in `newTestServer` (test bootstrap). The per-handler
+   `s.initIntrospect()` calls inside `introspectField` /
+   `computeNumericRange` are gone — both methods now rely on the
+   bootstrap-time allocation.
+8. `TestSelectionMatrix_WithCallingcardsFilter` now pins
+   `cross.NCommon == 3` (3 regulators common to YPD-filtered callingcards
+   and unfiltered hackett).
+
+- Files: backend/internal/api/{startup_assert,binding_corr,select_datasets,router}.go,
+  backend/internal/api/{binding_corr_test,select_datasets_test,testing_helpers_test}.go,
+  data_prep/src/data_prep/{manifests,build_fixture}.py,
+  tests/fixtures/tfbp_test.duckdb (regenerated),
+  docs/parity/auto-status/polish.md (8 RESOLVED stamps).
+- Verify: `cd backend && go build ./... && go test ./... -count=1 -race` ✓
+  (all packages green); `cd data_prep && pytest -x` ✓ (60 passed);
+  `cd frontend && pnpm types:gen && pnpm exec tsc --noEmit &&
+  pnpm exec vitest run` ✓ (34 tests passed); `make parity` ✓ 15/15
+  against a fresh local server.
+- Commit: 4135f8f
 - Status: DONE.
