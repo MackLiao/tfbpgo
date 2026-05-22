@@ -37,6 +37,16 @@ func NewWhitelist(m *Manifests) (*Whitelist, error) {
 		if !SafeIdentRE.MatchString(d.DBName) {
 			return nil, fmt.Errorf("manifest contains unsafe db_name: %q", d.DBName)
 		}
+		// effect_col / pvalue_col land in schema_version=3 and are
+		// interpolated into SQL by buildResponsiveExpr. Re-verify both
+		// here so an upstream compromise can't slip an injection
+		// payload through the new manifest columns.
+		if d.EffectCol != "" && !SafeIdentRE.MatchString(d.EffectCol) {
+			return nil, fmt.Errorf("manifest contains unsafe effect_col for %q: %q", d.DBName, d.EffectCol)
+		}
+		if d.PValueCol != "" && !SafeIdentRE.MatchString(d.PValueCol) {
+			return nil, fmt.Errorf("manifest contains unsafe pvalue_col for %q: %q", d.DBName, d.PValueCol)
+		}
 	}
 	for _, f := range m.Fields {
 		if !SafeIdentRE.MatchString(f.DBName) || !SafeIdentRE.MatchString(f.Field) {

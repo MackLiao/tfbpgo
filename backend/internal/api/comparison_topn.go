@@ -313,23 +313,31 @@ func (s *Server) buildOnePair(
 func buildResponsiveExpr(s *Server, pDB string, effThr, pvalThr float64, args *[]any) string {
 	col := ""
 	pvalCol := ""
-	// s.Whitelist may be nil in narrowly-scoped unit tests that only
-	// exercise SQL-rendering invariants (e.g. placeholder count). In
-	// production code paths the request handler always populates it
-	// via newServer().
-	if s != nil && s.Whitelist != nil {
-		if row, ok := s.Whitelist.Dataset(pDB); ok {
-			col = row.EffectCol
-			pvalCol = row.PValueCol
-		}
+	// In production code paths the request handler always populates
+	// s.Whitelist via newServer(). Tests must wire a real Whitelist via
+	// newTestServer / newServerWithFixtureWhitelist; we deliberately do
+	// not nil-guard here so a future bare-Server test fails loudly
+	// instead of silently taking the responsive-column fallback.
+	if row, ok := s.Whitelist.Dataset(pDB); ok {
+		col = row.EffectCol
+		pvalCol = row.PValueCol
 	}
 	if col != "" && pvalCol != "" {
 		*args = append(*args, effThr, pvalThr)
-		return fmt.Sprintf("CASE WHEN ABS(p.%s) > ? AND p.%s < ? THEN 1 ELSE 0 END", col, pvalCol)
+		// whitelistedIdent re-verifies col / pvalCol against SafeIdentRE
+		// at SQL-interpolation time. This is defense in depth on top of
+		// the manifest-load gate in db.NewWhitelist (F1).
+		return fmt.Sprintf(
+			"CASE WHEN ABS(p.%s) > ? AND p.%s < ? THEN 1 ELSE 0 END",
+			whitelistedIdent(col), whitelistedIdent(pvalCol),
+		)
 	}
 	if col != "" {
 		*args = append(*args, effThr)
-		return fmt.Sprintf("CASE WHEN ABS(p.%s) > ? THEN 1 ELSE 0 END", col)
+		return fmt.Sprintf(
+			"CASE WHEN ABS(p.%s) > ? THEN 1 ELSE 0 END",
+			whitelistedIdent(col),
+		)
 	}
 	return "CAST(p.responsive AS INTEGER)"
 }

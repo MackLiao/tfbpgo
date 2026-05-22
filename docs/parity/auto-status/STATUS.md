@@ -51,3 +51,14 @@ Read before working, append a section before finishing.
 - Commit: 1976f59
 - Files: 15 (incl. regenerated fixture binary).
 - Status: DONE.
+
+### 2026-05-22 00:20 PDT — implementer A1 multi-review fixes
+- SECURITY: validated effect_col/pvalue_col via SafeIdentRE in NewWhitelist;
+  wrapped in whitelistedIdent in buildResponsiveExpr (defense in depth).
+- Removed nil-Whitelist fallback in buildResponsiveExpr; placeholder-count
+  tests now use a real fixture Whitelist; added new test asserting two-term
+  CASE for kemmeren and one-term CASE for hackett.
+- CLAUDE.md stale follow-up removed; schema_version reference updated.
+- Tests: backend go test ./... ✓, data_prep pytest ✓, parity ✓.
+- Commit: 923b806
+- Status: A1 multi-review fixes DONE.

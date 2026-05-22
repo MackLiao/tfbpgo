@@ -9,10 +9,40 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/queries"
 	"github.com/stretchr/testify/require"
 )
+
+// newServerWithFixtureWhitelist returns a Server wired with an in-memory
+// Whitelist covering every dataset referenced by bindingConfigs /
+// pertConfigs, populated with their production effect_col / pvalue_col.
+// Used by the SQL-rendering tests that need a real Whitelist but do not
+// need to open the DuckDB fixture (which only contains callingcards +
+// hackett rows in dataset_manifest).
+func newServerWithFixtureWhitelist(t *testing.T) *Server {
+	t.Helper()
+	m := &db.Manifests{
+		Datasets: []db.DatasetRow{
+			// binding
+			{DBName: "callingcards", DataType: "binding", EffectCol: "callingcards_enrichment", PValueCol: "poisson_pval"},
+			{DBName: "harbison", DataType: "binding", EffectCol: "effect", PValueCol: "pvalue"},
+			{DBName: "rossi", DataType: "binding", EffectCol: "enrichment", PValueCol: "poisson_pval"},
+			{DBName: "chec_m2025", DataType: "binding", EffectCol: "enrichment", PValueCol: "poisson_pval"},
+			// perturbation
+			{DBName: "degron", DataType: "perturbation", EffectCol: "log2FoldChange", PValueCol: "pvalue"},
+			{DBName: "hughes_overexpression", DataType: "perturbation", EffectCol: "mean_norm_log2fc", PValueCol: ""},
+			{DBName: "hughes_knockout", DataType: "perturbation", EffectCol: "mean_norm_log2fc", PValueCol: ""},
+			{DBName: "kemmeren", DataType: "perturbation", EffectCol: "Madj", PValueCol: "pval"},
+			{DBName: "hackett", DataType: "perturbation", EffectCol: "log2_shrunken_timecourses", PValueCol: ""},
+			{DBName: "hu_reimand", DataType: "perturbation", EffectCol: "effect", PValueCol: "pval"},
+		},
+	}
+	wl, err := db.NewWhitelist(m)
+	require.NoError(t, err)
+	return &Server{Manifests: m, Whitelist: wl}
+}
 
 func TestComparisonTopN_RejectsUnknownBindingDataset(t *testing.T) {
 	s := newTestServer(t)
@@ -55,7 +85,7 @@ func stripSQLComments(s string) string {
 // review, the rendered SQL has exactly as many `?` as there are args.
 func TestComparisonTopN_PlaceholderCountInvariant_RegressionPair(t *testing.T) {
 	tmpl := queries.Get("comparison/topn.sql")
-	srv := &Server{}
+	srv := newServerWithFixtureWhitelist(t)
 
 	pairs := []struct {
 		binding, pert string
@@ -87,7 +117,7 @@ func TestComparisonTopN_PlaceholderCountInvariant_RegressionPair(t *testing.T) {
 // dropped.
 func TestComparisonTopN_HarbisonAppliesFilters(t *testing.T) {
 	tmpl := queries.Get("comparison/topn.sql")
-	srv := &Server{}
+	srv := newServerWithFixtureWhitelist(t)
 	bcfg := bindingConfigs["harbison"]
 	pcfg := pertConfigs["kemmeren"]
 
@@ -127,7 +157,7 @@ func TestBuildSquirrelWhereRaw_RejectsUnknownType(t *testing.T) {
 
 func TestComparisonTopN_PlaceholderCountInvariant_AllPairs(t *testing.T) {
 	tmpl := queries.Get("comparison/topn.sql")
-	srv := &Server{}
+	srv := newServerWithFixtureWhitelist(t)
 
 	bindings := []string{"callingcards", "harbison", "chec_m2025", "rossi"}
 	perts := []string{"hackett", "hughes_overexpression", "hughes_knockout", "hu_reimand", "kemmeren", "degron"}
@@ -147,4 +177,62 @@ func TestComparisonTopN_PlaceholderCountInvariant_AllPairs(t *testing.T) {
 				b, p, got, len(args))
 		}
 	}
+}
+
+// TestBuildResponsiveExpr_TwoTermCaseForKemmeren pins the production
+// two-term CASE for a perturbation dataset that carries both effect_col
+// and pvalue_col in dataset_manifest (kemmeren: Madj / pval).
+func TestBuildResponsiveExpr_TwoTermCaseForKemmeren(t *testing.T) {
+	srv := newServerWithFixtureWhitelist(t)
+	args := []any{}
+	expr := buildResponsiveExpr(srv, "kemmeren", 0.5, 0.05, &args)
+	require.Equal(t,
+		"CASE WHEN ABS(p.Madj) > ? AND p.pval < ? THEN 1 ELSE 0 END",
+		expr,
+	)
+	require.Equal(t, []any{0.5, 0.05}, args)
+}
+
+// TestBuildResponsiveExpr_OneTermCaseForHackett pins the one-term
+// branch: hackett has effect_col but empty pvalue_col.
+func TestBuildResponsiveExpr_OneTermCaseForHackett(t *testing.T) {
+	srv := newServerWithFixtureWhitelist(t)
+	args := []any{}
+	expr := buildResponsiveExpr(srv, "hackett", 0.5, 0.05, &args)
+	require.Equal(t,
+		"CASE WHEN ABS(p.log2_shrunken_timecourses) > ? THEN 1 ELSE 0 END",
+		expr,
+	)
+	require.Equal(t, []any{0.5}, args)
+}
+
+// TestBuildResponsiveExpr_UnknownDatasetFallback covers the final
+// branch — an unknown pDB returns the responsive-column fallback and
+// appends no args.
+func TestBuildResponsiveExpr_UnknownDatasetFallback(t *testing.T) {
+	srv := newServerWithFixtureWhitelist(t)
+	args := []any{}
+	expr := buildResponsiveExpr(srv, "no_such_dataset", 0.5, 0.05, &args)
+	require.Equal(t, "CAST(p.responsive AS INTEGER)", expr)
+	require.Empty(t, args)
+}
+
+// TestComparisonTopN_RenderedTwoTermCasePresent locks the rendered SQL
+// for callingcards × kemmeren — the topn template should embed the
+// two-term CASE with `Madj` and `pval` after F2 wraps both via
+// whitelistedIdent (which returns unquoted-but-safe identifiers).
+func TestComparisonTopN_RenderedTwoTermCasePresent(t *testing.T) {
+	tmpl := queries.Get("comparison/topn.sql")
+	srv := newServerWithFixtureWhitelist(t)
+	bcfg := bindingConfigs["callingcards"]
+	pcfg := pertConfigs["kemmeren"]
+	rendered, _, err := srv.buildOnePair(
+		tmpl, "callingcards", "kemmeren", bcfg, pcfg,
+		25, 0.0, 0.05, domain.FiltersByDB{},
+	)
+	require.NoError(t, err)
+	require.Contains(t,
+		rendered,
+		"CASE WHEN ABS(p.Madj) > ? AND p.pval < ? THEN 1 ELSE 0 END",
+	)
 }

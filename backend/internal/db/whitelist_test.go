@@ -71,3 +71,38 @@ func TestNewWhitelist_RejectsUnsafeIdent(t *testing.T) {
 		})
 	}
 }
+
+// TestNewWhitelist_RejectsUnsafeEffectCol locks the v3 gate: effect_col
+// is interpolated into SQL by buildResponsiveExpr, so a malicious value
+// in the manifest must be rejected at startup.
+func TestNewWhitelist_RejectsUnsafeEffectCol(t *testing.T) {
+	_, err := NewWhitelist(&Manifests{
+		Datasets: []DatasetRow{
+			{DBName: "kemmeren", EffectCol: "x; DROP TABLE foo; --", PValueCol: "pval"},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsafe effect_col")
+}
+
+// TestNewWhitelist_RejectsUnsafePValueCol — same gate for pvalue_col.
+func TestNewWhitelist_RejectsUnsafePValueCol(t *testing.T) {
+	_, err := NewWhitelist(&Manifests{
+		Datasets: []DatasetRow{
+			{DBName: "kemmeren", EffectCol: "Madj", PValueCol: "pval'); DROP TABLE foo; --"},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsafe pvalue_col")
+}
+
+// TestNewWhitelist_AllowsEmptyPValueCol — hackett/hughes_* legitimately
+// have an empty pvalue_col, which must NOT be rejected.
+func TestNewWhitelist_AllowsEmptyPValueCol(t *testing.T) {
+	_, err := NewWhitelist(&Manifests{
+		Datasets: []DatasetRow{
+			{DBName: "hackett", EffectCol: "log2_shrunken_timecourses", PValueCol: ""},
+		},
+	})
+	require.NoError(t, err)
+}
