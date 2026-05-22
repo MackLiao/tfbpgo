@@ -83,10 +83,13 @@ export function ComparisonBoxplot({ resp, facetBy }: ComparisonBoxplotProps) {
     const x0 = (colWidth + gap) * i;
     const x1 = x0 + colWidth;
     const key = i === 0 ? "xaxis" : `xaxis${i + 1}`;
+    // All subplots anchor to a single shared y-axis (Plotly's shared-y
+    // layout — equivalent to subplots.make_subplots(shared_yaxes=True)).
+    // Horizontal partitioning happens via the `domain` field above.
     layout[key] = {
       domain: [x0, x1],
       showticklabels: false,
-      anchor: i === 0 ? "y" : "y",
+      anchor: "y",
     };
   }
 
