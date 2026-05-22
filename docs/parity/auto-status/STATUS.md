@@ -166,7 +166,7 @@ Read before working, append a section before finishing.
   Go parity harness `tests/parity` ✓; snapshot parity `run_parity.sh` ✓
   (15/15 URLs pass; 4 untouched A3-scatter recordings deferred per polish.md).
   Frontend `pnpm types:gen` + `pnpm exec tsc --noEmit` ✓.
-- Commit: pending
+- Commit: 292aaac
 - Status: DONE.
 
 ### 2026-05-22 00:54 PDT — implementer A3 multi-review fixes
