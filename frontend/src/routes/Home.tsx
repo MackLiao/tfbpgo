@@ -1,4 +1,37 @@
 import { Link } from "react-router-dom";
+import { Card } from "@/components/ui/card";
+
+interface FeatureCardProps {
+  title: string;
+  to: string;
+  description: string;
+  image?: { src: string; alt: string };
+}
+
+function FeatureCard({ title, to, description, image }: FeatureCardProps) {
+  return (
+    <Card className="mb-3">
+      <div className="flex items-center gap-4">
+        {image ? (
+          <img
+            src={image.src}
+            alt={image.alt}
+            className="flex-shrink-0"
+            style={{ width: "100px", height: "100px", objectFit: "contain" }}
+          />
+        ) : null}
+        <div>
+          <div className="mb-1 text-lg font-bold">
+            <Link to={to} className="text-wine hover:text-wine-hover">
+              {title}
+            </Link>
+          </div>
+          <div className="text-sm text-slate-700">{description}</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 export function Home() {
   return (
@@ -19,36 +52,32 @@ export function Home() {
       </p>
 
       <h2>Getting Started</h2>
-      <p>The links below take you to pages for selecting and comparing datasets.</p>
+      <p>The tabs above take you to pages for selecting and comparing datasets.</p>
 
-      <ul>
-        <li>
-          <Link to="/select">
-            <strong>Dataset selection</strong>
-          </Link>
-          {" — "}Begin here to choose and filter the datasets you want to analyse, then navigate
-          to the other pages to explore the results.
-        </li>
-        <li>
-          <Link to="/binding">
-            <strong>Binding</strong>
-          </Link>
-          {" — "}Compare TF binding targets in the selected binding datasets.
-        </li>
-        <li>
-          <Link to="/perturbation">
-            <strong>Perturbation</strong>
-          </Link>
-          {" — "}Compare transcriptional responses to TF perturbations in the selected
-          perturbation datasets.
-        </li>
-        <li>
-          <Link to="/comparison">
-            <strong>Comparison</strong>
-          </Link>
-          {" — "}Compare selected binding datasets to selected perturbation datasets.
-        </li>
-      </ul>
+      <div className="not-prose mt-3">
+        <FeatureCard
+          title="Dataset selection"
+          to="/select"
+          description="Begin here to choose and filter the datasets you want to analyse, then navigate to the other tabs to explore the results."
+        />
+        <FeatureCard
+          title="Binding"
+          to="/binding"
+          description="Compare TF binding targets in the selected binding datasets."
+          image={{ src: "/binding.png", alt: "Binding diagram" }}
+        />
+        <FeatureCard
+          title="Perturbation"
+          to="/perturbation"
+          description="Compare transcriptional responses to TF perturbations in the selected perturbation datasets."
+          image={{ src: "/perturbation.png", alt: "Perturbation diagram" }}
+        />
+        <FeatureCard
+          title="Comparison"
+          to="/comparison"
+          description="Compare selected binding datasets to selected perturbation datasets."
+        />
+      </div>
     </article>
   );
 }

@@ -15,7 +15,7 @@ before starting, append a section before finishing.
 | ID  | Title                                              | Status      | Notes |
 |-----|----------------------------------------------------|-------------|-------|
 | C1  | schema_version=4 — unlock deferred items           | DONE        | foundation: unlocks default-active, description tooltips, cascade narrowing, condition-cols hover, FIELD_TYPE_OVERRIDES via artifact |
-| C2  | Home module rebuild                                | PENDING     | independent; cosmetic; assets need to land in `frontend/public/` |
+| C2  | Home module rebuild                                | DONE        | feature cards + binding/perturbation imgs + wine pill nav + 3-line logo + github badge |
 | C3  | Binding/Perturbation P1 polish                     | PENDING     | depends on C1 (condition_cols); narrow RegulatorPicker independent |
 | C4  | Select Datasets — schema-v4-dependent features     | PENDING     | depends on C1 |
 | C5  | Select Datasets — remaining UX features            | PENDING     | depends on C4 (apply-to-all, sidebar) |
@@ -62,4 +62,32 @@ before starting, append a section before finishing.
   recovery (drop `heatmap`) deferred until `SelectionMatrix` migrates.
 - Tests: `pnpm exec tsc --noEmit` ✓, `pnpm exec vitest run` ✓ (24/24),
   `pnpm exec vite build` ✓.
+- Status: DONE.
+
+### 2026-05-22 — implementer C2
+- Home module rebuilt to match Shiny `modules/home/ui.py:65-115`:
+  Bootstrap-style feature cards via `Card` from `ui/card.tsx`; bold
+  wine-red link titles; 100x100 contain-fit images on Binding +
+  Perturbation cards. Lead-in re-aligned to "The tabs above…" per
+  Shiny copy.
+- Assets `binding.png` + `perturbation.png` copied from
+  `reference/tfbpshiny/www/` into `frontend/public/`. Vite emits them
+  to `backend/static/dist/` as static root assets (verified after
+  build); zero JS bundle impact.
+- `Nav.tsx`: NavLink retained; replaced text-blue active styling with
+  wine-red pill chrome (`bg-wine #722F37` active, `bg-slate-100`
+  hover, `rounded-md px-4 py-2`). Added 3-line "TF / Binding &
+  Perturbation / Explorer" logo on the left and a GitHub badge
+  (octocat SVG + repo label) on the right, hidden below the `sm`
+  breakpoint to keep mobile tidy.
+- `tailwind.config.ts`: extended `colors.wine = { DEFAULT, hover,
+  active }` from Shiny `--color-nav*` CSS variables.
+- Files: frontend/src/routes/Home.tsx, frontend/src/components/Nav.tsx,
+  frontend/tailwind.config.ts, frontend/public/binding.png,
+  frontend/public/perturbation.png.
+- Tests: `pnpm exec tsc --noEmit` ✓, `pnpm exec vitest run` ✓ (24/24
+  passed), `pnpm exec vite build` ✓ (plotly chunk steady at 514 kB
+  gzipped; PNGs land in dist root).
+- Acceptance: docs/parity/home.md §2 P1 rows 6–9 and 13 closed; P2
+  rows 14 (GitHub badge) and 15 (3-line logo) also addressed.
 - Status: DONE.
