@@ -14,13 +14,24 @@
 //            full cascade narrowing deferred (needs runtime joins — see
 //            docs/parity/auto-status/polish.md C4 entry).
 //
-// Still deferred (see polish.md): "Apply to all datasets" toggle (row 12),
-// runtime cascade narrowing (row 19), from_pair annotation (rows 15/30/31).
+// Task C5 adds:
+//  - rows 12, 14: per-field "Apply to all datasets" switch in the modal,
+//                 shown only for categorical/numeric fields that exist
+//                 in every active dataset's field manifest. Booleans are
+//                 intentionally excluded — "apply to all" rarely matches
+//                 user intent for booleans (the Shiny code in
+//                 ui.py:63-69 also restricts apply-to-all to common
+//                 char-typed fields).
+//  - rows 15, 30, 31: when the current filter for a field carries a
+//                 `fromPair` annotation, surface an inline cleanup link
+//                 that clears the filter outright.
 //
 // State model: this component holds a `pending` map locally and commits it
 // to URL via `onApply` only when the user clicks "Apply Filters". The page
-// owns the URL `?filters=` writeback; we just hand back the next per-field
-// FilterSpec map for this dataset.
+// owns the URL `?filters=` writeback; we hand back the next per-field
+// FilterSpec map for this dataset PLUS the set of field names that the
+// user toggled "apply to all" for, so the page can mirror those into
+// every active dataset's filter block.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -30,9 +41,21 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sortLevels } from "@/lib/sort-levels";
+import { readFromPair } from "@/lib/filter-spec";
 
 type FilterSpec = Schemas["FilterSpec"];
 type FieldMeta = Schemas["FieldMeta"];
+
+export interface ApplyResult {
+  /** Per-field filter map for THIS dataset (post-apply). */
+  next: Record<string, FilterSpec>;
+  /**
+   * Subset of fields the user marked "apply to all datasets" — the page
+   * mirrors these into every active dataset's filter block that has the
+   * matching field. Empty when the user didn't enable any toggle.
+   */
+  applyToAllFields: string[];
+}
 
 export interface DatasetFilterModalProps {
   open: boolean;
@@ -41,11 +64,17 @@ export interface DatasetFilterModalProps {
   displayName: string;
   /** The current (committed) filters for this dataset; null = no filters set. */
   currentFilters: Record<string, FilterSpec> | null;
-  onApply: (next: Record<string, FilterSpec>) => void;
+  /**
+   * Set of field names that appear in every active dataset's field
+   * manifest. Only these are eligible for the "Apply to all" toggle
+   * (rows 12, 14). Empty/undefined disables the toggle entirely.
+   */
+  commonFields?: Set<string>;
+  onApply: (result: ApplyResult) => void;
 }
 
 export function DatasetFilterModal(props: DatasetFilterModalProps) {
-  const { open, onClose, db, displayName, currentFilters, onApply } = props;
+  const { open, onClose, db, displayName, currentFilters, commonFields, onApply } = props;
   const dialogRef = useRef<HTMLDialogElement | null>(null);
 
   // Sync the <dialog>'s native modal state with the `open` prop.
@@ -71,6 +100,7 @@ export function DatasetFilterModal(props: DatasetFilterModalProps) {
           db={db}
           displayName={displayName}
           currentFilters={currentFilters}
+          commonFields={commonFields ?? new Set()}
           onApply={onApply}
           onClose={onClose}
         />
@@ -83,11 +113,19 @@ interface ModalBodyProps {
   db: string;
   displayName: string;
   currentFilters: Record<string, FilterSpec> | null;
-  onApply: (next: Record<string, FilterSpec>) => void;
+  commonFields: Set<string>;
+  onApply: (result: ApplyResult) => void;
   onClose: () => void;
 }
 
-function ModalBody({ db, displayName, currentFilters, onApply, onClose }: ModalBodyProps) {
+function ModalBody({
+  db,
+  displayName,
+  currentFilters,
+  commonFields,
+  onApply,
+  onClose,
+}: ModalBodyProps) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: qk.datasetFields(db),
     queryFn: () => api.datasetFields({ db }),
@@ -98,6 +136,10 @@ function ModalBody({ db, displayName, currentFilters, onApply, onClose }: ModalB
     [currentFilters],
   );
   const [pending, setPending] = useState<Record<string, FilterSpec>>(initial);
+  // Apply-to-all toggle state, keyed by field name. Only meaningful for
+  // fields in `commonFields`. Reset to {} on each modal open (the modal
+  // is re-mounted via `{open && <ModalBody />}` upstream).
+  const [applyToAll, setApplyToAll] = useState<Record<string, boolean>>({});
 
   // If the parent flips currentFilters mid-modal (e.g. URL changed externally),
   // rehydrate pending from it.
@@ -114,8 +156,16 @@ function ModalBody({ db, displayName, currentFilters, onApply, onClose }: ModalB
     });
   };
 
-  const onReset = (): void => setPending({ ...(currentFilters ?? {}) });
-  const onApplyClick = (): void => onApply(pending);
+  const onReset = (): void => {
+    setPending({ ...(currentFilters ?? {}) });
+    setApplyToAll({});
+  };
+  const onApplyClick = (): void => {
+    const applyToAllFields = Object.entries(applyToAll)
+      .filter(([, on]) => on === true)
+      .map(([f]) => f);
+    onApply({ next: pending, applyToAllFields });
+  };
 
   return (
     <div className="flex max-h-[80vh] flex-col">
@@ -146,11 +196,23 @@ function ModalBody({ db, displayName, currentFilters, onApply, onClose }: ModalB
         )}
         {data && data.fields.length > 0 && (
           <ul className="space-y-5">
-            {data.fields.map((f) => (
-              <li key={f.field}>
-                <FieldControl field={f} spec={pending[f.field] ?? null} onChange={(s) => setSpec(f.field, s)} />
-              </li>
-            ))}
+            {data.fields.map((f) => {
+              const isCommon = commonFields.has(f.field) && f.kind !== "bool";
+              return (
+                <li key={f.field}>
+                  <FieldControl
+                    field={f}
+                    spec={pending[f.field] ?? null}
+                    onChange={(s) => setSpec(f.field, s)}
+                    applyToAllEligible={isCommon}
+                    applyToAll={applyToAll[f.field] === true}
+                    onApplyToAllChange={(on) =>
+                      setApplyToAll((prev) => ({ ...prev, [f.field]: on }))
+                    }
+                  />
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -173,9 +235,54 @@ interface FieldControlProps {
   field: FieldMeta;
   spec: FilterSpec | null;
   onChange: (next: FilterSpec | null) => void;
+  applyToAllEligible: boolean;
+  applyToAll: boolean;
+  onApplyToAllChange: (on: boolean) => void;
 }
 
-function FieldControl({ field, spec, onChange }: FieldControlProps) {
+function FieldControl(props: FieldControlProps) {
+  const { field, spec, onChange, applyToAllEligible, applyToAll, onApplyToAllChange } =
+    props;
+
+  // C5 (rows 15, 30, 31): when the current filter carries a `fromPair`
+  // annotation (set by CommonRegulatorsModal), surface an inline link
+  // that clears the filter and unhighlights the matrix cell.
+  const fromPair = readFromPair(spec);
+
+  const header = (
+    <>
+      <FieldLabel field={field} />
+      {applyToAllEligible && (
+        <label
+          className="mt-1 flex items-center gap-2 text-xs text-slate-600"
+          data-testid={`apply-to-all-${field.field}`}
+        >
+          <Checkbox
+            id={`apply-to-all-cb-${field.field}`}
+            checked={applyToAll}
+            onChange={(e) => onApplyToAllChange(e.currentTarget.checked)}
+          />
+          <span>Apply this filter to all active datasets that have this field</span>
+        </label>
+      )}
+      {fromPair && (
+        <p
+          className="mt-1 text-xs text-amber-700"
+          data-testid={`from-pair-${field.field}`}
+        >
+          These regulators came from the {fromPair[0]} ∩ {fromPair[1]} pair.{" "}
+          <button
+            type="button"
+            className="underline hover:text-amber-900"
+            onClick={() => onChange(null)}
+          >
+            Click to clear.
+          </button>
+        </p>
+      )}
+    </>
+  );
+
   if (field.kind === "categorical") {
     // C4: honor numericLevelSort (e.g. hackett.time renders "10" < "45" < "90"
     // rather than "10" < "45" < "90" risking lex-mangling once we have 3+ digits).
@@ -202,7 +309,7 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
     };
     return (
       <div>
-        <FieldLabel field={field} />
+        {header}
         {levels.length === 0 ? (
           <p className="text-xs text-slate-500">No cached levels for this field.</p>
         ) : (
@@ -252,7 +359,7 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
     };
     return (
       <div>
-        <FieldLabel field={field} />
+        {header}
         <div className="mt-1 flex items-center gap-3 text-xs text-slate-700">
           <span>
             min: <span className="font-mono">{cur[0]}</span>
@@ -293,7 +400,8 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
     );
   }
 
-  // bool
+  // bool — intentionally no Apply-to-all UI (see comment at the
+  // applyToAllEligible filter in ModalBody above).
   const id = `flt-${field.field}`;
   const checked = spec && spec.type === "bool" ? Boolean(spec.value) : false;
   const isSet = spec !== null;
@@ -320,6 +428,21 @@ function FieldControl({ field, spec, onChange }: FieldControlProps) {
           </Button>
         )}
       </div>
+      {fromPair && (
+        <p
+          className="mt-1 text-xs text-amber-700"
+          data-testid={`from-pair-${field.field}`}
+        >
+          These regulators came from the {fromPair[0]} ∩ {fromPair[1]} pair.{" "}
+          <button
+            type="button"
+            className="underline hover:text-amber-900"
+            onClick={() => onChange(null)}
+          >
+            Click to clear.
+          </button>
+        </p>
+      )}
     </div>
   );
 }

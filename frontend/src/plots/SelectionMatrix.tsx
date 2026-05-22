@@ -23,10 +23,26 @@ export interface SelectionMatrixProps {
   onOffDiagonalClick: (dbA: string, dbB: string) => void;
   /** Optional — when provided, diagonal cells become clickable (audit row 28). */
   onDiagonalClick?: (db: string) => void;
+  /**
+   * C5 (rows 30, 31): when a `from_pair` regulator filter is active, the
+   * matrix cell for the originating pair (sorted db_names) gets a highlight
+   * color; clicking it fires `onHighlightedClear` instead of re-opening
+   * the common-regulators modal.
+   */
+  highlightedPair?: [string, string] | null;
+  onHighlightedClear?: () => void;
 }
 
 export function SelectionMatrix(props: SelectionMatrixProps) {
-  const { datasets, filters, datasetDisplay, onOffDiagonalClick, onDiagonalClick } = props;
+  const {
+    datasets,
+    filters,
+    datasetDisplay,
+    onOffDiagonalClick,
+    onDiagonalClick,
+    highlightedPair,
+    onHighlightedClear,
+  } = props;
 
   // Hook order must stay stable across renders — `enabled` gates the fetch
   // when there are no active datasets rather than early-returning above it.
@@ -146,16 +162,38 @@ export function SelectionMatrix(props: SelectionMatrixProps) {
                   // Upper triangle: clickable common-regulators cell.
                   const [a, b] = rowDb <= colDb ? [rowDb, colDb] : [colDb, rowDb];
                   const c = cross.get(`${a}__${b}`);
+                  // C5: highlight + click-to-clear when this is the pair
+                  // that produced the active `from_pair` filter.
+                  const isHighlighted =
+                    !!highlightedPair &&
+                    ((highlightedPair[0] === a && highlightedPair[1] === b) ||
+                      (highlightedPair[0] === b && highlightedPair[1] === a));
+                  const cellCls = isHighlighted
+                    ? "border border-amber-400 bg-amber-100 px-0 py-0 text-xs"
+                    : "border border-slate-200 px-0 py-0 text-xs";
+                  const btnCls = isHighlighted
+                    ? "block w-full px-3 py-2 text-left font-mono text-amber-900 hover:bg-amber-200"
+                    : "block w-full px-3 py-2 text-left font-mono text-slate-800 hover:bg-slate-100";
+                  const onClick =
+                    isHighlighted && onHighlightedClear
+                      ? onHighlightedClear
+                      : () => onOffDiagonalClick(rowDb, colDb);
                   return (
                     <td
                       key={colDb}
-                      className="border border-slate-200 px-0 py-0 text-xs"
+                      className={cellCls}
                       data-testid={`cell-${rowDb}-${colDb}`}
+                      data-highlighted={isHighlighted ? "true" : undefined}
                     >
                       <button
                         type="button"
-                        onClick={() => onOffDiagonalClick(rowDb, colDb)}
-                        className="block w-full px-3 py-2 text-left font-mono text-slate-800 hover:bg-slate-100"
+                        onClick={onClick}
+                        className={btnCls}
+                        title={
+                          isHighlighted
+                            ? "Click to clear the from_pair regulator filter"
+                            : undefined
+                        }
                       >
                         {c ? `${c.nCommon} common regulators` : "—"}
                       </button>

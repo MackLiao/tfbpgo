@@ -3,10 +3,14 @@
 // Scope mirrors P0 row 29 of docs/parity/select_datasets.md §2: clicking
 // an off-diagonal cell opens this modal which lists the regulators common
 // to both datasets and offers a "Select N common regulators" button that
-// writes the locus tags to the caller-supplied URL key.
+// writes the locus tags back via the caller-supplied callback.
 //
 // Backend: GET /api/v/{v}/regulators/resolve?common=A:B. The server has
 // already deduped + sorted + capped (1000) the result; we just render it.
+//
+// Task C5 (rows 15, 30, 31): the callback now receives the originating
+// pair (display names) so the caller can attach a `fromPair` annotation
+// to the resulting `regulator_locus_tag` filter. See lib/filter-spec.ts.
 
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -22,7 +26,14 @@ export interface CommonRegulatorsModalProps {
   dbB: string;
   displayA: string;
   displayB: string;
-  onSelectCommon: (tags: string[]) => void;
+  /**
+   * Called when the user clicks "Select N common regulators". `tags` is
+   * the locus-tag list; `pair` is `[displayA, displayB]` for the
+   * `fromPair` annotation that the Select route uses to highlight the
+   * originating matrix cell and to render the cleanup affordance in the
+   * filter modal.
+   */
+  onSelectCommon: (tags: string[], pair: [string, string]) => void;
 }
 
 export function CommonRegulatorsModal(props: CommonRegulatorsModalProps) {
@@ -63,7 +74,7 @@ interface BodyProps {
   displayA: string;
   displayB: string;
   onClose: () => void;
-  onSelectCommon: (tags: string[]) => void;
+  onSelectCommon: (tags: string[], pair: [string, string]) => void;
 }
 
 function Body({ dbA, dbB, displayA, displayB, onClose, onSelectCommon }: BodyProps) {
@@ -122,7 +133,7 @@ function Body({ dbA, dbB, displayA, displayB, onClose, onSelectCommon }: BodyPro
         <Button
           disabled={tags.length === 0}
           onClick={() => {
-            onSelectCommon(tags);
+            onSelectCommon(tags, [displayA, displayB]);
             onClose();
           }}
           className="border-blue-600 bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500"

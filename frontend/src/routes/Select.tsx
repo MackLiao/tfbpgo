@@ -12,28 +12,27 @@
 //   row 4   default filters on first visit
 //   row 28  diagonal click → DatasetBreakdownModal
 //
-// Deferred to docs/parity/auto-status/polish.md (see end of this commit):
-//   - row 12/14 apply-to-all toggle
-//   - row 15/30/31 from_pair annotation + highlight
-//   - row 16    sidebar search box (P2)
-//   - row 18/20 staged Apply gate at page level — we use the simpler MVP
-//               where each modal's own "Apply Filters" button writes to
-//               the URL directly. This matches Phase 2's checkbox-toggles-
-//               write-URL pattern and audit §8 already flagged the
-//               staging question as UNCLEAR.
-//   - row 22    description tooltip on row (dataset-level — field-level is C4)
-//   - row 23    sidebar collapse/expand
-//   - row 35/36 CSV+README export
+// Task C5 closes the remaining UX gaps from docs/parity/select_datasets.md §2:
+//   rows 12, 14 apply-to-all toggle on common fields in the filter modal
+//   rows 15, 30, 31 from_pair annotation + matrix highlight + click-to-clear
+//   rows 18, 20, 21 staged Apply gate for dataset checkbox toggles
+//                   (filter modal still writes URL directly — smallest
+//                    blast radius per audit §8 / task spec)
+//   row 23 sidebar collapse/expand (persisted via ?selectSidebar=)
+//   row 24 sidebar search box (with "No datasets match..." empty state, row 34)
 //
 // URL contract:
-//   ?binding=A,B         CSV of active binding db_names
-//   ?perturbation=C,D    CSV of active perturbation db_names
-//   ?filters=<json>      FiltersByDB-shape JSON (URL-encoded)
-//   ?regulators=A,B,C    optional CSV, written by CommonRegulatorsModal
+//   ?binding=A,B              CSV of active binding db_names (committed)
+//   ?perturbation=C,D         CSV of active perturbation db_names (committed)
+//   ?filters=<json>           FiltersByDB-shape JSON (URL-encoded)
+//                             — values may include a frontend-only
+//                             `fromPair` annotation; see lib/filter-spec.ts.
+//   ?regulators=A,B,C         optional CSV (legacy; Phase B side-channel)
+//   ?selectSidebar=collapsed  optional sidebar state, default open
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api, type Schemas } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
@@ -43,6 +42,11 @@ import { DatasetFilterModal } from "@/components/DatasetFilterModal";
 import { CommonRegulatorsModal } from "@/components/CommonRegulatorsModal";
 import { DatasetBreakdownModal } from "@/components/DatasetBreakdownModal";
 import { SelectionMatrix } from "@/plots/SelectionMatrix";
+import {
+  REGULATOR_LOCUS_TAG_FIELD,
+  buildFromPairFilter,
+  readFromPair,
+} from "@/lib/filter-spec";
 
 type DatasetEntry = Schemas["DatasetEntry"];
 type FilterSpec = Schemas["FilterSpec"];
@@ -57,6 +61,13 @@ function toggleMembership(list: string[], item: string, checked: boolean): strin
   if (checked) set.add(item);
   else set.delete(item);
   return [...set];
+}
+
+function sameSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = new Set(a);
+  for (const x of b) if (!sa.has(x)) return false;
+  return true;
 }
 
 /**
@@ -82,13 +93,44 @@ function serializeFiltersToURL(filters: FiltersByDB): string {
 export function Select() {
   const [params, setParams] = useSearchParams();
 
-  const selectedBinding = useMemo(() => parseCsv(params.get("binding")), [params]);
-  const selectedPerturbation = useMemo(
+  // Committed selection — what's in URL right now.
+  const committedBinding = useMemo(() => parseCsv(params.get("binding")), [params]);
+  const committedPerturbation = useMemo(
     () => parseCsv(params.get("perturbation")),
     [params],
   );
   const filters = useMemo(() => parseFiltersFromURL(params.get("filters")), [params]);
   const filtersRaw = params.get("filters") ?? "";
+  const sidebarCollapsed = params.get("selectSidebar") === "collapsed";
+
+  // C5: staged-Apply gate state. Dataset checkbox toggles update these
+  // pending lists; the page-footer "Apply" button commits them to URL.
+  // Initialized from URL, then resynced when the URL changes (e.g.
+  // back/forward navigation).
+  const [pendingBinding, setPendingBinding] = useState<string[]>(committedBinding);
+  const [pendingPerturbation, setPendingPerturbation] = useState<string[]>(
+    committedPerturbation,
+  );
+  // Track the URL token we last synced from so external URL changes
+  // refresh pending state but our own optimistic updates don't trigger
+  // a re-sync race. Compare on the URL-rendered CSV strings.
+  const lastSyncedRef = useRef<{ b: string; p: string }>({
+    b: committedBinding.join(","),
+    p: committedPerturbation.join(","),
+  });
+  useEffect(() => {
+    const b = committedBinding.join(",");
+    const p = committedPerturbation.join(",");
+    if (lastSyncedRef.current.b !== b || lastSyncedRef.current.p !== p) {
+      lastSyncedRef.current = { b, p };
+      setPendingBinding(committedBinding);
+      setPendingPerturbation(committedPerturbation);
+    }
+  }, [committedBinding, committedPerturbation]);
+
+  // Sidebar search box (C5 row 24). Local state only — not URL — because
+  // it's purely a UI affordance for navigating the dataset list.
+  const [search, setSearch] = useState("");
 
   // Modal state — pending filter target (which dataset's modal is open).
   const [filterDb, setFilterDb] = useState<string | null>(null);
@@ -124,46 +166,145 @@ export function Select() {
     [displayNameByDb],
   );
 
-  // Active matrix = union of binding + perturbation selections in stable order.
-  // Sort here so the matrix table renders deterministically; the backend also
-  // sorts internally for cross-pair computation.
+  // Active matrix = union of committed binding + perturbation selections in
+  // stable order. The matrix renders against committed state, NOT pending —
+  // staged checkbox flips are invisible until Apply.
   const matrixDatasets = useMemo(
-    () => [...selectedBinding, ...selectedPerturbation].sort(),
-    [selectedBinding, selectedPerturbation],
+    () => [...committedBinding, ...committedPerturbation].sort(),
+    [committedBinding, committedPerturbation],
   );
 
+  // C5 (rows 12, 14): fetch /datasets/{db}/fields for every committed-active
+  // dataset so we can compute the "common fields" set the filter modal uses
+  // to gate its "Apply to all datasets" toggle.
+  const activeDbs = matrixDatasets;
+  const fieldQueries = useQueries({
+    queries: activeDbs.map((db) => ({
+      queryKey: qk.datasetFields(db),
+      queryFn: () => api.datasetFields({ db }),
+    })),
+  });
+  /**
+   * Map db_name → Set<field name>. Only datasets whose query has resolved
+   * are included; that's fine for the intersection because a missing
+   * dataset means we don't yet know its fields, and we'd rather show "no
+   * common fields" than incorrectly include a field that turns out to be
+   * absent from one of the slow loaders.
+   */
+  const fieldsByDb = useMemo<Map<string, Set<string>>>(() => {
+    const m = new Map<string, Set<string>>();
+    activeDbs.forEach((db, i) => {
+      const d = fieldQueries[i]?.data;
+      // Defensive: in tests + edge cases the mock may resolve before
+      // sending the typed body, so guard against missing `fields`.
+      if (d && Array.isArray(d.fields))
+        m.set(db, new Set(d.fields.map((f) => f.field)));
+    });
+    return m;
+  }, [activeDbs, fieldQueries]);
+  /** Intersection of `fieldsByDb` values. Empty when only one dataset is active. */
+  const commonFields = useMemo<Set<string>>(() => {
+    if (fieldsByDb.size < 2) return new Set();
+    const sets = [...fieldsByDb.values()];
+    const first = sets[0];
+    if (!first) return new Set();
+    // Iterate via array snapshot so mutation during iteration is safe.
+    const out = new Set<string>();
+    for (const f of first) {
+      if (sets.every((s) => s.has(f))) out.add(f);
+    }
+    return out;
+  }, [fieldsByDb]);
+
+  // Toggle a dataset checkbox — updates *pending* state only. URL is
+  // untouched until the user clicks the page-footer Apply button.
   const onToggle = useCallback(
     (paramKey: "binding" | "perturbation", dbName: string, checked: boolean): void => {
-      const current = paramKey === "binding" ? selectedBinding : selectedPerturbation;
-      const next = toggleMembership(current, dbName, checked);
-      const nextParams = new URLSearchParams(params);
-      if (next.length === 0) nextParams.delete(paramKey);
-      else nextParams.set(paramKey, next.join(","));
-      // Row 38: toggling off a dataset clears its filter block. Mirrors
-      // Shiny dataset_row.py:152-165.
-      if (!checked && filters[dbName]) {
-        const nextFilters = { ...filters };
-        delete nextFilters[dbName];
-        if (Object.keys(nextFilters).length === 0) nextParams.delete("filters");
-        else nextParams.set("filters", serializeFiltersToURL(nextFilters));
+      if (paramKey === "binding") {
+        setPendingBinding((cur) => toggleMembership(cur, dbName, checked));
+      } else {
+        setPendingPerturbation((cur) => toggleMembership(cur, dbName, checked));
       }
-      setParams(nextParams, { replace: false });
     },
-    [params, selectedBinding, selectedPerturbation, filters, setParams],
+    [],
   );
 
+  // C5: commit pending selection → URL. Also handles the row-38 contract:
+  // toggling off a dataset clears its filter block (mirrors Shiny
+  // dataset_row.py:152-165).
+  const onCommitStaged = useCallback((): void => {
+    const nextParams = new URLSearchParams(params);
+    if (pendingBinding.length === 0) nextParams.delete("binding");
+    else nextParams.set("binding", [...pendingBinding].sort().join(","));
+    if (pendingPerturbation.length === 0) nextParams.delete("perturbation");
+    else nextParams.set("perturbation", [...pendingPerturbation].sort().join(","));
+
+    // Drop filter blocks for any dataset that was removed.
+    const stillActive = new Set([...pendingBinding, ...pendingPerturbation]);
+    let nextFilters: FiltersByDB | null = null;
+    for (const db of Object.keys(filters)) {
+      if (!stillActive.has(db)) {
+        if (nextFilters === null) nextFilters = { ...filters };
+        delete nextFilters[db];
+      }
+    }
+    if (nextFilters !== null) {
+      if (Object.keys(nextFilters).length === 0) nextParams.delete("filters");
+      else nextParams.set("filters", serializeFiltersToURL(nextFilters));
+    }
+    setParams(nextParams, { replace: false });
+  }, [params, pendingBinding, pendingPerturbation, filters, setParams]);
+
+  const onResetStaged = useCallback((): void => {
+    setPendingBinding(committedBinding);
+    setPendingPerturbation(committedPerturbation);
+  }, [committedBinding, committedPerturbation]);
+
+  const stagedDirty =
+    !sameSet(pendingBinding, committedBinding) ||
+    !sameSet(pendingPerturbation, committedPerturbation);
+
+  // Apply Filters from DatasetFilterModal — writes URL directly (separate
+  // gate from the dataset-checkbox stage; see header comment + task spec).
   const onApplyFilters = useCallback(
-    (db: string, next: Record<string, FilterSpec>): void => {
+    (
+      db: string,
+      next: Record<string, FilterSpec>,
+      applyToAllFields: string[],
+    ): void => {
       const merged: FiltersByDB = { ...filters };
+      // Apply to the current dataset.
       if (Object.keys(next).length === 0) delete merged[db];
       else merged[db] = next;
+
+      // C5 rows 12/14: mirror flagged fields into every other active
+      // dataset that has the field in its manifest.
+      if (applyToAllFields.length > 0) {
+        const other = [...committedBinding, ...committedPerturbation].filter(
+          (x) => x !== db,
+        );
+        for (const otherDb of other) {
+          const otherFields = fieldsByDb.get(otherDb);
+          if (!otherFields) continue;
+          for (const f of applyToAllFields) {
+            if (!otherFields.has(f)) continue;
+            const spec = next[f];
+            const block = { ...(merged[otherDb] ?? {}) };
+            if (spec) block[f] = spec;
+            else delete block[f];
+            if (Object.keys(block).length === 0) delete merged[otherDb];
+            else merged[otherDb] = block;
+          }
+        }
+      }
+
       const nextParams = new URLSearchParams(params);
       if (Object.keys(merged).length === 0) nextParams.delete("filters");
       else nextParams.set("filters", serializeFiltersToURL(merged));
       setParams(nextParams, { replace: false });
       setFilterDb(null);
     },
-    [params, filters, setParams],
+    [params, filters, committedBinding, committedPerturbation, fieldsByDb, setParams],
   );
 
   // C4 (audit rows 3 + 4): first-visit defaults. When the user lands with no
@@ -219,15 +360,91 @@ export function Select() {
     setParams(next, { replace: true });
   }, [data, datasets, params, setParams]);
 
+  // C5 (rows 15, 30, 31): when the user picks "Select N common regulators"
+  // in the off-diagonal modal, write the resulting regulator_locus_tag
+  // filter to every active dataset that has the field, tagged with the
+  // originating display-name pair. Also retain ?regulators= for the
+  // legacy Phase B side-channel so downstream views keep working.
   const onSelectCommon = useCallback(
-    (tags: string[]): void => {
+    (tags: string[], pair: [string, string]): void => {
       const nextParams = new URLSearchParams(params);
       if (tags.length === 0) nextParams.delete("regulators");
       else nextParams.set("regulators", tags.join(","));
+
+      const annotated = buildFromPairFilter(tags, pair);
+      const merged: FiltersByDB = { ...filters };
+      let touched = false;
+      for (const db of [...committedBinding, ...committedPerturbation]) {
+        const fset = fieldsByDb.get(db);
+        // If we don't yet know the field set (query pending), still apply
+        // — the safest assumption is that regulator_locus_tag exists on
+        // every dataset (it's how every dataset keys its meta rows).
+        if (fset && !fset.has(REGULATOR_LOCUS_TAG_FIELD)) continue;
+        const block = { ...(merged[db] ?? {}) };
+        block[REGULATOR_LOCUS_TAG_FIELD] = annotated;
+        merged[db] = block;
+        touched = true;
+      }
+      if (touched) {
+        if (Object.keys(merged).length === 0) nextParams.delete("filters");
+        else nextParams.set("filters", serializeFiltersToURL(merged));
+      }
       setParams(nextParams, { replace: false });
     },
-    [params, setParams],
+    [params, filters, committedBinding, committedPerturbation, fieldsByDb, setParams],
   );
+
+  // C5 (row 31): clear all from_pair regulator_locus_tag filters and the
+  // ?regulators= side-channel.
+  const onClearFromPair = useCallback((): void => {
+    const merged: FiltersByDB = { ...filters };
+    let touched = false;
+    for (const db of Object.keys(merged)) {
+      const block = { ...(merged[db] ?? {}) };
+      const spec = block[REGULATOR_LOCUS_TAG_FIELD];
+      if (spec && readFromPair(spec)) {
+        delete block[REGULATOR_LOCUS_TAG_FIELD];
+        if (Object.keys(block).length === 0) delete merged[db];
+        else merged[db] = block;
+        touched = true;
+      }
+    }
+    const nextParams = new URLSearchParams(params);
+    if (touched) {
+      if (Object.keys(merged).length === 0) nextParams.delete("filters");
+      else nextParams.set("filters", serializeFiltersToURL(merged));
+    }
+    nextParams.delete("regulators");
+    setParams(nextParams, { replace: false });
+  }, [params, filters, setParams]);
+
+  // Detect the active from_pair (if any) for matrix highlighting. We pick
+  // the first pair we find — there's only ever one in practice because
+  // onSelectCommon writes the same annotation to every dataset.
+  const activeFromPair = useMemo<[string, string] | null>(() => {
+    for (const db of Object.keys(filters)) {
+      const spec = filters[db]?.[REGULATOR_LOCUS_TAG_FIELD];
+      const fp = readFromPair(spec);
+      if (fp) {
+        // Translate display names back to db_names so the matrix can
+        // match against its rowDb/colDb keys.
+        const dbA = [...displayNameByDb.entries()].find(([, dn]) => dn === fp[0])?.[0];
+        const dbB = [...displayNameByDb.entries()].find(([, dn]) => dn === fp[1])?.[0];
+        if (dbA && dbB) {
+          return dbA <= dbB ? [dbA, dbB] : [dbB, dbA];
+        }
+        return null;
+      }
+    }
+    return null;
+  }, [filters, displayNameByDb]);
+
+  const onToggleSidebar = useCallback((): void => {
+    const next = new URLSearchParams(params);
+    if (sidebarCollapsed) next.delete("selectSidebar");
+    else next.set("selectSidebar", "collapsed");
+    setParams(next, { replace: false });
+  }, [params, sidebarCollapsed, setParams]);
 
   if (isLoading) {
     return (
@@ -252,6 +469,14 @@ export function Select() {
     );
   }
 
+  // Client-side search filter (C5 row 24). Empty query keeps everything.
+  const q = search.trim().toLowerCase();
+  const matches = (d: DatasetEntry): boolean =>
+    q === "" || d.displayName.toLowerCase().includes(q);
+  const bindingFiltered = binding.filter(matches);
+  const perturbationFiltered = perturbation.filter(matches);
+  const totalMatched = bindingFiltered.length + perturbationFiltered.length;
+
   return (
     <div className="space-y-6">
       <header>
@@ -263,25 +488,67 @@ export function Select() {
         </p>
       </header>
 
-      <div className="grid gap-6 md:grid-cols-[300px_1fr]">
-        <aside className="space-y-6">
-          <h2 className="text-lg font-semibold">Datasets</h2>
-          <DatasetSection
-            title="Binding"
-            datasets={binding}
-            selected={selectedBinding}
-            filters={filters}
-            onToggle={(db, c) => onToggle("binding", db, c)}
-            onOpenFilter={(db) => setFilterDb(db)}
-          />
-          <DatasetSection
-            title="Perturbation"
-            datasets={perturbation}
-            selected={selectedPerturbation}
-            filters={filters}
-            onToggle={(db, c) => onToggle("perturbation", db, c)}
-            onOpenFilter={(db) => setFilterDb(db)}
-          />
+      <div
+        className={
+          sidebarCollapsed
+            ? "grid gap-6 md:grid-cols-[40px_1fr]"
+            : "grid gap-6 md:grid-cols-[300px_1fr]"
+        }
+      >
+        <aside className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            {!sidebarCollapsed && <h2 className="text-lg font-semibold">Datasets</h2>}
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              data-testid="sidebar-toggle"
+              className="rounded border border-slate-200 px-1.5 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
+            >
+              {sidebarCollapsed ? "›" : "‹"}
+            </button>
+          </div>
+
+          {!sidebarCollapsed && (
+            <>
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.currentTarget.value)}
+                placeholder="Search datasets..."
+                aria-label="Search datasets"
+                data-testid="sidebar-search"
+                className="w-full rounded border border-slate-300 px-2 py-1 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
+              />
+              {q !== "" && totalMatched === 0 ? (
+                <p
+                  className="text-xs text-slate-500"
+                  data-testid="sidebar-empty"
+                >
+                  No datasets match your search.
+                </p>
+              ) : (
+                <>
+                  <DatasetSection
+                    title="Binding"
+                    datasets={bindingFiltered}
+                    selected={pendingBinding}
+                    filters={filters}
+                    onToggle={(db, c) => onToggle("binding", db, c)}
+                    onOpenFilter={(db) => setFilterDb(db)}
+                  />
+                  <DatasetSection
+                    title="Perturbation"
+                    datasets={perturbationFiltered}
+                    selected={pendingPerturbation}
+                    filters={filters}
+                    onToggle={(db, c) => onToggle("perturbation", db, c)}
+                    onOpenFilter={(db) => setFilterDb(db)}
+                  />
+                </>
+              )}
+            </>
+          )}
         </aside>
 
         <section className="space-y-3">
@@ -292,9 +559,34 @@ export function Select() {
             datasetDisplay={displayName}
             onOffDiagonalClick={(a, b) => setCommonPair([a, b])}
             onDiagonalClick={(db) => setBreakdownDb(db)}
+            highlightedPair={activeFromPair}
+            onHighlightedClear={onClearFromPair}
           />
         </section>
       </div>
+
+      {/* C5 (rows 18, 20, 21): page-footer staged Apply gate. Only visible
+          when pending differs from committed. */}
+      {stagedDirty && (
+        <footer
+          className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur"
+          data-testid="staged-apply-footer"
+        >
+          <p className="mr-auto text-xs text-slate-600">
+            You have unsaved dataset selection changes.
+          </p>
+          <Button onClick={onResetStaged} data-testid="staged-reset">
+            Reset
+          </Button>
+          <Button
+            onClick={onCommitStaged}
+            data-testid="staged-apply"
+            className="border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+          >
+            Apply
+          </Button>
+        </footer>
+      )}
 
       <DatasetFilterModal
         open={filterDb !== null}
@@ -302,7 +594,10 @@ export function Select() {
         db={filterDb ?? ""}
         displayName={filterDb ? displayName(filterDb) : ""}
         currentFilters={filterDb ? filters[filterDb] ?? null : null}
-        onApply={(next) => filterDb && onApplyFilters(filterDb, next)}
+        commonFields={commonFields}
+        onApply={({ next, applyToAllFields }) =>
+          filterDb && onApplyFilters(filterDb, next, applyToAllFields)
+        }
       />
 
       <CommonRegulatorsModal
