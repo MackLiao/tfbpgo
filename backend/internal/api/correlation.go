@@ -119,10 +119,13 @@ type pairSpec struct {
 func renderCorrPairSQL(method, dataType string, pair pairSpec) (string, []any) {
 	tmpl := queries.Get(dataType + "/corr_pair_" + method + ".sql")
 	repls := []string{
-		"{{table_a}}", whitelistedIdent(pair.dbA),
-		"{{table_b}}", whitelistedIdent(pair.dbB),
-		"{{col_a}}", whitelistedIdent(pair.colA),
-		"{{col_b}}", whitelistedIdent(pair.colB),
+		// Identifier placeholders are double-quoted (quotedIdent) so a
+		// reserved-keyword table/column parses; the *_literal placeholders
+		// below are NOT — they substitute into single-quoted string literals.
+		"{{table_a}}", quotedIdent(pair.dbA),
+		"{{table_b}}", quotedIdent(pair.dbB),
+		"{{col_a}}", quotedIdent(pair.colA),
+		"{{col_b}}", quotedIdent(pair.colB),
 		// db_*_literal substitutes into a single-quoted string literal in the
 		// template (e.g. '{{db_a_literal}}' AS db_a). The values are already
 		// SafeIdentRE-validated dataset db_names, which the SafeIdentRE
@@ -199,10 +202,10 @@ func renderCorrUnionAllSQL(method, dataType string, pairs []pairSpec) (string, [
 func renderScatterSQL(method, dataType, regulator string, pair pairSpec) (string, []any) {
 	tmpl := queries.Get(dataType + "/regulator_scatter_" + method + ".sql")
 	repls := []string{
-		"{{table_a}}", whitelistedIdent(pair.dbA),
-		"{{table_b}}", whitelistedIdent(pair.dbB),
-		"{{col_a}}", whitelistedIdent(pair.colA),
-		"{{col_b}}", whitelistedIdent(pair.colB),
+		"{{table_a}}", quotedIdent(pair.dbA),
+		"{{table_b}}", quotedIdent(pair.dbB),
+		"{{col_a}}", quotedIdent(pair.colA),
+		"{{col_b}}", quotedIdent(pair.colB),
 		"{{extra_where_a}}", pair.extraWhereA,
 		"{{extra_where_b}}", pair.extraWhereB,
 	}

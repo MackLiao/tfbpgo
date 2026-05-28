@@ -103,8 +103,8 @@ func (s *Server) buildBindingResponse(ctx context.Context, reg string, datasets 
 			return nil, err
 		}
 		sqlStr := strings.NewReplacer(
-			"{{table}}", whitelistedIdent(ds),
-			"{{col}}", whitelistedIdent(col),
+			"{{table}}", quotedIdent(ds),
+			"{{col}}", quotedIdent(col),
 			"{{extra_where}}", extraWhere,
 		).Replace(tmpl)
 

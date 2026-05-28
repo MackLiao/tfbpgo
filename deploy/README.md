@@ -196,6 +196,29 @@ tab → "Run workflow". The workflow uploads the new `tfbp.duckdb` to S3 and
 publishes a `deploy/artifact-manifest.<date>.json` containing the new key +
 sha256.
 
+> **A manifest-semantic fix REQUIRES an artifact rebuild — it is NOT delivered
+> by a binary upgrade alone.** Some fixes change how `data_prep` *generates* the
+> manifest tables baked into `tfbp.duckdb` (e.g. emitting `sample_id_field =
+> "sample_id"` instead of the YAML source name `gm_id`; replacing the
+> space-containing `"Experimental condition"` column with `condition` in
+> `condition_cols` / `default_filters`). The running Go binary reads the
+> **baked** manifest, so a `tfbp.duckdb` built *before* such a fix still carries
+> the old values. Symptoms against a stale artifact:
+>
+> - a stale `condition_cols="Experimental condition"` **fail-fasts at startup**
+>   (`NewWhitelist` rejects the space via `SafeIdentRE`) — `/readyz` never goes
+>   green, so the deploy is blocked loudly; and
+> - a stale `sample_id_field="gm_id"` passes startup (it is a valid identifier)
+>   but **500s at request time** on `/datasets/{db}/sample-conditions` and
+>   `/selection/matrix` because the materialized `{db}_meta` no longer has that
+>   column.
+>
+> `schema_version` does NOT change for a content-only manifest fix, so the
+> startup schema gate cannot distinguish a fixed artifact from a stale one.
+> After deploying any commit that touches `data_prep/src/data_prep/manifests.py`
+> semantics, **rebuild + republish the artifact** (steps below) and confirm the
+> `startup_ok` log line's `built_at` postdates the fix.
+
 ```bash
 # On the host, after CI is green:
 cd /opt/tfbp

@@ -90,20 +90,23 @@ func (s *Server) buildSampleConditionsResponse(ctx context.Context, dbName strin
 	// line of defense at the SQL-interpolation site.
 	quoted := make([]string, len(cols))
 	for i, c := range cols {
-		quoted[i] = whitelistedIdent(c)
+		quoted[i] = quotedIdent(c)
 	}
 	// CAST every condition column to VARCHAR so heterogeneous types
 	// (INTEGER `time`, VARCHAR `mechanism`, ...) flatten to strings the
-	// Go-side label builder can join uniformly.
+	// Go-side label builder can join uniformly. Identifiers are double-quoted
+	// so a SQL-keyword condition column (e.g. the genomic `end` coordinate)
+	// doesn't trip the parser — matches the reference
+	// (reference/tfbpshiny/utils/sample_conditions.py double-quotes each col).
 	projections := make([]string, len(quoted))
 	for i, c := range quoted {
 		projections[i] = fmt.Sprintf(`CAST(%s AS VARCHAR) AS %s`, c, c)
 	}
 	sqlStr := fmt.Sprintf(
 		`SELECT %s AS sample_id, %s FROM %s`,
-		whitelistedIdent(sampleIDCol),
+		quotedIdent(sampleIDCol),
 		strings.Join(projections, ", "),
-		whitelistedIdent(dbName)+"_meta",
+		quotedIdent(dbName+"_meta"),
 	)
 
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)

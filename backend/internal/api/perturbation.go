@@ -95,8 +95,8 @@ func (s *Server) buildPerturbationResponse(ctx context.Context, reg string, data
 			return nil, err
 		}
 		sqlStr := strings.NewReplacer(
-			"{{table}}", whitelistedIdent(ds),
-			"{{col}}", whitelistedIdent(col),
+			"{{table}}", quotedIdent(ds),
+			"{{col}}", quotedIdent(col),
 			"{{extra_where}}", extraWhere,
 		).Replace(tmpl)
 

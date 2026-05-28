@@ -215,7 +215,7 @@ func (s *Server) writeQueryToTar(ctx context.Context, tw *tar.Writer, tarPath, t
 	if err != nil {
 		return fmt.Errorf("build where: %w", err)
 	}
-	sqlStr := fmt.Sprintf(`SELECT * FROM %s WHERE 1=1%s`, whitelistedIdent(table), extraWhere)
+	sqlStr := fmt.Sprintf(`SELECT * FROM %s WHERE 1=1%s`, quotedIdent(table), extraWhere)
 
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
 	defer cancel()

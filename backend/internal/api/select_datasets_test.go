@@ -147,7 +147,7 @@ func TestSelectionMatrix_HappyTwoDatasets(t *testing.T) {
 	cc, ok := byName["callingcards"]
 	require.True(t, ok)
 	require.Equal(t, int64(3), cc.NRegulators) // YBR289W, YML007W, YGL073W
-	require.Equal(t, int64(7), cc.NSamples)    // 7 distinct gm_ids in fixture
+	require.Equal(t, int64(7), cc.NSamples)    // 7 distinct sample_ids in fixture
 
 	hk, ok := byName["hackett"]
 	require.True(t, ok)

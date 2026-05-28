@@ -69,8 +69,12 @@ def _create_callingcards(conn: duckdb.DuckDBPyConnection) -> None:
     - poisson_pval (rank column for callingcards in topn)
     - callingcards_enrichment (measurement column in binding/data)
 
-    `gm_id` is retained because dataset_manifest.sample_id_field still
-    points at it for the join-key introspection in field_manifest.
+    The materialized real artifact exposes the sample-id column as
+    `sample_id` for EVERY dataset — labretriever renames the source-side
+    `gm_id` to `sample_id` in the VirtualDB view. The fixture mirrors that:
+    `callingcards_meta` exposes `sample_id` (not `gm_id`) and
+    dataset_manifest.sample_id_field is `sample_id`. The data table retains
+    a redundant `gm_id` only so the regulator-dedup row count is unchanged.
     """
     conn.execute(
         """
@@ -117,7 +121,7 @@ def _create_callingcards(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         """
         CREATE TABLE callingcards_meta (
-            gm_id VARCHAR,
+            sample_id VARCHAR,
             regulator_locus_tag VARCHAR,
             regulator_symbol VARCHAR,
             condition VARCHAR
@@ -207,12 +211,30 @@ def _create_hackett(conn: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def _create_harbison_stub(conn: duckdb.DuckDBPyConnection) -> None:
-    """Empty harbison/harbison_meta stub.
+def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
+    """Populated harbison binding dataset — the real-data regression vehicle.
 
-    The DTO query references `FROM harbison` unconditionally inside a LEFT
-    JOIN, so the table must exist even when no fixture dto row originates
-    from harbison. Keeping it empty keeps the dto output deterministic.
+    harbison is the dataset the e10cfa4 commit cites as carrying IEEE NaN in
+    its `effect`/`pvalue` columns, and (with chec_m2025/rossi) a genomic
+    `end` coordinate — a DuckDB *reserved* keyword. The early fixture left
+    harbison an empty stub, which is exactly why the NaN-in-JSON (BUG 2) and
+    keyword-identifier (BUG 1) classes had zero coverage. We populate it to
+    exercise both, plus the sample-id rename:
+
+    - `effect` is held CONSTANT (1.0) per regulator so the per-(regulator,
+      sample_a, sample_b) correlation group has zero variance and DuckDB's
+      corr() returns NaN — the case the /binding/corr dropna guard must drop
+      (mirrors the reference's df.dropna(subset=["correlation"])).
+    - ONE `effect` value is IEEE NaN so /binding?datasets=harbison returns a
+      NaN measurement that must serialize as null, not 500.
+    - `end` (INTEGER) is a SQL reserved keyword; it appears as a numeric
+      field (computeNumericRange) and in condition_cols (sample-conditions),
+      so both interpolation sites must double-quote it.
+
+    Shares _REGULATORS / _TARGETS with callingcards so /binding/corr over the
+    pair (callingcards, harbison) produces joinable groups. The DTO query's
+    `FROM harbison` LEFT JOIN is unaffected: no dto_expanded row has
+    binding_id_source='harbison', so populated rows add no dto output.
     """
     conn.execute(
         """
@@ -222,19 +244,45 @@ def _create_harbison_stub(conn: duckdb.DuckDBPyConnection) -> None:
             target_locus_tag VARCHAR,
             pvalue DOUBLE,
             effect DOUBLE,
+            "end" INTEGER,
             condition VARCHAR
         )
         """
     )
+    # 3 regulators × 5 targets × 1 sample = 15 rows. effect is constant 1.0
+    # (zero-variance → corr() NaN) except one NaN cell; pvalue varies.
+    pvals = _linspace(1e-4, 0.04, len(_REGULATORS) * len(_TARGETS))
+    h_rows: list[tuple] = []
+    idx = 0
+    for i, (loc, _sym) in enumerate(_REGULATORS):
+        sample_id = f"hb_{i}"
+        for j, tgt in enumerate(_TARGETS):
+            # Exactly one NaN effect cell (regulator 0, target 0) to exercise
+            # the NaN-in-/binding path; every other effect is the constant 1.0.
+            effect = float("nan") if (i == 0 and j == 0) else 1.0
+            end_coord = 1000 + idx  # arbitrary genomic coordinate
+            h_rows.append((sample_id, loc, tgt, pvals[idx], effect, end_coord, "YPD"))
+            idx += 1
+    conn.executemany(
+        'INSERT INTO harbison VALUES (?, ?, ?, ?, ?, ?, ?)', h_rows
+    )
+
     conn.execute(
         """
         CREATE TABLE harbison_meta (
             sample_id VARCHAR,
             regulator_locus_tag VARCHAR,
             regulator_symbol VARCHAR,
-            condition VARCHAR
+            condition VARCHAR,
+            "end" INTEGER
         )
         """
+    )
+    meta_rows = []
+    for i, (loc, sym) in enumerate(_REGULATORS):
+        meta_rows.append((f"hb_{i}", loc, sym, "YPD", 1000 + i))
+    conn.executemany(
+        "INSERT INTO harbison_meta VALUES (?, ?, ?, ?, ?)", meta_rows
     )
 
 
@@ -328,7 +376,9 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
                 "CallingCards",
                 "Calling Cards",
                 "BrentLab/callingcards",
-                "gm_id",
+                # Materialized column name (labretriever renames gm_id ->
+                # sample_id in the VirtualDB view); see _create_callingcards.
+                "sample_id",
                 "callingcards_enrichment",
                 "poisson_pval",
                 True,
@@ -349,6 +399,23 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
                 True,
                 '{"time":{"type":"numeric","value":[45,45]}}',
                 "mechanism,restriction,time",
+            ),
+            (
+                # harbison: real-data regression vehicle (NaN effect/pvalue,
+                # genomic `end` keyword column). condition_cols includes the
+                # reserved keyword `end` so the sample-conditions handler must
+                # double-quote it.
+                "harbison",
+                "binding",
+                "ChIP-chip",
+                "Harbison 2004",
+                "BrentLab/harbison_2004",
+                "sample_id",
+                "effect",
+                "pvalue",
+                True,
+                "",
+                "condition,end",
             ),
         ],
     )
@@ -395,6 +462,14 @@ def _create_manifests(conn: duckdb.DuckDBPyConnection) -> None:
             ("hackett",      "pvalue",                   "",                     "", "", "",            ""),
             ("hackett",      "log2_shrunken_timecourses","",                     "", "", "",            ""),
             ("hackett",      "time",                     "experimental_condition","", "", "categorical", "numeric"),
+            # harbison: effect/pvalue are numeric (DOUBLE) and carry NaN on the
+            # real artifact; `end` is a numeric INTEGER whose name is a DuckDB
+            # reserved keyword (computeNumericRange must double-quote it).
+            ("harbison",     "target_locus_tag",         "",                     "", "", "",            ""),
+            ("harbison",     "effect",                   "",                     "", "", "",            ""),
+            ("harbison",     "pvalue",                   "",                     "", "", "",            ""),
+            ("harbison",     "end",                      "",                     "", "", "",            ""),
+            ("harbison",     "condition",                "experimental_condition","", "", "",            ""),
         ],
     )
 
@@ -499,6 +574,9 @@ def _create_regulator_display_names(conn: duckdb.DuckDBPyConnection) -> None:
             UNION ALL
             SELECT DISTINCT regulator_locus_tag, regulator_symbol
             FROM hackett_meta
+            UNION ALL
+            SELECT DISTINCT regulator_locus_tag, regulator_symbol
+            FROM harbison_meta
         ) __all
         GROUP BY regulator_locus_tag
         ORDER BY regulator_locus_tag
@@ -517,7 +595,7 @@ def build_fixture(out_path: Path) -> None:
     try:
         _create_callingcards(conn)
         _create_hackett(conn)
-        _create_harbison_stub(conn)
+        _create_harbison(conn)
         _create_dto_expanded(conn)
         _create_manifests(conn)
         _create_hackett_analysis_set(conn)

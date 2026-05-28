@@ -19,7 +19,7 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	require.Equal(t, 4, m.Artifact.SchemaVersion)
 	require.False(t, m.Artifact.ParityTestsPassed)
 
-	require.Len(t, m.Datasets, 2)
+	require.Len(t, m.Datasets, 3)
 	for _, ds := range m.Datasets {
 		require.NotEmpty(t, ds.SampleIDField, "v2 schema requires sample_id_field")
 		require.NotEmpty(t, ds.EffectCol, "v3 schema requires non-empty effect_col for %s", ds.DBName)
@@ -30,12 +30,21 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	}
 	require.Contains(t, dsByName, "callingcards")
 	require.Contains(t, dsByName, "hackett")
+	// harbison is the real-data regression vehicle: it carries an IEEE-NaN
+	// effect cell and a `end` reserved-keyword column (see build_fixture.py).
+	require.Contains(t, dsByName, "harbison")
+	// Every dataset's sample_id_field is the materialized `sample_id` (the
+	// BUG 3 fix: labretriever renames source `gm_id` -> `sample_id`).
+	require.Equal(t, "sample_id", dsByName["callingcards"].SampleIDField)
+	require.Equal(t, "sample_id", dsByName["harbison"].SampleIDField)
 	// v3-specific assertions: effect/pvalue cols carried in the artifact.
 	require.Equal(t, "callingcards_enrichment", dsByName["callingcards"].EffectCol)
 	require.Equal(t, "poisson_pval", dsByName["callingcards"].PValueCol)
 	require.Equal(t, "log2_shrunken_timecourses", dsByName["hackett"].EffectCol)
 	require.Equal(t, "", dsByName["hackett"].PValueCol,
 		"hackett intentionally has no p-value column — see buildResponsiveExpr")
+	require.Equal(t, "effect", dsByName["harbison"].EffectCol)
+	require.Equal(t, "condition,end", dsByName["harbison"].ConditionCols)
 
 	// v4: dataset_manifest carries DefaultActive / DefaultFilters /
 	// ConditionCols. Both fixture datasets are default_active=TRUE; only

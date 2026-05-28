@@ -247,7 +247,7 @@ func (s *Server) buildOnePair(
 		}
 		bindingCTE = fmt.Sprintf(
 			"SELECT CAST(%s AS VARCHAR) AS binding_sample_id, regulator_locus_tag, target_locus_tag, %s FROM %s %s",
-			whitelistedIdent(bcfg.SampleCol), whitelistedIdent(bcfg.RankCol), whitelistedIdent(bDB), whereStr,
+			quotedIdent(bcfg.SampleCol), quotedIdent(bcfg.RankCol), quotedIdent(bDB), whereStr,
 		)
 	}
 
@@ -301,9 +301,9 @@ func (s *Server) buildOnePair(
 	pairKey := bDB + "__" + pDB
 	out := strings.NewReplacer(
 		"{{binding_cte_body}}", bindingCTE,
-		"{{rank_col}}", whitelistedIdent(bcfg.RankCol),
+		"{{rank_col}}", quotedIdent(bcfg.RankCol),
 		"{{rank_dir}}", rankDir,
-		"{{perturbation_view}}", whitelistedIdent(pDB),
+		"{{perturbation_view}}", quotedIdent(pDB),
 		"{{responsive_expr}}", respExpr,
 		"{{pert_join}}", pertJoin,
 		"{{pert_filter_where}}", pertWhereStr,
@@ -342,14 +342,14 @@ func buildResponsiveExpr(s *Server, pDB string, effThr, pvalThr float64, args *[
 		// the manifest-load gate in db.NewWhitelist (F1).
 		return fmt.Sprintf(
 			"CASE WHEN ABS(p.%s) > ? AND p.%s < ? THEN 1 ELSE 0 END",
-			whitelistedIdent(col), whitelistedIdent(pvalCol),
+			quotedIdent(col), quotedIdent(pvalCol),
 		)
 	}
 	if col != "" {
 		*args = append(*args, effThr)
 		return fmt.Sprintf(
 			"CASE WHEN ABS(p.%s) > ? THEN 1 ELSE 0 END",
-			whitelistedIdent(col),
+			quotedIdent(col),
 		)
 	}
 	return "CAST(p.responsive AS INTEGER)"

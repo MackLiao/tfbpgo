@@ -14,3 +14,14 @@ func whitelistedIdent(s string) string {
 	}
 	return s
 }
+
+// quotedIdent returns s as a double-quoted SQL identifier after verifying it
+// against db.SafeIdentRE (via whitelistedIdent). Use at every identifier-
+// interpolation site so SQL reserved-keyword column names (e.g. `end` on
+// chec_m2025 / rossi) parse unambiguously instead of tripping the DuckDB
+// parser. SafeIdentRE restricts s to [A-Za-z_][A-Za-z0-9_]*, so it can carry
+// no embedded double-quote and no escaping is required. Panics (via
+// whitelistedIdent) on an unsafe value.
+func quotedIdent(s string) string {
+	return `"` + whitelistedIdent(s) + `"`
+}

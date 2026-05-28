@@ -325,7 +325,7 @@ func (s *Server) DatasetRegulators(w http.ResponseWriter, r *http.Request) {
 func (s *Server) buildDatasetRegulatorsResponse(ctx context.Context, dbName string) ([]byte, error) {
 	sqlStr := fmt.Sprintf(
 		`SELECT DISTINCT regulator_locus_tag, regulator_symbol FROM %s ORDER BY regulator_locus_tag`,
-		whitelistedIdent(dbName)+"_meta",
+		quotedIdent(dbName+"_meta"),
 	)
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
 	defer cancel()
@@ -453,8 +453,8 @@ func (s *Server) queryMatrixDiagonal(ctx context.Context, datasets []string, fil
 		whereStr := whereForDiagonal(where)
 		block := strings.NewReplacer(
 			"{{db_literal}}", sqlStringLiteral(dbName),
-			"{{table}}", whitelistedIdent(dbName)+"_meta",
-			"{{sample_id_col}}", whitelistedIdent(sampleCol),
+			"{{table}}", quotedIdent(dbName+"_meta"),
+			"{{sample_id_col}}", quotedIdent(sampleCol),
 			"{{where}}", whereStr,
 		).Replace(tmpl)
 		parts = append(parts, block)
@@ -554,8 +554,8 @@ func (s *Server) queryMatrixCross(ctx context.Context, datasets []string, filter
 		//   8. argsB  (INTERSECT arm B inside the sample-count B common predicate)
 		commonInline := fmt.Sprintf(
 			"(SELECT regulator_locus_tag FROM %s%s INTERSECT SELECT regulator_locus_tag FROM %s%s)",
-			whitelistedIdent(pr.a)+"_meta", whereStrA,
-			whitelistedIdent(pr.b)+"_meta", whereStrB,
+			quotedIdent(pr.a+"_meta"), whereStrA,
+			quotedIdent(pr.b+"_meta"), whereStrB,
 		)
 		// Append " AND ... " or " WHERE ... " for sample-count predicate.
 		appendCommon := func(existing string) string {
@@ -570,10 +570,10 @@ func (s *Server) queryMatrixCross(ctx context.Context, datasets []string, filter
 
 		block := strings.NewReplacer(
 			"{{pair_id_literal}}", sqlStringLiteral(pr.a+"__"+pr.b),
-			"{{table_a}}", whitelistedIdent(pr.a)+"_meta",
-			"{{table_b}}", whitelistedIdent(pr.b)+"_meta",
-			"{{sample_id_col_a}}", whitelistedIdent(sampleA),
-			"{{sample_id_col_b}}", whitelistedIdent(sampleB),
+			"{{table_a}}", quotedIdent(pr.a+"_meta"),
+			"{{table_b}}", quotedIdent(pr.b+"_meta"),
+			"{{sample_id_col_a}}", quotedIdent(sampleA),
+			"{{sample_id_col_b}}", quotedIdent(sampleB),
 			"{{where_a}}", whereStrA,
 			"{{where_b}}", whereStrB,
 			"{{where_sa}}", whereSA,

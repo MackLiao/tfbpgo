@@ -49,12 +49,14 @@ func TestScatterSQL_HasNullInfNaNFilter(t *testing.T) {
 				dbA: "ds_a", dbB: "ds_b",
 				colA: c.colA, colB: c.colB,
 			})
-			// Six required clauses — exactly mirrors corr_pair_*.sql.
+			// Six required clauses — exactly mirrors corr_pair_*.sql. Column
+			// identifiers are double-quoted (quotedIdent) so a reserved-keyword
+			// measurement column parses.
 			require.Contains(t, sqlStr, "IS NOT NULL", "missing IS NOT NULL clause")
-			require.Contains(t, sqlStr, "NOT isinf(a."+c.colA+")")
-			require.Contains(t, sqlStr, "NOT isinf(b."+c.colB+")")
-			require.Contains(t, sqlStr, "NOT isnan(a."+c.colA+")")
-			require.Contains(t, sqlStr, "NOT isnan(b."+c.colB+")")
+			require.Contains(t, sqlStr, `NOT isinf(a."`+c.colA+`")`)
+			require.Contains(t, sqlStr, `NOT isinf(b."`+c.colB+`")`)
+			require.Contains(t, sqlStr, `NOT isnan(a."`+c.colA+`")`)
+			require.Contains(t, sqlStr, `NOT isnan(b."`+c.colB+`")`)
 		})
 	}
 }

@@ -149,14 +149,18 @@ def test_dataset_manifest_emits_one_row_per_tagged_dataset(
     ).fetchall()
 
     # callingcards: in DEFAULT_ACTIVE_DATASETS, no DEFAULT_DATASET_FILTERS
-    # entry, has CONDITION_COLS=['condition'].
+    # entry, has CONDITION_COLS=['condition']. Its YAML sample_id.field is
+    # `gm_id`, but write_dataset_manifest emits the *materialized* column
+    # name `sample_id` (labretriever renames every source sample-id column
+    # to `sample_id` in the VirtualDB view) — see
+    # test_dataset_manifest_forces_materialized_sample_id below.
     # hackett:      in DEFAULT_ACTIVE_DATASETS, DEFAULT_DATASET_FILTERS
     # encodes {"time": {"type":"numeric","value":[45,45]}}, and
     # CONDITION_COLS=['mechanism','restriction','time'].
     assert rows == [
         (
             "callingcards", "binding", "CallingCards", "2026 Calling Cards",
-            "BrentLab/callingcards", "gm_id",
+            "BrentLab/callingcards", "sample_id",
             "callingcards_enrichment", "poisson_pval",
             True, "", "condition",
         ),
@@ -169,6 +173,27 @@ def test_dataset_manifest_emits_one_row_per_tagged_dataset(
             "mechanism,restriction,time",
         ),
     ]
+
+
+def test_dataset_manifest_forces_materialized_sample_id(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """write_dataset_manifest must emit the *materialized* sample-id column
+    name `sample_id`, ignoring the YAML `sample_id.field` source name.
+
+    labretriever renames every source-side sample-id column (e.g. `gm_id`
+    for callingcards) to a uniform `sample_id` in the materialized VirtualDB
+    view, so the runtime manifest must reflect that — not the YAML source.
+    Regression guard for the BUG 3 fix (commit e10cfa4): the _SAMPLE_YAML
+    above declares callingcards `sample_id.field: gm_id`, yet the emitted
+    manifest value must be `sample_id`.
+    """
+    config = yaml.safe_load(_SAMPLE_YAML)
+    write_dataset_manifest(fresh_duckdb, config)
+    row = fresh_duckdb.execute(
+        "SELECT sample_id_field FROM dataset_manifest WHERE db_name = 'callingcards'"
+    ).fetchone()
+    assert row[0] == "sample_id"  # NOT the YAML source name 'gm_id'
 
 
 def test_dataset_manifest_columns_v4(

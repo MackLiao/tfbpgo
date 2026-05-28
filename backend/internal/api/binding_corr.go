@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -233,6 +234,14 @@ func (s *Server) buildCorrResponse(
 			// Should be impossible — every row's pair_key was emitted by
 			// our own outer SELECT projection. Treat as data corruption.
 			return nil, fmt.Errorf("corr union: unexpected pair_key %q", row.PairKey)
+		}
+		// DuckDB corr() returns NaN on a zero-variance group (constant values
+		// on either side → covariance/stddev 0/0); the SQL filters NaN/Inf
+		// *inputs* but not the *output*. Drop those rows — mirrors the Python
+		// reference's df.dropna(subset=["correlation"]) (workspace.py:274) and
+		// keeps the response JSON-serializable (encoding/json rejects NaN/Inf).
+		if math.IsNaN(row.Correlation) || math.IsInf(row.Correlation, 0) {
+			continue
 		}
 		resp.Pairs[slot].Points = append(resp.Pairs[slot].Points, row.CorrPairPoint)
 	}

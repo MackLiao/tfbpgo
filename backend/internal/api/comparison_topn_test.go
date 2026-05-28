@@ -231,7 +231,7 @@ func TestBuildResponsiveExpr_TwoTermCaseForKemmeren(t *testing.T) {
 	args := []any{}
 	expr := buildResponsiveExpr(srv, "kemmeren", 0.5, 0.05, &args)
 	require.Equal(t,
-		"CASE WHEN ABS(p.Madj) > ? AND p.pval < ? THEN 1 ELSE 0 END",
+		`CASE WHEN ABS(p."Madj") > ? AND p."pval" < ? THEN 1 ELSE 0 END`,
 		expr,
 	)
 	require.Equal(t, []any{0.5, 0.05}, args)
@@ -244,7 +244,7 @@ func TestBuildResponsiveExpr_OneTermCaseForHackett(t *testing.T) {
 	args := []any{}
 	expr := buildResponsiveExpr(srv, "hackett", 0.5, 0.05, &args)
 	require.Equal(t,
-		"CASE WHEN ABS(p.log2_shrunken_timecourses) > ? THEN 1 ELSE 0 END",
+		`CASE WHEN ABS(p."log2_shrunken_timecourses") > ? THEN 1 ELSE 0 END`,
 		expr,
 	)
 	require.Equal(t, []any{0.5}, args)
@@ -263,8 +263,8 @@ func TestBuildResponsiveExpr_UnknownDatasetFallback(t *testing.T) {
 
 // TestComparisonTopN_RenderedTwoTermCasePresent locks the rendered SQL
 // for callingcards × kemmeren — the topn template should embed the
-// two-term CASE with `Madj` and `pval` after F2 wraps both via
-// whitelistedIdent (which returns unquoted-but-safe identifiers).
+// two-term CASE with `Madj` and `pval`, each double-quoted via quotedIdent
+// (defense-in-depth so a future reserved-keyword measurement column parses).
 func TestComparisonTopN_RenderedTwoTermCasePresent(t *testing.T) {
 	tmpl := queries.Get("comparison/topn.sql")
 	srv := newServerWithFixtureWhitelist(t)
@@ -277,6 +277,6 @@ func TestComparisonTopN_RenderedTwoTermCasePresent(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t,
 		rendered,
-		"CASE WHEN ABS(p.Madj) > ? AND p.pval < ? THEN 1 ELSE 0 END",
+		`CASE WHEN ABS(p."Madj") > ? AND p."pval" < ? THEN 1 ELSE 0 END`,
 	)
 }
