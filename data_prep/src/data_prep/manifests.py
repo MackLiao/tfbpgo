@@ -43,7 +43,7 @@ DEFAULT_ACTIVE_DATASETS: frozenset[str] = frozenset({
 DEFAULT_DATASET_FILTERS: dict[str, dict[str, dict]] = {
     "harbison":   {"condition":   {"type": "categorical", "value": ["YPD"]}},
     "rossi":      {"treatment":   {"type": "categorical", "value": ["Normal"]}},
-    "chec_m2025": {"Experimental condition": {"type": "categorical", "value": ["standard"]}},
+    "chec_m2025": {"condition":   {"type": "categorical", "value": ["standard"]}},
     # divergence: Shiny uses [45.0, 45.0] (floats); the Go service represents
     # numeric ranges as [low, high] integers when the underlying DuckDB
     # column is INTEGER (hackett.time). Either form parses to the same
@@ -63,7 +63,7 @@ CONDITION_COLS: dict[str, list[str]] = {
     "callingcards": ["condition"],
     "harbison":     ["condition"],
     "rossi":        ["treatment"],
-    "chec_m2025":   ["Experimental condition"],
+    "chec_m2025":   ["condition"],
     "hackett":      ["mechanism", "restriction", "time"],
 }
 
@@ -216,12 +216,17 @@ def write_dataset_manifest(
             if not tags or not db_name:
                 continue
             sample_id_block = (ds_cfg or {}).get("sample_id") or {}
-            sample_id_field = sample_id_block.get("field")
-            if not sample_id_field:
+            yaml_sample_id_field = sample_id_block.get("field")
+            if not yaml_sample_id_field:
                 raise ValueError(
                     f"dataset {db_name!r} (repo {repo_id}) "
                     "missing required sample_id.field in YAML"
                 )
+            # labretriever unifies all sample-id columns under `sample_id`
+            # in the materialized VirtualDB view regardless of source name
+            # (e.g. `gm_id` for callingcards). The runtime manifest must
+            # reflect the *materialized* column name, not the YAML source.
+            sample_id_field = "sample_id"
             if db_name not in DATASET_MEASUREMENT_COLUMNS:
                 raise ValueError(
                     f"dataset {db_name!r} (repo {repo_id}) has no entry in "

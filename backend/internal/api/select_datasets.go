@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -184,8 +185,11 @@ func (s *Server) computeNumericRange(ctx context.Context, dbName, field, table s
 	// depth on top of the manifest gate.
 	fieldIdent := whitelistedIdent(field)
 	tableIdent := whitelistedIdent(table)
+	// Double-quote the column identifier so SQL-keyword column names
+	// (e.g. chec_m2025.end, rossi.end) don't trip the parser. SafeIdentRE
+	// restricts inputs to [A-Za-z_][A-Za-z0-9_]*, so no escape work needed.
 	sqlStr := fmt.Sprintf(
-		`SELECT MIN(CAST(%[1]s AS DOUBLE)) AS lo, MAX(CAST(%[1]s AS DOUBLE)) AS hi FROM %[2]s`,
+		`SELECT MIN(CAST("%[1]s" AS DOUBLE)) AS lo, MAX(CAST("%[1]s" AS DOUBLE)) AS hi FROM "%[2]s"`,
 		fieldIdent, tableIdent,
 	)
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
@@ -197,6 +201,15 @@ func (s *Server) computeNumericRange(ctx context.Context, dbName, field, table s
 	}{}
 	if err := s.Pool.DB.GetContext(dbCtx, &row, sqlStr); err != nil {
 		return fieldNumericRange{}, err
+	}
+	// Some upstream columns carry IEEE NaN values (e.g. harbison.effect,
+	// harbison.pvalue). MIN/MAX over those returns NaN, which encoding/json
+	// refuses to serialize. Drop NaN/Inf so the field reports as unbounded.
+	if row.Lo != nil && (math.IsNaN(*row.Lo) || math.IsInf(*row.Lo, 0)) {
+		row.Lo = nil
+	}
+	if row.Hi != nil && (math.IsNaN(*row.Hi) || math.IsInf(*row.Hi, 0)) {
+		row.Hi = nil
 	}
 	elapsed := time.Since(t0)
 	AddDBMillis(ctx, elapsed.Milliseconds())
