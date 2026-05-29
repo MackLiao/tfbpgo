@@ -590,7 +590,7 @@ export function Select() {
           <Button
             onClick={onCommitStaged}
             data-testid="staged-apply"
-            className="border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+            className="border-blue-600 bg-blue-600 text-black hover:bg-blue-700"
           >
             Apply
           </Button>

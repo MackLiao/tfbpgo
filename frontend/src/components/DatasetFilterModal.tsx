@@ -227,7 +227,7 @@ function ModalBody({
         <Button onClick={onReset}>Reset</Button>
         <Button
           onClick={onApplyClick}
-          className="border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+          className="border-blue-600 bg-blue-600 text-black hover:bg-blue-700"
         >
           Apply Filters
         </Button>
