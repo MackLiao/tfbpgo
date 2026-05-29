@@ -43,6 +43,7 @@ func TestMetrics_RegistryServesExpectedNames(t *testing.T) {
 		"http_request_duration_seconds",
 		"http_request_bytes",
 		"http_response_bytes",
+		"http_in_flight_requests",
 		"db_query_duration_seconds",
 		"db_pool_wait_duration_seconds",
 		"db_pool_open_connections",

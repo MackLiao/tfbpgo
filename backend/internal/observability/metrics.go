@@ -15,6 +15,10 @@ type Metrics struct {
 	HTTPDuration     *prometheus.HistogramVec
 	HTTPRequestSize  *prometheus.HistogramVec
 	HTTPResponseSize *prometheus.HistogramVec
+	// HTTPInFlight counts requests currently inside the handler chain. Inc at
+	// RequestLogger entry, Dec in a defer that survives middleware.Recoverer so
+	// a panicking handler cannot leak the gauge upward.
+	HTTPInFlight prometheus.Gauge
 
 	DBDuration *prometheus.HistogramVec
 	// DBPoolWait observes the per-5s-tick MEAN wait duration. This is a
@@ -57,6 +61,10 @@ func New() *Metrics {
 			Help:    "HTTP response size in bytes by route pattern.",
 			Buckets: prometheus.ExponentialBuckets(64, 4, 10),
 		}, []string{"route"}),
+		HTTPInFlight: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "http_in_flight_requests",
+			Help: "Number of HTTP requests currently being handled.",
+		}),
 		DBDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "db_query_duration_seconds",
 			Help:    "DuckDB query latency by named query.",
@@ -114,7 +122,7 @@ func New() *Metrics {
 	}
 
 	reg.MustRegister(
-		m.HTTPDuration, m.HTTPRequestSize, m.HTTPResponseSize,
+		m.HTTPDuration, m.HTTPRequestSize, m.HTTPResponseSize, m.HTTPInFlight,
 		m.DBDuration, m.DBPoolWait,
 		m.DBPoolWaitDurationSecondsTotal, m.DBPoolWaitCount,
 		m.DBPoolOpen, m.DBPoolInUse,

@@ -40,6 +40,14 @@ func RequestLogger(artifactVersion string, metrics *observability.Metrics) func(
 			start := time.Now()
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 
+			// In-flight gauge: Inc on entry, Dec in a defer so a panic in the
+			// inner handler still decrements before middleware.Recoverer (the
+			// OUTER wrapper) swallows it. Guard for nil metrics (test servers).
+			if metrics != nil {
+				metrics.HTTPInFlight.Inc()
+				defer metrics.HTTPInFlight.Dec()
+			}
+
 			cacheHit := false
 			var dbMs int64
 			ctx := context.WithValue(r.Context(), ctxCacheHit, &cacheHit)
