@@ -144,3 +144,27 @@ func TestManifest_SampleIDFieldExistsInMetaTable(t *testing.T) {
 			d.SampleIDField, d.DBName)
 	}
 }
+
+// BUG 5 (consistency guard): every column named in dataset_manifest.condition_cols
+// must be a real column in {db}_meta. This is the class behind the real-data
+// callingcards 500 — the manifest claimed `condition`, but callingcards_meta
+// had no such column, so the sample-conditions CAST projection raised
+// "Column condition ... cannot be referenced before it is defined". data_prep
+// now derives condition_cols from the same {db}_meta introspection, so this
+// guard must hold for every dataset on every built artifact.
+func TestManifest_ConditionColsExistInMetaTable(t *testing.T) {
+	s := newTestServer(t)
+	for _, d := range s.Whitelist.AllDatasets() {
+		for _, col := range parseConditionCols(d.ConditionCols) {
+			var n int
+			err := s.Pool.DB.GetContext(context.Background(), &n,
+				`SELECT COUNT(*) FROM information_schema.columns
+				 WHERE table_name = ? AND column_name = ?`,
+				d.DBName+"_meta", col)
+			require.NoErrorf(t, err, "introspect %s_meta", d.DBName)
+			require.Equalf(t, 1, n,
+				"dataset_manifest.condition_cols column %q must exist in %s_meta",
+				col, d.DBName)
+		}
+	}
+}

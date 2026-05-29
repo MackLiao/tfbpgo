@@ -56,7 +56,10 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	// hackett carry a preset default_filters spec.
 	require.True(t, dsByName["callingcards"].DefaultActive)
 	require.Equal(t, "", dsByName["callingcards"].DefaultFilters)
-	require.Equal(t, "condition", dsByName["callingcards"].ConditionCols)
+	// DM-5 / real-data shape: callingcards has no experimental-condition column
+	// in {db}_meta, so condition_cols is derived to empty (it used to falsely
+	// claim "condition", which 500'd the sample-conditions query on real data).
+	require.Equal(t, "", dsByName["callingcards"].ConditionCols)
 	require.True(t, dsByName["hackett"].DefaultActive)
 	require.Equal(t,
 		`{"time":{"type":"numeric","value":[45,45]}}`,
@@ -75,7 +78,6 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 		got[f.DBName+"."+f.Field] = true
 	}
 	required := []string{
-		"callingcards.condition",
 		"hackett.time",
 		"harbison.condition",
 		"harbison.end",
@@ -91,6 +93,10 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	} {
 		require.False(t, got[k], "data-only column leaked into field_manifest: %s", k)
 	}
+	// Real-data regression: callingcards has no condition column, so it must
+	// NOT appear in field_manifest (the phantom that 500'd sample-conditions).
+	require.False(t, got["callingcards.condition"],
+		"callingcards has no condition column; it must not be a field")
 	require.NotEmpty(t, m.Levels)
 
 	// v3: field_manifest.role carries the experimental_condition classification.
@@ -100,19 +106,19 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 		roleByKey[f.DBName+"."+f.Field] = f.Role
 		fieldByKey[f.DBName+"."+f.Field] = f
 	}
-	require.Equal(t, "experimental_condition", roleByKey["callingcards.condition"])
+	require.Equal(t, "experimental_condition", roleByKey["harbison.condition"])
 	require.Equal(t, "experimental_condition", roleByKey["hackett.time"])
 	// Sanity-check that a non-condition field has the empty role.
-	require.Equal(t, "", roleByKey["callingcards.target_locus_tag"])
+	require.Equal(t, "", roleByKey["harbison.end"])
 
 	// v4: field_manifest carries per-(db, field) UX metadata. At least one
 	// row (hackett.time) must surface UIKindOverride=="categorical" so the
 	// frontend renders a selectize for it; everything else stays empty.
 	require.Equal(t, "categorical", fieldByKey["hackett.time"].UIKindOverride)
 	require.Equal(t, "numeric", fieldByKey["hackett.time"].NumericLevelSort)
-	require.Equal(t, "", fieldByKey["callingcards.condition"].UIKindOverride)
+	require.Equal(t, "", fieldByKey["harbison.condition"].UIKindOverride)
 	// The fixture supplies no labretriever column metadata, so description /
 	// level_definitions stay empty (graceful default).
-	require.Equal(t, "", fieldByKey["callingcards.condition"].Description)
-	require.Equal(t, "", fieldByKey["callingcards.condition"].LevelDefinitions)
+	require.Equal(t, "", fieldByKey["harbison.condition"].Description)
+	require.Equal(t, "", fieldByKey["harbison.condition"].LevelDefinitions)
 }

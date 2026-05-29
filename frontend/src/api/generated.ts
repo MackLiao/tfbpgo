@@ -294,8 +294,9 @@ export interface paths {
          *     binding/perturbation correlation overlay hover tooltips. Mirrors
          *     Shiny's `fetch_sample_condition_map`
          *     (`reference/tfbpshiny/utils/sample_conditions.py:55-94`). Source
-         *     columns come from `dataset_manifest.condition_cols` (CSV;
-         *     schema_version=4). The label is the per-row join of non-empty
+         *     columns come from `dataset_manifest.condition_cols` (CSV; derived in
+         *     schema_version=5 from EXPERIMENTAL_CONDITION_FIELDS, excluding hidden
+         *     non-condition columns — DM-1). The label is the per-row join of non-empty
          *     trimmed values with `" / "`. Samples whose composed label is
          *     empty are omitted. When `condition_cols` is empty, returns an
          *     empty `labels` object and `conditionCols: []`.

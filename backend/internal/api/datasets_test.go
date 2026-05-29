@@ -49,7 +49,10 @@ func TestDatasets_V4Metadata(t *testing.T) {
 	// 4-byte literal []byte("null") (not nil), so we assert on that.
 	// The wire-shape pin lives in TestDatasets_V4_DefaultFiltersWireShape.
 	require.Equal(t, "null", string(cc.DefaultFilters))
-	require.Equal(t, []string{"condition"}, cc.ConditionCols)
+	// DM-5 / real-data shape: callingcards has no experimental-condition column,
+	// so condition_cols is empty. (harbison is the binding dataset that carries
+	// a real `condition`.)
+	require.Empty(t, cc.ConditionCols)
 
 	hk, ok := byName["hackett"]
 	require.True(t, ok)

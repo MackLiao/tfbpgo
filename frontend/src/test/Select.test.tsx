@@ -296,23 +296,23 @@ describe("Select route", () => {
           return {
             datasets: [
               {
-                dbName: "callingcards",
+                dbName: "harbison",
                 dataType: "binding",
-                assay: "callingcards",
-                displayName: "Calling Cards",
+                assay: "ChIP-chip",
+                displayName: "Harbison 2004",
                 sourceRepo: "",
-                sampleIdField: "gm_id",
-                fields: [],
+                sampleIdField: "sample_id",
+                fields: ["condition"],
                 defaultActive: false,
                 defaultFilters: null,
-                conditionCols: [],
+                conditionCols: ["condition"],
               },
             ],
           };
         }
-        if (url.includes("/datasets/callingcards/fields")) {
+        if (url.includes("/datasets/harbison/fields")) {
           return {
-            dbName: "callingcards",
+            dbName: "harbison",
             fields: [
               {
                 field: "condition",
@@ -336,7 +336,7 @@ describe("Select route", () => {
       </QueryClientProvider>,
     );
     await waitFor(() => {
-      expect(screen.getByText("Calling Cards")).toBeInTheDocument();
+      expect(screen.getByText("Harbison 2004")).toBeInTheDocument();
     });
     const filterBtn = screen.getAllByRole("button", { name: /^Filter$/i })[0];
     if (!filterBtn) throw new Error("no Filter button found");
@@ -356,29 +356,29 @@ describe("Select route", () => {
           return {
             datasets: [
               {
-                dbName: "callingcards",
+                dbName: "harbison",
                 dataType: "binding",
-                assay: "callingcards",
-                displayName: "Calling Cards",
+                assay: "ChIP-chip",
+                displayName: "Harbison 2004",
                 sourceRepo: "",
-                sampleIdField: "gm_id",
-                fields: [],
+                sampleIdField: "sample_id",
+                fields: ["condition"],
                 defaultActive: false,
                 defaultFilters: null,
-                conditionCols: [],
+                conditionCols: ["condition"],
               },
             ],
           };
         }
         if (url.includes("/selection/matrix")) {
           return {
-            diagonal: [{ dbName: "callingcards", nRegulators: 9, nSamples: 21 }],
+            diagonal: [{ dbName: "harbison", nRegulators: 9, nSamples: 21 }],
             crossDataset: [],
           };
         }
         if (url.includes("/selection/breakdown")) {
           return {
-            dbName: "callingcards",
+            dbName: "harbison",
             nMulti: 4,
             columns: [
               { field: "condition", distinctValues: 3 },
@@ -392,7 +392,7 @@ describe("Select route", () => {
     );
     render(
       <QueryClientProvider client={makeClient()}>
-        <MemoryRouter initialEntries={["/select?binding=callingcards"]}>
+        <MemoryRouter initialEntries={["/select?binding=harbison"]}>
           <Select />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -401,7 +401,7 @@ describe("Select route", () => {
       expect(screen.getByText(/9 regulators/)).toBeInTheDocument();
     });
     // Click the diagonal cell button — the button is inside the cell.
-    const cell = screen.getByTestId("cell-callingcards-callingcards");
+    const cell = screen.getByTestId("cell-harbison-harbison");
     const btn = cell.querySelector("button");
     if (!btn) throw new Error("diagonal button not rendered");
     fireEvent.click(btn);

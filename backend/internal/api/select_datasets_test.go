@@ -18,7 +18,48 @@ func apiVPath(s *Server, suffix string) string {
 // DatasetFields
 // ---------------------------------------------------------------------------
 
-func TestDatasetFields_HappyCallingcards(t *testing.T) {
+func TestDatasetFields_HappyHarbison(t *testing.T) {
+	s := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", apiVPath(s, "/datasets/harbison/fields"), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.DatasetFieldsResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Equal(t, "harbison", resp.DBName)
+	require.NotEmpty(t, resp.Fields)
+
+	byField := map[string]domain.FieldMeta{}
+	for _, f := range resp.Fields {
+		byField[f.Field] = f
+	}
+
+	// `condition` should be categorical with role=experimental_condition and
+	// levels populated from filter_level_cache (SC via hb_extra, YPD otherwise).
+	// (Condition lives on harbison — the binding dataset with a real condition
+	// column; callingcards has none on real data.)
+	condition, ok := byField["condition"]
+	require.True(t, ok, "condition field missing")
+	require.Equal(t, "experimental_condition", condition.Role)
+	require.Equal(t, "categorical", condition.Kind)
+	require.ElementsMatch(t, []string{"SC", "YPD"}, condition.Levels)
+
+	// SD-3: data-only measurement columns (effect, pvalue, target_locus_tag)
+	// are NOT filter fields — field_manifest is sourced from {db}_meta only, so
+	// the modal cannot offer columns that would 500 when filtered against the
+	// {db}_meta-scoped WHERE.
+	_, hasEffect := byField["effect"]
+	require.False(t, hasEffect, "data-only `effect` must not be a filter field (SD-3)")
+	_, hasTarget := byField["target_locus_tag"]
+	require.False(t, hasTarget, "data-only `target_locus_tag` must not be a filter field (SD-3)")
+}
+
+// Real-data shape: callingcards has no manifest-eligible filter column, so the
+// /fields endpoint returns 200 with an empty Fields list (not a 500, not the
+// fabricated `condition` field the old fixture invented).
+func TestDatasetFields_CallingcardsHasNoFilterFields(t *testing.T) {
 	s := newTestServer(t)
 
 	rr := httptest.NewRecorder()
@@ -29,29 +70,7 @@ func TestDatasetFields_HappyCallingcards(t *testing.T) {
 	var resp domain.DatasetFieldsResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	require.Equal(t, "callingcards", resp.DBName)
-	require.NotEmpty(t, resp.Fields)
-
-	byField := map[string]domain.FieldMeta{}
-	for _, f := range resp.Fields {
-		byField[f.Field] = f
-	}
-
-	// `condition` should be categorical with role=experimental_condition and
-	// levels populated from filter_level_cache (SC, YPD).
-	condition, ok := byField["condition"]
-	require.True(t, ok, "condition field missing")
-	require.Equal(t, "experimental_condition", condition.Role)
-	require.Equal(t, "categorical", condition.Kind)
-	require.ElementsMatch(t, []string{"SC", "YPD"}, condition.Levels)
-
-	// SD-3: data-only measurement columns (score, poisson_pval, target_locus_tag)
-	// are NOT filter fields — field_manifest is sourced from {db}_meta only, so
-	// the modal cannot offer columns that would 500 when filtered against the
-	// {db}_meta-scoped WHERE.
-	_, hasScore := byField["score"]
-	require.False(t, hasScore, "data-only `score` must not be a filter field (SD-3)")
-	_, hasTarget := byField["target_locus_tag"]
-	require.False(t, hasTarget, "data-only `target_locus_tag` must not be a filter field (SD-3)")
+	require.Empty(t, resp.Fields, "callingcards exposes no filterable columns")
 }
 
 func TestDatasetFields_HackettTimeOverride(t *testing.T) {
@@ -185,13 +204,16 @@ func TestSelectionMatrix_UnknownDataset400(t *testing.T) {
 	require.Equal(t, 400, rr.Code)
 }
 
-func TestSelectionMatrix_WithCallingcardsFilter(t *testing.T) {
+// Condition-filter mechanics live on harbison: it is the binding dataset with
+// a real `condition` column (callingcards has none on real data). hb_extra
+// (SC, YBR289W) is the droppable sample; the other three are YPD.
+func TestSelectionMatrix_WithHarbisonFilter(t *testing.T) {
 	s := newTestServer(t)
 	rr := httptest.NewRecorder()
 	q := url.Values{}
-	q.Set("datasets", "callingcards,hackett")
-	// Restrict callingcards to condition=YPD; that drops cc_extra (SC, YBR289W).
-	q.Set("filters", `{"callingcards":{"condition":{"type":"categorical","value":["YPD"]}}}`)
+	q.Set("datasets", "harbison,hackett")
+	// Restrict harbison to condition=YPD; that drops hb_extra (SC, YBR289W).
+	q.Set("filters", `{"harbison":{"condition":{"type":"categorical","value":["YPD"]}}}`)
 	req := httptest.NewRequest("GET", apiVPath(s, "/selection/matrix")+"?"+q.Encode(), nil)
 	s.Routes().ServeHTTP(rr, req)
 	require.Equal(t, 200, rr.Code, rr.Body.String())
@@ -202,22 +224,21 @@ func TestSelectionMatrix_WithCallingcardsFilter(t *testing.T) {
 	for _, c := range resp.Diagonal {
 		byName[c.DBName] = c
 	}
-	require.Equal(t, int64(6), byName["callingcards"].NSamples) // 7 - 1 (cc_extra)
+	require.Equal(t, int64(3), byName["harbison"].NSamples) // 4 - 1 (hb_extra)
 	// All 3 regulators still represented (each has at least one YPD sample).
-	require.Equal(t, int64(3), byName["callingcards"].NRegulators)
+	require.Equal(t, int64(3), byName["harbison"].NRegulators)
 
 	// Cross-cell NCommon pins the filter-arm INTERSECT semantics: filtered
-	// callingcards (YPD only — drops cc_extra/SC but keeps all 3 regulators
-	// since each has at least one YPD sample) ∩ unfiltered hackett (3
-	// regulators: YBR289W, YML007W, YGL073W) = 3 common regulators. If the
-	// filter arm ever leaked into / out of the INTERSECT subquery, this
-	// number would drift (e.g. count cc_extra's YBR289W twice, or zero out
-	// the entire arm).
+	// harbison (YPD only — drops hb_extra/SC but keeps all 3 regulators since
+	// each has at least one YPD sample) ∩ unfiltered hackett (3 regulators:
+	// YBR289W, YML007W, YGL073W) = 3 common regulators. If the filter arm ever
+	// leaked into / out of the INTERSECT subquery, this number would drift
+	// (e.g. count hb_extra's YBR289W twice, or zero out the entire arm).
 	require.Len(t, resp.CrossDataset, 1)
 	cross := resp.CrossDataset[0]
-	require.Equal(t, "callingcards__hackett", cross.PairID)
+	require.Equal(t, "hackett__harbison", cross.PairID)
 	require.Equal(t, int64(3), cross.NCommon,
-		"3 regulators common to YPD-filtered callingcards and unfiltered hackett")
+		"3 regulators common to YPD-filtered harbison and unfiltered hackett")
 }
 
 // P0-2: the common-regulators flow writes a `regulator_locus_tag` categorical
@@ -263,12 +284,12 @@ func TestSelectionMatrix_FilteredCrossPair(t *testing.T) {
 	s := newTestServer(t)
 	rr := httptest.NewRecorder()
 	q := url.Values{}
-	q.Set("datasets", "callingcards,hackett")
-	// Both arms filtered: callingcards by condition=YPD (drops cc_extra,
-	// leaving 6 rows); hackett by time in [40,50] (keeps the integer 45,
-	// which is the only time value in the fixture).
+	q.Set("datasets", "harbison,hackett")
+	// Both arms filtered: harbison by condition=YPD (drops hb_extra, leaving 3
+	// rows); hackett by time in [40,50] (keeps the integer 45, which is the
+	// only time value in the fixture).
 	q.Set("filters",
-		`{"callingcards":{"condition":{"type":"categorical","value":["YPD"]}},`+
+		`{"harbison":{"condition":{"type":"categorical","value":["YPD"]}},`+
 			`"hackett":{"time":{"type":"numeric","value":[40,50]}}}`)
 	req := httptest.NewRequest("GET", apiVPath(s, "/selection/matrix")+"?"+q.Encode(), nil)
 	s.Routes().ServeHTTP(rr, req)
@@ -286,25 +307,25 @@ func TestSelectionMatrix_FilteredCrossPair(t *testing.T) {
 	for _, c := range resp.Diagonal {
 		byName[c.DBName] = c
 	}
-	cc, ok := byName["callingcards"]
+	hb, ok := byName["harbison"]
 	require.True(t, ok)
-	require.Greater(t, cc.NRegulators, int64(0), "callingcards regulators under YPD filter")
-	require.Greater(t, cc.NSamples, int64(0), "callingcards samples under YPD filter")
-	require.Equal(t, int64(6), cc.NSamples, "7 rows minus cc_extra (SC) = 6")
+	require.Greater(t, hb.NRegulators, int64(0), "harbison regulators under YPD filter")
+	require.Equal(t, int64(3), hb.NSamples, "4 rows minus hb_extra (SC) = 3")
 
 	hk, ok := byName["hackett"]
 	require.True(t, ok)
 	require.Greater(t, hk.NRegulators, int64(0), "hackett regulators in time [40,50]")
 	require.Greater(t, hk.NSamples, int64(0), "hackett samples in time [40,50]")
 
-	// Cross cell: at least one common regulator survives both filters,
-	// and both sample-count subqueries return >= 1.
+	// Cross cell: at least one common regulator survives both filters, and
+	// both sample-count subqueries return >= 1. PairID is alphabetically
+	// sorted, so a=hackett, b=harbison (SamplesA↔hackett, SamplesB↔harbison).
 	require.Len(t, resp.CrossDataset, 1)
 	cross := resp.CrossDataset[0]
-	require.Equal(t, "callingcards__hackett", cross.PairID)
+	require.Equal(t, "hackett__harbison", cross.PairID)
 	require.GreaterOrEqual(t, cross.NCommon, int64(1), "expected >=1 common regulator across filtered arms")
-	require.GreaterOrEqual(t, cross.SamplesA, int64(1), "callingcards samples in cross with hackett")
-	require.GreaterOrEqual(t, cross.SamplesB, int64(1), "hackett samples in cross with callingcards")
+	require.GreaterOrEqual(t, cross.SamplesA, int64(1), "hackett samples in cross with harbison")
+	require.GreaterOrEqual(t, cross.SamplesB, int64(1), "harbison samples in cross with hackett")
 }
 
 // ---------------------------------------------------------------------------
@@ -323,17 +344,42 @@ func TestSelectionBreakdown_Callingcards(t *testing.T) {
 	var resp domain.BreakdownResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	require.Equal(t, "callingcards", resp.DBName)
-	// All 3 regulators appear in >1 sample (YBR289W:3, YML007W:2, YGL073W:2).
-	require.Equal(t, int64(3), resp.NMulti)
+	// Real-data shape: callingcards has NO manifest-eligible filter column (its
+	// meta is just sample_id + the hidden regulator identifiers), so the
+	// breakdown short-circuits to empty — NMulti=0 and no columns. (NMulti is
+	// only populated relative to the candidate columns, so "no columns" means
+	// "no breakdown".) The condition-distinct breakdown is covered on harbison
+	// (TestSelectionBreakdown_Harbison).
+	require.Equal(t, int64(0), resp.NMulti)
+	require.Empty(t, resp.Columns, "callingcards exposes no filterable columns")
+}
 
-	// `condition` is the only manifest-eligible column for callingcards.
-	// YBR289W has 2 distinct conditions (YPD + SC); the other two each have 1.
-	// So count(*) FILTER (WHERE distinct_per_reg > 1) = 1.
+func TestSelectionBreakdown_Harbison(t *testing.T) {
+	s := newTestServer(t)
+	rr := httptest.NewRecorder()
+	q := url.Values{}
+	q.Set("dataset", "harbison")
+	req := httptest.NewRequest("GET", apiVPath(s, "/selection/breakdown")+"?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.BreakdownResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Equal(t, "harbison", resp.DBName)
+	// Only YBR289W appears in >1 sample (hb_0 + hb_extra); YML007W/YGL073W are
+	// single-sample. So NMulti = 1.
+	require.Equal(t, int64(1), resp.NMulti)
+
 	byField := map[string]int64{}
 	for _, c := range resp.Columns {
 		byField[c.Field] = c.DistinctValues
 	}
+	// `condition`: YBR289W has 2 distinct (YPD via hb_0, SC via hb_extra); the
+	// other two have 1 each → count(*) FILTER (distinct_per_reg > 1) = 1.
 	require.Equal(t, int64(1), byField["condition"])
+	// `end`: hb_extra reuses hb_0's coord (1000), so YBR289W is single-valued
+	// in `end`; no regulator has >1 distinct end → 0.
+	require.Equal(t, int64(0), byField["end"])
 }
 
 func TestSelectionBreakdown_Hackett(t *testing.T) {

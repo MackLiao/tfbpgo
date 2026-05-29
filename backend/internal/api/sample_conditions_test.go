@@ -28,10 +28,13 @@ func TestSampleConditions_Hackett_BuildsLabel(t *testing.T) {
 	require.Equal(t, "45", resp.Labels["h_0"])
 }
 
-// callingcards.condition_cols = "condition" in the fixture; the meta
-// table populates `condition` per sample. Just assert the shape — the
-// handler must return non-empty Labels and ConditionCols=["condition"].
-func TestSampleConditions_Callingcards_HasSingleCondCol(t *testing.T) {
+// Real-data regression: callingcards has NO experimental-condition column
+// (its only condition-like meta columns are the space-containing display
+// duplicates `Carbon source`/`Temperature`, which SafeIdentRE rejects). So
+// condition_cols is empty and the handler must return 200 with empty Labels —
+// NOT the previous 500 ("Column condition ... cannot be referenced before it
+// is defined") from a phantom condition col the manifest used to claim.
+func TestSampleConditions_Callingcards_NoCondCol_Graceful(t *testing.T) {
 	s := newTestServer(t)
 	rr := httptest.NewRecorder()
 	url := "/api/v/" + s.Manifests.Artifact.ArtifactVersion + "/datasets/callingcards/sample-conditions"
@@ -42,9 +45,26 @@ func TestSampleConditions_Callingcards_HasSingleCondCol(t *testing.T) {
 	var resp domain.SampleConditionsResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	require.Equal(t, "callingcards", resp.DBName)
+	require.Empty(t, resp.ConditionCols, "callingcards has no condition column")
+	require.Empty(t, resp.Labels, "no condition column → no hover labels")
+}
+
+// harbison genuinely has a `condition` column, so its sample-conditions map is
+// non-empty and each label is a single token (one condition col). hb_extra
+// carries condition="SC"; the rest are "YPD".
+func TestSampleConditions_Harbison_HasSingleCondCol(t *testing.T) {
+	s := newTestServer(t)
+	rr := httptest.NewRecorder()
+	url := "/api/v/" + s.Manifests.Artifact.ArtifactVersion + "/datasets/harbison/sample-conditions"
+	req := httptest.NewRequest("GET", url, nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.SampleConditionsResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Equal(t, "harbison", resp.DBName)
 	require.Equal(t, []string{"condition"}, resp.ConditionCols)
-	// Every non-empty `condition` value should produce a single-token
-	// label (no " / " separator since there's only one column).
+	require.NotEmpty(t, resp.Labels)
 	for sid, label := range resp.Labels {
 		require.NotEmpty(t, sid)
 		require.NotEmpty(t, label)

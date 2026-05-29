@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -84,6 +85,39 @@ func (s *Server) buildSampleConditionsResponse(ctx context.Context, dbName strin
 		return nil, fmt.Errorf("dataset %q missing sample_id_field in manifest", dbName)
 	}
 
+	// Defense-in-depth against manifest/data drift. A condition column named
+	// in dataset_manifest.condition_cols but ABSENT from {db}_meta must NOT
+	// 500 the correlation overlay. This is exactly the real-data callingcards
+	// case: the manifest claimed `condition` but the materialized
+	// callingcards_meta had no such column, so the self-aliased projection
+	// `CAST("condition" AS VARCHAR) AS "condition"` resolved the inner
+	// reference against the not-yet-defined SELECT alias and DuckDB raised
+	// "Column condition ... cannot be referenced before it is defined".
+	// Filter to columns that physically exist and drop the rest; if none
+	// survive, return empty Labels (identical to the no-condition-cols path
+	// above). data_prep now derives condition_cols from the same {db}_meta
+	// introspection (DM-5), so on a correctly built artifact nothing is
+	// dropped here — this guard only fires against a stale/inconsistent one.
+	present, err := s.metaColumnSet(ctx, dbName+"_meta")
+	if err != nil {
+		return nil, fmt.Errorf("sample-conditions introspect: %w", err)
+	}
+	kept := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if present[c] {
+			kept = append(kept, c)
+			continue
+		}
+		slog.WarnContext(ctx, "sample_conditions_missing_column",
+			"dataset", dbName, "column", c,
+			"detail", "condition_cols names a column absent from {db}_meta; dropped")
+	}
+	cols = kept
+	out.ConditionCols = cols
+	if len(cols) == 0 {
+		return jsonMarshal(out)
+	}
+
 	// Per-request tripwire: each condition col (and the sample id col)
 	// must match SafeIdentRE. The manifest gate (db.NewWhitelist)
 	// already enforces this at startup; whitelistedIdent is the second
@@ -157,6 +191,28 @@ func (s *Server) buildSampleConditionsResponse(ctx context.Context, dbName strin
 		s.Metrics.DBDuration.WithLabelValues("datasets/sample_conditions").Observe(elapsed.Seconds())
 	}
 	return jsonMarshal(out)
+}
+
+// metaColumnSet returns the set of column names present in `table`. The
+// table name is bound as a query parameter (not interpolated), so it carries
+// no SQL-injection risk even though dbName is already manifest-whitelisted at
+// the call site. An empty (non-nil) set is returned for a missing table.
+func (s *Server) metaColumnSet(ctx context.Context, table string) (map[string]bool, error) {
+	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
+	defer cancel()
+	var names []string
+	if err := s.Pool.DB.SelectContext(dbCtx, &names,
+		`SELECT column_name FROM information_schema.columns
+		 WHERE table_schema = 'main' AND table_name = ?`,
+		table,
+	); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set, nil
 }
 
 // parseConditionCols turns the comma-separated condition_cols manifest

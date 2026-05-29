@@ -90,6 +90,16 @@ DEFAULT_DATASET_FILTERS: dict[str, dict[str, dict]] = {
 # (SafeIdentRE), so it uses the lowercase machine column as the experimental-
 # condition filter — which is why these appear here even though some are listed
 # in HIDDEN_FILTER_FIELDS.
+#
+# This dict is the *intended* set. Both consumers — write_field_manifest (role
+# assignment) and write_dataset_manifest (condition_cols) — intersect it with
+# each dataset's ACTUAL {db}_meta columns, so listing a column that a given
+# artifact's meta table happens to lack is inert: it yields no field_manifest
+# row and no condition_cols entry. callingcards is the live example — its only
+# condition-like meta columns on the real artifact are the space-containing
+# display duplicates ("Carbon source"/"Temperature"), so it ends up with empty
+# condition_cols even though it is listed here. Keeping the entry means the
+# column auto-activates if a future materialization adds a machine `condition`.
 EXPERIMENTAL_CONDITION_FIELDS: dict[str, frozenset[str]] = {
     "callingcards": frozenset({"condition"}),
     "harbison": frozenset({"condition"}),
@@ -298,7 +308,27 @@ def write_dataset_manifest(
                 if df_block is not None
                 else ""
             )
-            condition_cols = ",".join(CONDITION_COLS.get(db_name, []))
+            # DM-5: condition_cols must mirror the experimental_condition rows
+            # write_field_manifest emits — and that function only assigns the
+            # role to columns that physically exist in {db}_meta (it iterates
+            # the actual columns). So intersect the *intended* set
+            # (CONDITION_COLS, derived from EXPERIMENTAL_CONDITION_FIELDS) with
+            # the columns that actually exist, exactly as write_field_manifest
+            # does. Without this, a dataset listed in EXPERIMENTAL_CONDITION_FIELDS
+            # whose column is absent from the materialized meta table (real-data
+            # callingcards: claimed `condition`, but callingcards_meta has none)
+            # writes a phantom condition col that 500s the sample-conditions
+            # query. Every production/fixture build materializes {db}_meta before
+            # this runs (build_full → materialize_views_as_tables → _run_manifests;
+            # build_fixture → _create_* → write_dataset_manifest), so the lookup
+            # is always populated; columns_of() returns [] for a missing table.
+            meta_cols = set(
+                columns_of(conn, f"{db_name}_meta") or columns_of(conn, db_name)
+            )
+            present_cond = [
+                c for c in CONDITION_COLS.get(db_name, []) if c in meta_cols
+            ]
+            condition_cols = ",".join(present_cond)
             upstream_cols = ",".join(UPSTREAM_COLS.get(db_name, []))
 
             # v5: per-dataset prose description (DM-2). The YAML stores it as a

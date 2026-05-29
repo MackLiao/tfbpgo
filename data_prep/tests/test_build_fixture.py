@@ -99,13 +99,15 @@ def test_fixture_field_manifest_role_column(built_fixture: Path) -> None:
     finally:
         conn.close()
     role_by_key = {(db, f): r for (db, f, r) in rows}
-    assert role_by_key[("callingcards", "condition")] == "experimental_condition"
     assert role_by_key[("hackett", "time")] == "experimental_condition"
     # harbison.condition is also experimental_condition (kept despite being in
     # HIDDEN_FILTER_FIELDS — the exp-cond override).
     assert role_by_key[("harbison", "condition")] == "experimental_condition"
     # Sanity: a non-condition meta field is empty-role.
     assert role_by_key[("harbison", "end")] == ""
+    # Real-data shape: callingcards has no condition column, so it has NO
+    # field_manifest entry (the phantom that 500'd sample-conditions).
+    assert ("callingcards", "condition") not in role_by_key
     # SD-3: data-only columns are not filter fields at all.
     assert ("callingcards", "target_locus_tag") not in role_by_key
     assert ("hackett", "log2_shrunken_timecourses") not in role_by_key
@@ -124,7 +126,9 @@ def test_fixture_dataset_manifest_v4_columns(built_fixture: Path) -> None:
     finally:
         conn.close()
     by_name = {db: (active, df, cc) for (db, active, df, cc) in rows}
-    assert by_name["callingcards"] == (True, "", "condition")
+    # DM-5 / real-data shape: callingcards has no experimental-condition column
+    # in {db}_meta, so condition_cols is derived to empty.
+    assert by_name["callingcards"] == (True, "", "")
     assert by_name["hackett"] == (
         True,
         '{"time":{"type":"numeric","value":[45,45]}}',
@@ -152,9 +156,9 @@ def test_fixture_field_manifest_v4_columns(built_fixture: Path) -> None:
     }
     # hackett.time: categorical + numeric level-sort.
     assert by_key[("hackett", "time")] == ("", "", "categorical", "numeric")
-    # callingcards.condition: no override; empty description/level_definitions
+    # harbison.condition: no override; empty description/level_definitions
     # (the fixture supplies no labretriever column metadata).
-    assert by_key[("callingcards", "condition")] == ("", "", "", "")
+    assert by_key[("harbison", "condition")] == ("", "", "", "")
     # harbison.end (reserved-keyword meta column): no override.
     assert by_key[("harbison", "end")] == ("", "", "", "")
 

@@ -9,24 +9,24 @@ import (
 
 func TestWhitelist_Datasets(t *testing.T) {
 	wl, err := NewWhitelist(&Manifests{
-		Datasets: []DatasetRow{{DBName: "callingcards", DataType: "binding", SampleIDField: "sample_id"}},
-		Fields:   []FieldRow{{DBName: "callingcards", Field: "condition"}},
+		Datasets: []DatasetRow{{DBName: "harbison", DataType: "binding", SampleIDField: "sample_id"}},
+		Fields:   []FieldRow{{DBName: "harbison", Field: "condition"}},
 	})
 	require.NoError(t, err)
-	require.NoError(t, wl.CheckDataset("callingcards"))
+	require.NoError(t, wl.CheckDataset("harbison"))
 	require.Error(t, wl.CheckDataset("legitimate'); DROP TABLE x; --"))
 	require.Error(t, wl.CheckDataset("unknown_db"))
 }
 
 func TestWhitelist_Fields(t *testing.T) {
 	wl, err := NewWhitelist(&Manifests{
-		Datasets: []DatasetRow{{DBName: "callingcards"}},
-		Fields:   []FieldRow{{DBName: "callingcards", Field: "condition"}},
+		Datasets: []DatasetRow{{DBName: "harbison"}},
+		Fields:   []FieldRow{{DBName: "harbison", Field: "condition"}},
 	})
 	require.NoError(t, err)
-	require.NoError(t, wl.CheckField("callingcards", "condition"))
-	require.Error(t, wl.CheckField("callingcards", "regulator_locus_tag"))
-	require.Error(t, wl.CheckField("callingcards", "DROP TABLE x"))
+	require.NoError(t, wl.CheckField("harbison", "condition"))
+	require.Error(t, wl.CheckField("harbison", "regulator_locus_tag"))
+	require.Error(t, wl.CheckField("harbison", "DROP TABLE x"))
 	require.Error(t, wl.CheckField("unknown_db", "condition"))
 }
 

@@ -32,14 +32,16 @@ func TestRegulatorsResolve_Intersect(t *testing.T) {
 }
 
 // SD-1: the resolve must be filter-aware so the modal's common set matches the
-// filter-aware matrix cell. Filtering callingcards to condition=SC keeps only
-// cc_extra (regulator YBR289W), so the callingcards∩hackett common set narrows
-// from all 3 shared regulators to just YBR289W.
+// filter-aware matrix cell. Condition filtering is exercised on harbison (the
+// binding dataset with a real `condition` column — callingcards has none).
+// Filtering harbison to condition=SC keeps only hb_extra (regulator YBR289W),
+// so the harbison∩hackett common set narrows from all 3 shared regulators to
+// just YBR289W.
 func TestRegulatorsResolve_FilterAware(t *testing.T) {
 	s := newTestServer(t)
 
 	doResolve := func(filters string) []string {
-		q := url.Values{"intersect": []string{"callingcards,hackett"}}
+		q := url.Values{"intersect": []string{"harbison,hackett"}}
 		if filters != "" {
 			q.Set("filters", filters)
 		}
@@ -56,13 +58,13 @@ func TestRegulatorsResolve_FilterAware(t *testing.T) {
 	unfiltered := doResolve("")
 	require.ElementsMatch(t, []string{"YBR289W", "YML007W", "YGL073W"}, unfiltered)
 
-	filtered := doResolve(`{"callingcards":{"condition":{"type":"categorical","value":["SC"]}}}`)
+	filtered := doResolve(`{"harbison":{"condition":{"type":"categorical","value":["SC"]}}}`)
 	require.Equal(t, []string{"YBR289W"}, filtered,
-		"condition=SC keeps only cc_extra (YBR289W); the common set must narrow")
+		"condition=SC keeps only hb_extra (YBR289W); the common set must narrow")
 
 	// A regulator_locus_tag filter must be STRIPPED (computing the regulator
 	// set — applying it would be circular), so it behaves like no filter.
-	stripped := doResolve(`{"callingcards":{"regulator_locus_tag":{"type":"categorical","value":["YML007W"]}}}`)
+	stripped := doResolve(`{"harbison":{"regulator_locus_tag":{"type":"categorical","value":["YML007W"]}}}`)
 	require.ElementsMatch(t, unfiltered, stripped)
 }
 

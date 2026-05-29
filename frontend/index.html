@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>tfbpshiny-go</title>
+    <!--
+      Node `global` shim. Plotly's WebGL scatter path (scattergl → gl-text)
+      pulls in `typedarray-pool` and `gl-util`, which reference the bare
+      Node identifier `global` (e.g. `global.__TYPEDARRAY_POOL` at module-eval
+      time, `global.pixelRatio` at render). Browsers expose `globalThis`, not
+      `global`, so without this the comparison/correlation view crashes with
+      "global is not defined" the moment its lazy Plotly chunk evaluates. A
+      classic inline script runs before the deferred module bundle (and well
+      before any dynamic import), so `global` is defined for every chunk in
+      both dev and the embedded production build. Keep this rather than a Vite
+      `define`, which does not reliably reach pre-bundled deps.
+    -->
+    <script>
+      window.global = window;
+    </script>
   </head>
   <body>
     <div id="root"></div>

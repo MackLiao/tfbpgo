@@ -144,15 +144,23 @@ def _linspace(lo: float, hi: float, n: int) -> list[float]:
 
 
 def _create_callingcards(conn: duckdb.DuckDBPyConnection) -> None:
-    """callingcards data + meta — extended with production columns.
+    """callingcards data + meta — mirrors real-artifact shape.
 
-    The materialized real artifact (a) renames the source sample-id column
-    `gm_id` to `sample_id`, and (b) replicates the experimental-condition
-    metadata column `condition` into the DATA table as well as `_meta`. The
-    fixture mirrors both: `condition` lives in BOTH `callingcards` and
-    `callingcards_meta` (so write_field_manifest's join-key handling and the
-    binding data-tab filter both exercise the real shape), and
-    `callingcards_meta` exposes `sample_id`.
+    The materialized real artifact renames the source sample-id column `gm_id`
+    to `sample_id`. Crucially, real `callingcards_meta` has **no**
+    experimental-condition column — its only condition-like columns are the
+    Title-Case display duplicates `Carbon source` / `Temperature`, which the Go
+    rewrite cannot expose (SafeIdentRE forbids spaces). So callingcards has no
+    manifest-eligible filter field and no hover-condition column at all; its
+    dataset_manifest.condition_cols is empty and field_manifest has no
+    callingcards row.
+
+    The fixture deliberately mirrors this: callingcards carries NO `condition`
+    column in either table. (An earlier fixture fabricated one, which masked
+    the real-data bug where dataset_manifest.condition_cols claimed `condition`
+    but the meta table had none — 500ing the sample-conditions query. The
+    condition-filter / hover mechanics are exercised on harbison instead, which
+    genuinely has a `condition` column.)
     """
     conn.execute(
         """
@@ -163,8 +171,7 @@ def _create_callingcards(conn: duckdb.DuckDBPyConnection) -> None:
             target_locus_tag VARCHAR,
             score DOUBLE,
             poisson_pval DOUBLE,
-            callingcards_enrichment DOUBLE,
-            condition VARCHAR
+            callingcards_enrichment DOUBLE
         )
         """
     )
@@ -190,29 +197,27 @@ def _create_callingcards(conn: duckdb.DuckDBPyConnection) -> None:
                         float(j + 1) * 0.1,
                         pvals[row_idx],
                         enrich[row_idx],
-                        "YPD",
                     )
                 )
                 row_idx += 1
-    conn.executemany("INSERT INTO callingcards VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    conn.executemany("INSERT INTO callingcards VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
 
     conn.execute(
         """
         CREATE TABLE callingcards_meta (
             sample_id VARCHAR,
             regulator_locus_tag VARCHAR,
-            regulator_symbol VARCHAR,
-            condition VARCHAR
+            regulator_symbol VARCHAR
         )
         """
     )
     meta_rows: list[tuple] = []
     for i, (loc, sym) in enumerate(_REGULATORS):
         for sid_suffix in ("a", "b"):
-            meta_rows.append((f"cc_{i}_{sid_suffix}", loc, sym, "YPD"))
+            meta_rows.append((f"cc_{i}_{sid_suffix}", loc, sym))
     # Extra row to exercise dedup in regulator_display_names.
-    meta_rows.append(("cc_extra", _REGULATORS[0][0], _REGULATORS[0][1], "SC"))
-    conn.executemany("INSERT INTO callingcards_meta VALUES (?, ?, ?, ?)", meta_rows)
+    meta_rows.append(("cc_extra", _REGULATORS[0][0], _REGULATORS[0][1]))
+    conn.executemany("INSERT INTO callingcards_meta VALUES (?, ?, ?)", meta_rows)
 
 
 def _create_hackett(conn: duckdb.DuckDBPyConnection) -> None:
@@ -382,7 +387,14 @@ def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
     - `end` (INTEGER) is a SQL reserved keyword present in BOTH tables; it must
       be double-quoted at every interpolation site.
     - `condition` lives in BOTH tables (real-artifact shape) and is harbison's
-      experimental-condition filter (DEFAULT_DATASET_FILTERS seeds it).
+      experimental-condition filter (DEFAULT_DATASET_FILTERS seeds it). It is
+      ALSO the fixture's condition-mechanics vehicle (now that callingcards has
+      no condition column): the meta carries a `hb_extra` sample for YBR289W
+      with condition `SC` (every other sample is `YPD`), so filtering
+      condition=YPD drops exactly one sample, condition=SC keeps exactly that
+      one, and the breakdown sees YBR289W with 2 distinct conditions. `hb_extra`
+      is meta-only (no data rows), exactly like callingcards' `cc_extra`, so it
+      perturbs neither the NaN-value nor the NaN-correlation regression paths.
 
     Shares _REGULATORS / _TARGETS with callingcards so /binding/corr over the
     pair (callingcards, harbison) produces joinable groups.
@@ -426,6 +438,13 @@ def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
     meta_rows = []
     for i, (loc, sym) in enumerate(_REGULATORS):
         meta_rows.append((f"hb_{i}", loc, sym, "YPD", 1000 + i))
+    # Condition-mechanics vehicle: a meta-only extra sample for YBR289W
+    # (_REGULATORS[0]) with condition `SC`. Gives YBR289W two distinct
+    # conditions (YPD via hb_0, SC via hb_extra) while every other regulator
+    # stays single-condition. `end` reuses hb_0's coord so `end` stays
+    # single-valued per regulator (only `condition` varies). No data rows, so
+    # the binding NaN-value / NaN-correlation regression paths are untouched.
+    meta_rows.append(("hb_extra", _REGULATORS[0][0], _REGULATORS[0][1], "SC", 1000))
     conn.executemany("INSERT INTO harbison_meta VALUES (?, ?, ?, ?, ?)", meta_rows)
 
 
