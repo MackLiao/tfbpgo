@@ -33,6 +33,15 @@ export type AnnotatedFilterSpec = WireFilterSpec & {
    * backend ignores unknown JSON fields.
    */
   fromPair?: [string, string];
+  /**
+   * Whether this (common / regulator) filter is mirrored to every active
+   * dataset. Persisted in `?filters=` so the modal toggle survives reopen
+   * and so the page can decide the scope of a retroactive clear when the
+   * field is later removed (mirrors Shiny's `apply_to_all` /
+   * `prev_apply_to_all`; `server/sidebar.py:576-685`). Frontend-only — the
+   * Go decoder drops it on read, so it never fragments the server cache.
+   */
+  applyToAll?: boolean;
 };
 
 /** Build a regulator_locus_tag filter tagged with its origin pair. */
@@ -76,3 +85,35 @@ export function readFromPair(
  * clean up the annotation.
  */
 export const REGULATOR_LOCUS_TAG_FIELD = "regulator_locus_tag";
+
+/** Read the `applyToAll` annotation, if explicitly set; otherwise undefined. */
+export function readApplyToAll(
+  spec: AnnotatedFilterSpec | WireFilterSpec | null | undefined,
+): boolean | undefined {
+  if (!spec) return undefined;
+  const v = (spec as AnnotatedFilterSpec).applyToAll;
+  return typeof v === "boolean" ? v : undefined;
+}
+
+/**
+ * Return a copy of `spec` with the `applyToAll` annotation set explicitly.
+ * We persist `false` as well as `true` so that on reopen the toggle shows
+ * the user's last choice and the page can tell "applied to all" apart from
+ * "default" when deciding the scope of a retroactive clear.
+ */
+export function withApplyToAll(
+  spec: AnnotatedFilterSpec | WireFilterSpec,
+  on: boolean,
+): AnnotatedFilterSpec {
+  return { ...(spec as AnnotatedFilterSpec), applyToAll: on };
+}
+
+/**
+ * Default `applyToAll` for a field when no choice has been persisted yet.
+ * Mirrors Shiny, which defaults the regulator selectize and
+ * experimental-condition checkbox-group switches to `True`
+ * (`ui.py:192,337,403`) while leaving other common toggles `False`.
+ */
+export function defaultApplyToAll(field: string, role?: string): boolean {
+  return field === REGULATOR_LOCUS_TAG_FIELD || role === "experimental_condition";
+}

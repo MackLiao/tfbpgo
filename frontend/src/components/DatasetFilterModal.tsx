@@ -41,20 +41,27 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sortLevels } from "@/lib/sort-levels";
-import { readFromPair } from "@/lib/filter-spec";
+import {
+  readFromPair,
+  readApplyToAll,
+  withApplyToAll,
+  defaultApplyToAll,
+  REGULATOR_LOCUS_TAG_FIELD,
+  type AnnotatedFilterSpec,
+} from "@/lib/filter-spec";
+import { RegulatorFilterCard } from "@/components/RegulatorFilterCard";
 
 type FilterSpec = Schemas["FilterSpec"];
 type FieldMeta = Schemas["FieldMeta"];
 
 export interface ApplyResult {
-  /** Per-field filter map for THIS dataset (post-apply). */
-  next: Record<string, FilterSpec>;
   /**
-   * Subset of fields the user marked "apply to all datasets" — the page
-   * mirrors these into every active dataset's filter block that has the
-   * matching field. Empty when the user didn't enable any toggle.
+   * Per-field filter map for THIS dataset (post-apply). Each common-field
+   * and the regulator spec carries an `applyToAll` annotation (see
+   * `lib/filter-spec.ts`); the page reads it to decide propagation +
+   * retroactive-clear scope, mirroring Shiny's `apply_to_all`.
    */
-  applyToAllFields: string[];
+  next: Record<string, FilterSpec>;
 }
 
 export interface DatasetFilterModalProps {
@@ -71,10 +78,18 @@ export interface DatasetFilterModalProps {
    */
   commonFields?: Set<string>;
   onApply: (result: ApplyResult) => void;
+  /**
+   * Reset this dataset: clear its filters AND every active dataset's
+   * common-field filters, then close — mirrors Shiny's
+   * `_reset_filter_modal` (`server/sidebar.py:437-475`). Committed
+   * immediately (Shiny parity), not staged behind Apply.
+   */
+  onResetDataset: () => void;
 }
 
 export function DatasetFilterModal(props: DatasetFilterModalProps) {
-  const { open, onClose, db, displayName, currentFilters, commonFields, onApply } = props;
+  const { open, onClose, db, displayName, currentFilters, commonFields, onApply, onResetDataset } =
+    props;
   const dialogRef = useRef<HTMLDialogElement | null>(null);
 
   // Sync the <dialog>'s native modal state with the `open` prop.
@@ -102,6 +117,7 @@ export function DatasetFilterModal(props: DatasetFilterModalProps) {
           currentFilters={currentFilters}
           commonFields={commonFields ?? new Set()}
           onApply={onApply}
+          onResetDataset={onResetDataset}
           onClose={onClose}
         />
       )}
@@ -115,6 +131,7 @@ interface ModalBodyProps {
   currentFilters: Record<string, FilterSpec> | null;
   commonFields: Set<string>;
   onApply: (result: ApplyResult) => void;
+  onResetDataset: () => void;
   onClose: () => void;
 }
 
@@ -124,6 +141,7 @@ function ModalBody({
   currentFilters,
   commonFields,
   onApply,
+  onResetDataset,
   onClose,
 }: ModalBodyProps) {
   const { data, isLoading, isError, error } = useQuery({
@@ -131,23 +149,33 @@ function ModalBody({
     queryFn: () => api.datasetFields({ db }),
   });
 
-  const initial = useMemo<Record<string, FilterSpec>>(
-    () => ({ ...(currentFilters ?? {}) }),
+  const initial = useMemo<Record<string, AnnotatedFilterSpec>>(
+    () => ({ ...(currentFilters ?? {}) }) as Record<string, AnnotatedFilterSpec>,
     [currentFilters],
   );
-  const [pending, setPending] = useState<Record<string, FilterSpec>>(initial);
-  // Apply-to-all toggle state, keyed by field name. Only meaningful for
-  // fields in `commonFields`. Reset to {} on each modal open (the modal
-  // is re-mounted via `{open && <ModalBody />}` upstream).
+  const [pending, setPending] = useState<Record<string, AnnotatedFilterSpec>>(initial);
+  // Apply-to-all toggle OVERRIDES, keyed by field name — only holds entries
+  // the user explicitly flipped this session. The effective value falls back
+  // to the persisted annotation, then the field-type default (see
+  // `effectiveApplyToAll`). Cleared on each modal open (re-mounted upstream).
   const [applyToAll, setApplyToAll] = useState<Record<string, boolean>>({});
 
-  // If the parent flips currentFilters mid-modal (e.g. URL changed externally),
-  // rehydrate pending from it.
+  // field → role lookup so condition fields default their apply-to-all to ON.
+  const roleByField = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of data?.fields ?? []) m.set(f.field, f.role ?? "");
+    return m;
+  }, [data]);
+
+  // If the parent flips currentFilters mid-modal (e.g. the URL changes via
+  // back/forward navigation or the matrix from_pair clear), rehydrate pending.
+  // Note: the regulator card's "Clear" only updates this local pending — like
+  // every other field edit it commits on "Apply Filters", not immediately.
   useEffect(() => {
-    setPending({ ...(currentFilters ?? {}) });
+    setPending({ ...(currentFilters ?? {}) } as Record<string, AnnotatedFilterSpec>);
   }, [currentFilters]);
 
-  const setSpec = (field: string, spec: FilterSpec | null): void => {
+  const setSpec = (field: string, spec: AnnotatedFilterSpec | null): void => {
     setPending((prev) => {
       const next = { ...prev };
       if (spec === null) delete next[field];
@@ -156,20 +184,39 @@ function ModalBody({
     });
   };
 
-  // SD-6: Reset CLEARS this dataset's filters (then the user clicks Apply to
-  // commit the cleared state), mirroring Shiny's _reset_filter_modal
-  // (sidebar.py:401-441) which empties the dataset's filters — NOT the old
-  // "revert pending edits to currentFilters" behavior, which was a different
-  // (and unexpected) affordance.
+  /**
+   * Effective apply-to-all for a field: an explicit session flip wins; else
+   * the value persisted in the current filters; else the field-type default
+   * (regulator + experimental_condition → ON, everything else OFF).
+   */
+  const effectiveApplyToAll = (field: string): boolean => {
+    if (field in applyToAll) return applyToAll[field] === true;
+    const persisted = readApplyToAll(currentFilters?.[field]);
+    if (persisted !== undefined) return persisted;
+    return defaultApplyToAll(field, roleByField.get(field));
+  };
+  const setApplyToAllFor = (field: string, on: boolean): void =>
+    setApplyToAll((prev) => ({ ...prev, [field]: on }));
+
+  // SD-6b: Reset clears this dataset's filters AND common-field filters from
+  // every active dataset, committed immediately (Shiny `_reset_filter_modal`,
+  // sidebar.py:437-475). The page owns the cross-dataset write; we delegate.
   const onReset = (): void => {
-    setPending({});
-    setApplyToAll({});
+    onResetDataset();
+    onClose();
   };
   const onApplyClick = (): void => {
-    const applyToAllFields = Object.entries(applyToAll)
-      .filter(([, on]) => on === true)
-      .map(([f]) => f);
-    onApply({ next: pending, applyToAllFields });
+    // Stamp the apply-to-all annotation onto every common field + the
+    // regulator spec so it persists in `?filters=` and the page can mirror /
+    // retroactively clear correctly. Dataset-specific fields never carry it.
+    const next: Record<string, FilterSpec> = {};
+    for (const [field, spec] of Object.entries(pending)) {
+      if (!spec) continue;
+      const annotates =
+        field === REGULATOR_LOCUS_TAG_FIELD || commonFields.has(field);
+      next[field] = annotates ? withApplyToAll(spec, effectiveApplyToAll(field)) : spec;
+    }
+    onApply({ next });
   };
 
   return (
@@ -181,7 +228,20 @@ function ModalBody({
         <p className="mt-0.5 text-xs text-slate-500">db_name: <span className="font-mono">{db}</span></p>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+        {/* SD-5: Regulator card, prepended above the generic fields (Shiny
+            puts it atop the "Common Characteristics" column). Always shown —
+            every dataset keys its meta rows by regulator_locus_tag, which is
+            intentionally absent from /datasets/{db}/fields. */}
+        <RegulatorFilterCard
+          db={db}
+          spec={pending[REGULATOR_LOCUS_TAG_FIELD] ?? null}
+          applyToAll={effectiveApplyToAll(REGULATOR_LOCUS_TAG_FIELD)}
+          onChange={(s) => setSpec(REGULATOR_LOCUS_TAG_FIELD, s)}
+          onApplyToAllChange={(on) => setApplyToAllFor(REGULATOR_LOCUS_TAG_FIELD, on)}
+          onClear={() => setSpec(REGULATOR_LOCUS_TAG_FIELD, null)}
+        />
+
         {isLoading && (
           <div className="space-y-2">
             <Skeleton className="h-6 w-1/3" />
@@ -210,10 +270,8 @@ function ModalBody({
                     spec={pending[f.field] ?? null}
                     onChange={(s) => setSpec(f.field, s)}
                     applyToAllEligible={isCommon}
-                    applyToAll={applyToAll[f.field] === true}
-                    onApplyToAllChange={(on) =>
-                      setApplyToAll((prev) => ({ ...prev, [f.field]: on }))
-                    }
+                    applyToAll={effectiveApplyToAll(f.field)}
+                    onApplyToAllChange={(on) => setApplyToAllFor(f.field, on)}
                   />
                 </li>
               );

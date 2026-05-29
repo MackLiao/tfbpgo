@@ -85,6 +85,33 @@ interface BodyProps {
   onSelectCommon: (tags: string[], pair: [string, string]) => void;
 }
 
+/**
+ * Read the active `regulator_locus_tag` filter values for one dataset out of
+ * the scoped `?filters=` JSON, or null when none. Used to make the modal's
+ * common-regulator list consistent with the matrix cell: the cell narrows
+ * `n_common` by the regulator filter (both INTERSECT arms apply it), but the
+ * backend `/regulators/resolve` intentionally STRIPS regulator_locus_tag (so
+ * the pairwise flow can re-derive the full common set — mirrors Shiny
+ * `workspace.py:304`). When a regulator filter is active we therefore
+ * intersect the resolved set with it client-side so the displayed list +
+ * count + "Select N" all match the cell the user clicked.
+ */
+function regulatorConstraint(filtersJson: string, db: string): Set<string> | null {
+  if (!filtersJson) return null;
+  try {
+    const obj = JSON.parse(filtersJson) as Record<string, Record<string, unknown>>;
+    const spec = obj?.[db]?.["regulator_locus_tag"] as
+      | { type?: string; value?: unknown }
+      | undefined;
+    if (spec && spec.type === "categorical" && Array.isArray(spec.value)) {
+      return new Set(spec.value.filter((v): v is string => typeof v === "string"));
+    }
+  } catch {
+    // malformed scoped filters → treat as no constraint
+  }
+  return null;
+}
+
 function Body({ dbA, dbB, displayA, displayB, filters, onClose, onSelectCommon }: BodyProps) {
   const common = `${dbA}:${dbB}`;
   const { data, isLoading, isError, error } = useQuery({
@@ -94,7 +121,13 @@ function Body({ dbA, dbB, displayA, displayB, filters, onClose, onSelectCommon }
     queryFn: () => api.resolve(filters ? { common, filters } : { common }),
   });
 
-  const tags = data?.regulators ?? [];
+  // The resolve drops regulator_locus_tag; re-apply each side's regulator
+  // constraint here so the modal matches the (regulator-filtered) cell count.
+  const constraintA = regulatorConstraint(filters, dbA);
+  const constraintB = regulatorConstraint(filters, dbB);
+  const tags = (data?.regulators ?? []).filter(
+    (t) => (!constraintA || constraintA.has(t)) && (!constraintB || constraintB.has(t)),
+  );
   const truncated = data?.truncated === true;
 
   return (

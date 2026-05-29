@@ -50,6 +50,7 @@ import {
   REGULATOR_LOCUS_TAG_FIELD,
   buildFromPairFilter,
   readFromPair,
+  readApplyToAll,
 } from "@/lib/filter-spec";
 
 type DatasetEntry = Schemas["DatasetEntry"];
@@ -169,6 +170,13 @@ export function Select() {
     (db: string): string => displayNameByDb.get(db) ?? db,
     [displayNameByDb],
   );
+  // db → dataType, for SD-9 (applying a filter to an inactive dataset
+  // activates it under the correct ?binding=/?perturbation= param).
+  const dataTypeByDb = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of datasets) m.set(d.dbName, d.dataType);
+    return m;
+  }, [datasets]);
 
   // Active matrix = union of committed binding + perturbation selections in
   // stable order. The matrix renders against committed state, NOT pending —
@@ -268,47 +276,162 @@ export function Select() {
     !sameSet(pendingBinding, committedBinding) ||
     !sameSet(pendingPerturbation, committedPerturbation);
 
+  // SD-9: applying a filter to an inactive dataset activates it under the
+  // correct param (mirrors Shiny `sidebar.py:706-708`). Mutates `p` in place.
+  const activateInParams = useCallback(
+    (p: URLSearchParams, db: string): void => {
+      const dt = dataTypeByDb.get(db);
+      if (dt !== "binding" && dt !== "perturbation") return;
+      const cur = parseCsv(p.get(dt));
+      if (cur.includes(db)) return;
+      p.set(dt, [...cur, db].sort().join(","));
+    },
+    [dataTypeByDb],
+  );
+
   // Apply Filters from DatasetFilterModal — writes URL directly (separate
   // gate from the dataset-checkbox stage; see header comment + task spec).
+  //
+  // Ports Shiny `_apply_filter_modal` (server/sidebar.py:506-712):
+  //   - the open dataset's block becomes exactly `next`;
+  //   - each common field + `regulator_locus_tag` carries an `applyToAll`
+  //     annotation (stamped by the modal). applyToAll=true mirrors the spec
+  //     into every other active dataset; applyToAll=false pops it from the
+  //     others (keeps it only here);
+  //   - common/regulator fields removed from `next` but previously
+  //     apply-to-all on this dataset are retroactively cleared from the
+  //     others (the `prev_apply_to_all` rule, sidebar.py:669-685) — this is
+  //     the bug-class SD-6c fix: a removed shared filter must stop
+  //     constraining sibling datasets' queries;
+  //   - applying activates the dataset (SD-9).
+  //
+  // Propagation/clear are driven off the spec's PERSISTED `applyToAll`
+  // annotation — NOT the live `commonFields` set. `commonFields` is the
+  // intersection of *currently-active* datasets and shrinks when an active
+  // dataset lacks a field; gating on it would (re-)leak a stale shared filter
+  // onto a sibling when a third dataset shrinks the intersection (the SD-6c
+  // bug class). The annotation is the durable record of "this was applied to
+  // all", mirroring Shiny's reliance on the stored `prev_apply_to_all`.
+  // Regulator is treated as a shared field but is assumed present on every
+  // dataset (it is not in any field_manifest); a cleared regulator is removed
+  // from all datasets unconditionally (sidebar.py:638).
+  //
+  // DIVERGENCE (intentional, see docs/parity/select_datasets.md): Shiny writes
+  // apply-to-all specs to EVERY dataset (active or not); the URL-state model
+  // writes only to active datasets. A dataset filtered-while-inactive then
+  // activated does not back-fill apply-to-all filters set while it was off.
   const onApplyFilters = useCallback(
-    (
-      db: string,
-      next: Record<string, FilterSpec>,
-      applyToAllFields: string[],
-    ): void => {
-      const merged: FiltersByDB = { ...filters };
-      // Apply to the current dataset.
-      if (Object.keys(next).length === 0) delete merged[db];
-      else merged[db] = next;
+    (db: string, next: Record<string, FilterSpec>): void => {
+      const REG = REGULATOR_LOCUS_TAG_FIELD;
+      // "Shared" = carries an applyToAll annotation (stamped by the modal for
+      // common fields) or is the regulator. Annotation-driven, not commonFields.
+      const isShared = (spec: FilterSpec | undefined, f: string): boolean =>
+        f === REG || readApplyToAll(spec) !== undefined;
+      const activeOthers = [...committedBinding, ...committedPerturbation].filter(
+        (x) => x !== db,
+      );
 
-      // C5 rows 12/14: mirror flagged fields into every other active
-      // dataset that has the field in its manifest.
-      if (applyToAllFields.length > 0) {
-        const other = [...committedBinding, ...committedPerturbation].filter(
-          (x) => x !== db,
-        );
-        for (const otherDb of other) {
-          const otherFields = fieldsByDb.get(otherDb);
-          if (!otherFields) continue;
-          for (const f of applyToAllFields) {
-            if (!otherFields.has(f)) continue;
-            const spec = next[f];
-            const block = { ...(merged[otherDb] ?? {}) };
-            if (spec) block[f] = spec;
-            else delete block[f];
-            if (Object.keys(block).length === 0) delete merged[otherDb];
-            else merged[otherDb] = block;
-          }
+      const merged: FiltersByDB = { ...filters };
+      const blockOf = (d: string): Record<string, FilterSpec> => ({ ...(merged[d] ?? {}) });
+      const writeBlock = (d: string, block: Record<string, FilterSpec>): void => {
+        if (Object.keys(block).length === 0) delete merged[d];
+        else merged[d] = block;
+      };
+
+      // 1. The open dataset's block becomes exactly `next`.
+      if (Object.keys(next).length === 0) delete merged[db];
+      else merged[db] = { ...next };
+
+      // 2. Propagate / pop each shared field across the other active datasets.
+      for (const f of Object.keys(next)) {
+        const spec = next[f];
+        if (!spec || !isShared(spec, f)) continue;
+        const flag = readApplyToAll(spec);
+        // Regulator without an explicit flag defaults to apply-to-all (Shiny).
+        const toAll = flag === true || (f === REG && flag === undefined);
+        for (const od of activeOthers) {
+          // Tri-state presence: only write/pop when we KNOW whether `od` has
+          // the field. While its manifest is still loading, leave its block
+          // untouched (avoids both writing an invalid WHERE and dropping a
+          // legitimate sibling filter mid-race).
+          const has = fieldsByDb.get(od)?.has(f);
+          if (f !== REG && has === undefined) continue;
+          const present = f === REG || has === true;
+          const block = blockOf(od);
+          if (toAll && present) block[f] = spec;
+          else delete block[f];
+          writeBlock(od, block);
+        }
+      }
+
+      // 3. Retroactive clear (prev_apply_to_all): shared fields that were on
+      //    this dataset apply-to-all and are now removed from `next`. Popping
+      //    a field a sibling does not carry is a no-op, so no manifest check.
+      const prevBlock = filters[db] ?? {};
+      for (const f of Object.keys(prevBlock)) {
+        if (f in next) continue; // still present → handled in step 2
+        if (!isShared(prevBlock[f], f)) continue;
+        const prevToAll = readApplyToAll(prevBlock[f]) === true || f === REG;
+        if (!prevToAll) continue;
+        for (const od of activeOthers) {
+          const block = blockOf(od);
+          delete block[f];
+          writeBlock(od, block);
         }
       }
 
       const nextParams = new URLSearchParams(params);
       if (Object.keys(merged).length === 0) nextParams.delete("filters");
       else nextParams.set("filters", serializeFiltersToURL(merged));
+      // Keep the legacy ?regulators= side-channel in sync when THIS apply
+      // touched the regulator filter, so card-narrowed sets don't desync from
+      // ?filters= (review SD-5 finding #3). Untouched otherwise.
+      if (REG in next || REG in prevBlock) {
+        const regTags =
+          next[REG] && Array.isArray(next[REG].value)
+            ? (next[REG].value as unknown[]).filter((v): v is string => typeof v === "string")
+            : [];
+        if (regTags.length > 0) nextParams.set("regulators", regTags.join(","));
+        else nextParams.delete("regulators");
+      }
+      activateInParams(nextParams, db); // SD-9
       setParams(nextParams, { replace: false });
       setFilterDb(null);
     },
-    [params, filters, committedBinding, committedPerturbation, fieldsByDb, setParams],
+    [
+      params,
+      filters,
+      committedBinding,
+      committedPerturbation,
+      fieldsByDb,
+      activateInParams,
+      setParams,
+    ],
+  );
+
+  // SD-6b: Reset a dataset's filters — clears its whole block AND every
+  // dataset's common-field filters, committed immediately (Shiny
+  // `_reset_filter_modal`, sidebar.py:437-475). regulator_locus_tag on OTHER
+  // datasets is preserved (it is not a common field in Shiny's df-column
+  // sense); only the open dataset's regulator goes, with its block.
+  const onResetDataset = useCallback(
+    (db: string): void => {
+      const merged: FiltersByDB = {};
+      for (const d of Object.keys(filters)) {
+        if (d === db) continue; // open dataset's whole block dropped
+        const block = { ...filters[d] };
+        for (const f of Object.keys(block)) {
+          if (commonFields.has(f)) delete block[f];
+        }
+        if (Object.keys(block).length > 0) merged[d] = block;
+      }
+      const nextParams = new URLSearchParams(params);
+      if (Object.keys(merged).length === 0) nextParams.delete("filters");
+      else nextParams.set("filters", serializeFiltersToURL(merged));
+      setParams(nextParams, { replace: false });
+      setFilterDb(null);
+    },
+    [params, filters, commonFields, setParams],
   );
 
   // C4 (audit rows 3 + 4): first-visit defaults. When the user lands with no
@@ -366,9 +489,17 @@ export function Select() {
 
   // C5 (rows 15, 30, 31): when the user picks "Select N common regulators"
   // in the off-diagonal modal, write the resulting regulator_locus_tag
-  // filter to every active dataset that has the field, tagged with the
-  // originating display-name pair. Also retain ?regulators= for the
-  // legacy Phase B side-channel so downstream views keep working.
+  // filter to every active dataset, tagged with the originating
+  // display-name pair. Also retain ?regulators= for the legacy Phase B
+  // side-channel so downstream views keep working.
+  //
+  // NOTE: regulator_locus_tag keys every dataset's meta rows but is
+  // intentionally ABSENT from /datasets/{db}/fields (it is a hidden-but-valid
+  // WHERE field, not in field_manifest since the 2026-05-28 re-audit). So we
+  // must NOT gate on `fieldsByDb` here — that set never contains it, which
+  // would skip every active dataset and leave ?filters= unwritten (the matrix
+  // would then never refetch or highlight). Apply to every active dataset,
+  // matching onApplyFilters' "regulator is always present" rule.
   const onSelectCommon = useCallback(
     (tags: string[], pair: [string, string]): void => {
       const nextParams = new URLSearchParams(params);
@@ -379,11 +510,6 @@ export function Select() {
       const merged: FiltersByDB = { ...filters };
       let touched = false;
       for (const db of [...committedBinding, ...committedPerturbation]) {
-        const fset = fieldsByDb.get(db);
-        // If we don't yet know the field set (query pending), still apply
-        // — the safest assumption is that regulator_locus_tag exists on
-        // every dataset (it's how every dataset keys its meta rows).
-        if (fset && !fset.has(REGULATOR_LOCUS_TAG_FIELD)) continue;
         const block = { ...(merged[db] ?? {}) };
         block[REGULATOR_LOCUS_TAG_FIELD] = annotated;
         merged[db] = block;
@@ -395,7 +521,7 @@ export function Select() {
       }
       setParams(nextParams, { replace: false });
     },
-    [params, filters, committedBinding, committedPerturbation, fieldsByDb, setParams],
+    [params, filters, committedBinding, committedPerturbation, setParams],
   );
 
   // C5 (row 31): clear all from_pair regulator_locus_tag filters and the
@@ -604,9 +730,8 @@ export function Select() {
         displayName={filterDb ? displayName(filterDb) : ""}
         currentFilters={filterDb ? filters[filterDb] ?? null : null}
         commonFields={commonFields}
-        onApply={({ next, applyToAllFields }) =>
-          filterDb && onApplyFilters(filterDb, next, applyToAllFields)
-        }
+        onApply={({ next }) => filterDb && onApplyFilters(filterDb, next)}
+        onResetDataset={() => filterDb && onResetDataset(filterDb)}
       />
 
       <CommonRegulatorsModal
