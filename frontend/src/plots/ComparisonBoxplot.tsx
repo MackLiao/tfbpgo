@@ -53,8 +53,21 @@ export function ComparisonBoxplot({ resp, facetBy }: ComparisonBoxplotProps) {
   // Build per-axis layout entries plus subplot-title annotations.
   const layout: Record<string, unknown> = {
     height: 460,
+    // Constant uirevision: keep per-subplot zoom/pan and legend show/hide
+    // stable when a new top_n / effect / pvalue result rebuilds the traces and
+    // this layout literal. Re-faceting (binding<->perturbation) changes the
+    // subplot geometry, but Plotly safely ignores preserved ranges for axes
+    // that no longer exist, so a single constant is correct here too.
+    uirevision: "comparison-topn",
     margin: { l: 50, r: 20, t: 80, b: 30 },
     boxmode: "group",
+    // Widen the boxes. The traces carry no x value, so all boxes in a facet
+    // are grouped at one location; Plotly's default boxgap/boxgroupgap (0.3
+    // each) leave them thin with wide empty gutters. Tightening both fills more
+    // of each subplot, and the jittered point clouds (which spread relative to
+    // box width) read as fuller columns. Tune these two numbers to taste.
+    boxgap: 0.05,
+    boxgroupgap: 0.05,
     showlegend: true,
     legend: { title: { text: legendTitle } },
     annotations: facetTitles.map((title, i) => {
@@ -99,7 +112,10 @@ export function ComparisonBoxplot({ resp, facetBy }: ComparisonBoxplotProps) {
       layout={layout}
       config={{ displaylogo: false, responsive: true }}
       useResizeHandler
-      style={{ width: "100%", height: "100%" }}
+      // Definite pixel height (matches layout.height). A "100%" height against
+      // a content-sized ancestor lets Plotly's resize ratchet the chart bigger
+      // on every window/panel resize; pinning it breaks that loop.
+      style={{ width: "100%", height: 460 }}
     />
   );
 }

@@ -168,6 +168,9 @@ export function PerturbationCorrBoxplot({
         data={[] as never}
         layout={{
           height: 360,
+          // Stable uirevision: preserve zoom/pan/legend across data-driven
+          // re-renders (see PlotLazy block comment below). Constant per page.
+          uirevision: "perturbation-corr",
           margin: { l: 40, r: 20, t: 50, b: 80 },
           xaxis: { visible: false },
           yaxis: { visible: false },
@@ -188,7 +191,11 @@ export function PerturbationCorrBoxplot({
         }}
         config={{ displaylogo: false, responsive: true }}
         useResizeHandler
-        style={{ width: "100%", height: "100%" }}
+        // Definite pixel height (matches layout.height). A "100%" height
+        // against a content-sized ancestor lets Plotly's resize read offset-
+        // Height, grow the container, re-read, and ratchet bigger on every
+        // window/panel resize — pinning the height breaks that loop.
+        style={{ width: "100%", height: 360 }}
       />
     );
   }
@@ -200,6 +207,10 @@ export function PerturbationCorrBoxplot({
       data={data as never}
       layout={{
         height: 420,
+        // Constant uirevision keeps the user's zoom/pan and the selected-
+        // regulator overlay framing stable when traces rebuild (new regulator,
+        // refetched pairs, late-arriving sample-condition hover data).
+        uirevision: "perturbation-corr",
         title: { text: title },
         margin: { l: 40, r: 20, t: 50, b: 80 },
         showlegend: false,
@@ -207,7 +218,9 @@ export function PerturbationCorrBoxplot({
       }}
       config={{ displaylogo: false, responsive: true }}
       useResizeHandler
-      style={{ width: "100%", height: "100%" }}
+      // Definite pixel height (matches layout.height) — see empty-state note:
+      // prevents the resize ratchet from height:"100%".
+      style={{ width: "100%", height: 420 }}
       onClick={(evt: { points?: Array<{ customdata?: unknown }> }) => {
         const pt = evt?.points?.[0];
         if (pt && pt.customdata != null) {

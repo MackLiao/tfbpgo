@@ -4,9 +4,14 @@ import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
 import type { Schemas } from "@/api/client";
 
 // PlotLazy is async (dynamic-imports plotly.js). Replace it with a synchronous
-// stub that exposes the data/layout it would have rendered, so the tests can
-// assert on trace shape without spinning up the real Plotly bundle.
-type PlotImplProps = { data: unknown[]; layout: Record<string, unknown> };
+// stub that exposes the data/layout/style it would have rendered, so the tests
+// can assert on trace shape and the drift-fix contract without spinning up the
+// real Plotly bundle.
+type PlotImplProps = {
+  data: unknown[];
+  layout: Record<string, unknown>;
+  style?: Record<string, unknown>;
+};
 let lastProps: PlotImplProps | null = null;
 vi.mock("@/plots/PlotLazy", () => ({
   PlotLazy: (props: PlotImplProps) => {
@@ -95,5 +100,47 @@ describe("ComparisonBoxplot", () => {
     expect(lastProps).not.toBeNull();
     const traces = lastProps!.data as Array<{ text: string[] }>;
     expect(traces[0]!.text).toEqual(["TFC3", "YAL002C"]);
+  });
+
+  // Drift-fix contract (mirrors BindingCorrBoxplot.test.tsx): the chart must not
+  // grow/shrink on resize, nor reset zoom/pan/legend when the data changes.
+  it("renders with a definite pixel height so it cannot grow/shrink on resize", () => {
+    render(<ComparisonBoxplot resp={makeResp([makeRow("harbison__hackett", 0.5)])} facetBy="binding" />);
+    const style = lastProps!.style ?? {};
+    expect(typeof style.height).toBe("number");
+    expect(style.width).toBe("100%");
+  });
+
+  it("sets a stable uirevision so zoom/pan/legend survive a data change", () => {
+    const { rerender } = render(
+      <ComparisonBoxplot resp={makeResp([makeRow("harbison__hackett", 0.5)])} facetBy="binding" />,
+    );
+    const rev1 = lastProps!.layout.uirevision;
+    const data1 = lastProps!.data;
+    expect(rev1).toBeDefined();
+
+    // A new top-N / filter result rebuilds traces + the layout literal.
+    rerender(
+      <ComparisonBoxplot
+        resp={makeResp([makeRow("harbison__hackett", 0.9), makeRow("rossi__hackett", 0.1)])}
+        facetBy="binding"
+      />,
+    );
+    // uirevision stays constant (preserves zoom/pan/legend) while the trace
+    // data genuinely changes — otherwise the assertion would be tautological.
+    expect(lastProps!.layout.uirevision).toBe(rev1);
+    expect(lastProps!.data).not.toEqual(data1);
+  });
+
+  // The boxes (and their width-relative jittered point clouds) were too thin
+  // because Plotly's default boxgap/boxgroupgap (0.3 each) squeeze grouped
+  // boxes. Tightening both widens each column.
+  it("widens the boxes by setting boxgap/boxgroupgap below Plotly's 0.3 defaults", () => {
+    render(<ComparisonBoxplot resp={makeResp([makeRow("harbison__hackett", 0.5)])} facetBy="binding" />);
+    const layout = lastProps!.layout;
+    expect(typeof layout.boxgap).toBe("number");
+    expect(typeof layout.boxgroupgap).toBe("number");
+    expect(layout.boxgap as number).toBeLessThan(0.3);
+    expect(layout.boxgroupgap as number).toBeLessThan(0.3);
   });
 });
