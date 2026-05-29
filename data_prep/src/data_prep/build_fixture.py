@@ -392,9 +392,18 @@ def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
       no condition column): the meta carries a `hb_extra` sample for YBR289W
       with condition `SC` (every other sample is `YPD`), so filtering
       condition=YPD drops exactly one sample, condition=SC keeps exactly that
-      one, and the breakdown sees YBR289W with 2 distinct conditions. `hb_extra`
-      is meta-only (no data rows), exactly like callingcards' `cc_extra`, so it
-      perturbs neither the NaN-value nor the NaN-correlation regression paths.
+      one, and the breakdown sees YBR289W with 2 distinct conditions. The extra
+      sample (id 199) is meta-only (no data rows), exactly like callingcards'
+      `cc_extra`, so it perturbs neither the NaN-value nor the NaN-correlation
+      regression paths.
+    - `sample_id` is INTEGER (real harbison ids are integers, e.g. 121/132/151),
+      not VARCHAR like the other fixture datasets. This is the regression vehicle
+      for the empty-condition-labels-on-real-data bug: the sample-conditions
+      hover map keys must be the canonical decimal STRING ("100", "199", ...) so
+      they match the correlation overlay's lookup key (the /binding|perturbation
+      /corr response scans db_a_id = a.sample_id into a Go string). The handler
+      CASTs sample_id AS VARCHAR; before that fix, MapScan returned int64, the
+      `.(string)` scan skipped every row, and labels came back empty.
 
     Shares _REGULATORS / _TARGETS with callingcards so /binding/corr over the
     pair (callingcards, harbison) produces joinable groups.
@@ -402,7 +411,7 @@ def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         """
         CREATE TABLE harbison (
-            sample_id VARCHAR,
+            sample_id INTEGER,
             regulator_locus_tag VARCHAR,
             target_locus_tag VARCHAR,
             pvalue DOUBLE,
@@ -416,7 +425,7 @@ def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
     h_rows: list[tuple] = []
     idx = 0
     for i, (loc, _sym) in enumerate(_REGULATORS):
-        sample_id = f"hb_{i}"
+        sample_id = 100 + i  # INTEGER ids: 100, 101, 102 (mirrors real harbison)
         for j, tgt in enumerate(_TARGETS):
             effect = float("nan") if (i == 0 and j == 0) else 1.0
             end_coord = 1000 + idx
@@ -427,7 +436,7 @@ def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         """
         CREATE TABLE harbison_meta (
-            sample_id VARCHAR,
+            sample_id INTEGER,
             regulator_locus_tag VARCHAR,
             regulator_symbol VARCHAR,
             condition VARCHAR,
@@ -437,14 +446,14 @@ def _create_harbison(conn: duckdb.DuckDBPyConnection) -> None:
     )
     meta_rows = []
     for i, (loc, sym) in enumerate(_REGULATORS):
-        meta_rows.append((f"hb_{i}", loc, sym, "YPD", 1000 + i))
-    # Condition-mechanics vehicle: a meta-only extra sample for YBR289W
+        meta_rows.append((100 + i, loc, sym, "YPD", 1000 + i))
+    # Condition-mechanics vehicle: a meta-only extra sample (id 199) for YBR289W
     # (_REGULATORS[0]) with condition `SC`. Gives YBR289W two distinct
-    # conditions (YPD via hb_0, SC via hb_extra) while every other regulator
-    # stays single-condition. `end` reuses hb_0's coord so `end` stays
+    # conditions (YPD via id 100, SC via id 199) while every other regulator
+    # stays single-condition. `end` reuses id 100's coord so `end` stays
     # single-valued per regulator (only `condition` varies). No data rows, so
     # the binding NaN-value / NaN-correlation regression paths are untouched.
-    meta_rows.append(("hb_extra", _REGULATORS[0][0], _REGULATORS[0][1], "SC", 1000))
+    meta_rows.append((199, _REGULATORS[0][0], _REGULATORS[0][1], "SC", 1000))
     conn.executemany("INSERT INTO harbison_meta VALUES (?, ?, ?, ?, ?)", meta_rows)
 
 

@@ -136,8 +136,16 @@ func (s *Server) buildSampleConditionsResponse(ctx context.Context, dbName strin
 	for i, c := range quoted {
 		projections[i] = fmt.Sprintf(`CAST(%s AS VARCHAR) AS %s`, c, c)
 	}
+	// CAST sample_id to VARCHAR as well. Real {db}_meta sample_id columns are
+	// INTEGER (e.g. harbison 121, chec_m2025 58); the label-map KEY must be the
+	// canonical decimal string so it matches the correlation overlay's lookup
+	// key — the /binding|perturbation/corr response scans `db_a_id = a.sample_id`
+	// into a Go string (correlation.go), yielding "86" for INTEGER 86. Without
+	// this CAST, MapScan returns int64 and the `.(string)` scan below failed,
+	// skipping every row → empty labels on real data (hover conditions blank).
+	// Mirrors the reference's str(row["sample_id"]) key (sample_conditions.py).
 	sqlStr := fmt.Sprintf(
-		`SELECT %s AS sample_id, %s FROM %s`,
+		`SELECT CAST(%s AS VARCHAR) AS sample_id, %s FROM %s`,
 		quotedIdent(sampleIDCol),
 		strings.Join(projections, ", "),
 		quotedIdent(dbName+"_meta"),
@@ -156,7 +164,16 @@ func (s *Server) buildSampleConditionsResponse(ctx context.Context, dbName strin
 		if err := rows.MapScan(m); err != nil {
 			return nil, fmt.Errorf("sample-conditions scan: %w", err)
 		}
-		sid, _ := m["sample_id"].(string)
+		raw := m["sample_id"]
+		if raw == nil {
+			continue
+		}
+		sid, ok := raw.(string)
+		if !ok {
+			// CAST AS VARCHAR should yield string; defend anyway (mirrors the
+			// condition-column extraction below).
+			sid = fmt.Sprint(raw)
+		}
 		if sid == "" {
 			continue
 		}
