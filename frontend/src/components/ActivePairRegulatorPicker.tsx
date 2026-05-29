@@ -12,11 +12,11 @@ import { Input } from "@/components/ui/input";
 // keyboard nav and standard form semantics Just Work; otherwise falls
 // back to a typeahead-style filter on top of a scrollable list.
 //
-// Display label: locus tag (with optional symbol when present in
-// regulatorDisplayMap). The corr response doesn't currently carry the
-// gene symbol, so the parent supplies a best-effort map. Sorting is
-// case-insensitive by label, matching Shiny's `sorted(..., key=str.lower)`
-// in workspace.py:401.
+// Display label: regulatorDisplayMap supplies the full "SYMBOL (LOCUS_TAG)"
+// string (or just the locus tag when no symbol), exactly as Shiny's sym_map
+// does (vdb_init.py:165-180); it is rendered verbatim as the option label.
+// Sorting is case-insensitive by that label, matching Shiny's
+// `sorted(..., key=str.lower)` in workspace.py:401 (symbol-first ordering).
 
 const TYPEAHEAD_THRESHOLD = 50;
 
@@ -84,7 +84,7 @@ export function ActivePairRegulatorPicker({
         </option>
         {options.map((o) => (
           <option key={o.locusTag} value={o.locusTag}>
-            {o.label} {o.label === o.locusTag ? "" : `(${o.locusTag})`}
+            {o.label}
           </option>
         ))}
       </select>
@@ -116,10 +116,7 @@ export function ActivePairRegulatorPicker({
               }`}
               onClick={() => onChange(o.locusTag)}
             >
-              {o.label}{" "}
-              {o.label === o.locusTag ? null : (
-                <span className="text-slate-500">({o.locusTag})</span>
-              )}
+              {o.label}
             </button>
           </li>
         ))}

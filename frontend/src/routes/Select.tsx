@@ -616,6 +616,21 @@ export function Select() {
         dbB={commonPair?.[1] ?? ""}
         displayA={commonPair ? displayName(commonPair[0]) : ""}
         displayB={commonPair ? displayName(commonPair[1]) : ""}
+        // SD-1: pass the active filters for the clicked pair so the resolved
+        // common set is filter-aware (matches the matrix cell's n_common).
+        filters={
+          commonPair
+            ? (() => {
+                const scoped: FiltersByDB = {};
+                for (const db of commonPair) {
+                  if (filters[db]) scoped[db] = filters[db];
+                }
+                return Object.keys(scoped).length > 0
+                  ? serializeFiltersToURL(scoped)
+                  : "";
+              })()
+            : ""
+        }
         onSelectCommon={onSelectCommon}
       />
 

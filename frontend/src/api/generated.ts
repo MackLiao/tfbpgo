@@ -1379,6 +1379,16 @@ export interface components {
              *     permutations so cache values are deterministic.
              */
             pairs: components["schemas"]["CorrPair"][];
+            /**
+             * @description Maps each regulator_locus_tag appearing in `pairs` to its
+             *     "SYMBOL (LOCUS_TAG)" display name (from regulator_display_names),
+             *     mirroring Shiny's sym_map. The frontend uses it to label + sort the
+             *     regulator picker and boxplot hovers by gene symbol (B-2/P-4).
+             *     Regulators absent from regulator_display_names are omitted.
+             */
+            regulatorDisplay: {
+                [key: string]: string;
+            };
         };
         ScatterPoint: {
             /** @description Target gene locus tag (one row per target shared between A and B). */
@@ -1386,15 +1396,18 @@ export interface components {
             /**
              * Format: double
              * @description Measurement value on the A side. Raw value for Pearson; RANK()
-             *     output for Spearman.
+             *     output for Spearman. Null when the underlying measurement is
+             *     NULL/NaN/Inf (B-1: the scatter path is intentionally unfiltered, so
+             *     non-finite values render as plot gaps rather than being dropped).
              */
-            valA: number;
+            valA: number | null;
             /**
              * Format: double
              * @description Measurement value on the B side. Raw value for Pearson; RANK()
-             *     output for Spearman.
+             *     output for Spearman. Null when the underlying measurement is
+             *     NULL/NaN/Inf (see valA).
              */
-            valB: number;
+            valB: number | null;
         };
         ScatterResponse: {
             /** @description Regulator locus_tag the scatter was computed for. */
@@ -1411,12 +1424,13 @@ export interface components {
             method: "pearson" | "spearman";
             /**
              * Format: double
-             * @description Pearson correlation computed server-side over the returned points.
-             *     Coerced to 0 when fewer than 2 points are returned or when the
-             *     denominator is zero (matches Shiny's NaN-coercion). Clamped to
-             *     [-1, 1].
+             * @description Pearson correlation computed server-side over the returned points,
+             *     mirroring pandas Series.corr (B-1): NaN/NULL pairs are dropped
+             *     pairwise, and a ±Inf value propagates to null. Null when an Inf
+             *     value is present. 0 when fewer than 2 finite pairs remain or the
+             *     series has zero variance. Clamped to [-1, 1].
              */
-            r: number;
+            r: number | null;
             points: components["schemas"]["ScatterPoint"][];
         };
         /**

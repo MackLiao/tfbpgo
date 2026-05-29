@@ -236,16 +236,30 @@ func renderScatterSQL(method, dataType, regulator string, pair pairSpec) (string
 // scatter SQL templates bind the regulator as a positional `?` so the
 // extra IN-list would otherwise produce a redundant (and potentially
 // contradictory) WHERE clause.
+// regulatorLocusTagField is the hidden-but-valid WHERE field the
+// common-regulators flow ("Select N common regulators") writes to every active
+// dataset. It is intentionally ABSENT from field_manifest (hidden from the
+// filter UI), but it IS a real {db}_meta column and a legitimate WHERE target
+// in Shiny (reference/.../select_datasets/queries.py:45-48). Two handler
+// families treat it differently, matching Shiny:
+//   - correlation handlers STRIP it (stripRegulatorFilter) — they resolve
+//     regulators via the shared-regulator INTERSECT, so an extra IN-list WHERE
+//     would be redundant/contradictory (workspace.py:536-540).
+//   - matrix / breakdown / export handlers ACCEPT and APPLY it (checkFilterFields
+//     skips the whitelist for it) so the matrix narrows to the chosen regulators
+//     (workspace.py:90-123 passes dataset_filters() straight into the queries).
+const regulatorLocusTagField = "regulator_locus_tag"
+
 func stripRegulatorFilter(fs map[string]domain.FilterSpec) map[string]domain.FilterSpec {
 	if fs == nil {
 		return nil
 	}
-	if _, ok := fs["regulator_locus_tag"]; !ok {
+	if _, ok := fs[regulatorLocusTagField]; !ok {
 		return fs
 	}
 	out := make(map[string]domain.FilterSpec, len(fs)-1)
 	for k, v := range fs {
-		if k == "regulator_locus_tag" {
+		if k == regulatorLocusTagField {
 			continue
 		}
 		out[k] = v
@@ -253,30 +267,72 @@ func stripRegulatorFilter(fs map[string]domain.FilterSpec) map[string]domain.Fil
 	return out
 }
 
+// checkFilterFields validates every (db, field) in `filters` against the
+// manifest whitelist, EXCEPT regulatorLocusTagField, which is accepted as a
+// hidden-but-valid {db}_meta WHERE column (P0-2). The field is matched against
+// a compile-time constant — no other un-whitelisted field can slip through —
+// and buildSquirrelWhere double-quotes the identifier + parameterizes values,
+// so accepting this one constant is injection-safe. Returns the first rejection.
+func (s *Server) checkFilterFields(filters domain.FiltersByDB) error {
+	for dbName, fs := range filters {
+		for fld := range fs {
+			if fld == regulatorLocusTagField {
+				continue
+			}
+			if err := s.Whitelist.CheckField(dbName, fld); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // pearsonR computes the Pearson correlation coefficient over a slice of
-// (x, y) pairs using the textbook single-pass formula. Returns 0 when
-// fewer than 2 points are supplied or when the denominator is zero
-// (zero-variance series). Mirrors Shiny's coercion of NaN -> 0 at the
-// JSON layer (pd.Series.corr returns NaN for these inputs, which the
-// client cannot render without special-casing).
+// (x, y) pairs, mirroring pandas Series.corr() (Shiny's
+// r=merged["_val_a"].corr(merged["_val_b"]), workspace.py:569):
+//
+//   - Pairs where EITHER value is NaN (a SQL NULL scanned to NaN) are dropped
+//     pairwise — pandas excludes incomplete rows.
+//   - If a surviving pair carries ±Inf, the result is NaN — pandas does NOT
+//     drop inf; it flows into the moments and yields nan. (B-1 inf-parity.)
+//   - For the Spearman variants the inputs are already RANK() integers, so
+//     this is Pearson-on-ranks = the Spearman coefficient.
+//
+// Returns 0 for fewer than two finite pairs or a zero-variance series (the
+// degenerate r=0 vs Shiny's r=nan difference is the cosmetic B-4 item, left
+// as-is). The caller wraps the result in domain.SafeFloat, so a NaN return
+// (inf present) serializes as JSON null.
 //
 // Numerical note: the naive sum-of-squares formula is sensitive to
-// catastrophic cancellation when |mean| >> stddev. For the row counts
-// served here (per-regulator scatter, max ~few thousand points) the
-// error is well below the precision the UI displays (3-4 sig figs).
-// If we ever need stable accumulation, swap to Welford / two-pass.
+// catastrophic cancellation when |mean| >> stddev. For the row counts served
+// here (per-regulator scatter, max ~few thousand points) the error is well
+// below the precision the UI displays. Swap to Welford/two-pass if needed.
 func pearsonR(points []domain.ScatterPoint) float64 {
-	n := float64(len(points))
+	xs := make([]float64, 0, len(points))
+	ys := make([]float64, 0, len(points))
+	for _, p := range points {
+		a, b := float64(p.ValA), float64(p.ValB)
+		if math.IsNaN(a) || math.IsNaN(b) {
+			continue // pandas drops incomplete pairs (NaN/NULL)
+		}
+		if math.IsInf(a, 0) || math.IsInf(b, 0) {
+			return math.NaN() // pandas propagates inf -> nan
+		}
+		xs = append(xs, a)
+		ys = append(ys, b)
+	}
+	n := float64(len(xs))
 	if n < 2 {
 		return 0
 	}
 	var sx, sy, sxy, sx2, sy2 float64
-	for _, p := range points {
-		sx += p.ValA
-		sy += p.ValB
-		sxy += p.ValA * p.ValB
-		sx2 += p.ValA * p.ValA
-		sy2 += p.ValB * p.ValB
+	for i := range xs {
+		x, y := xs[i], ys[i]
+		sx += x
+		sy += y
+		sxy += x * y
+		sx2 += x * x
+		sy2 += y * y
 	}
 	num := sxy - sx*sy/n
 	denomA := sx2 - sx*sx/n

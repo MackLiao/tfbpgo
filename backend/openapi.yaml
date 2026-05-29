@@ -170,8 +170,9 @@ paths:
         binding/perturbation correlation overlay hover tooltips. Mirrors
         Shiny's `fetch_sample_condition_map`
         (`reference/tfbpshiny/utils/sample_conditions.py:55-94`). Source
-        columns come from `dataset_manifest.condition_cols` (CSV;
-        schema_version=4). The label is the per-row join of non-empty
+        columns come from `dataset_manifest.condition_cols` (CSV; derived in
+        schema_version=5 from EXPERIMENTAL_CONDITION_FIELDS, excluding hidden
+        non-condition columns — DM-1). The label is the per-row join of non-empty
         trimmed values with `" / "`. Samples whose composed label is
         empty are omitted. When `condition_cols` is empty, returns an
         empty `labels` object and `conditionCols: []`.
@@ -1188,7 +1189,7 @@ components:
 
     CorrResponse:
       type: object
-      required: [method, col, pairs]
+      required: [method, col, pairs, regulatorDisplay]
       properties:
         method:
           type: string
@@ -1204,6 +1205,16 @@ components:
             permutations so cache values are deterministic.
           items:
             $ref: "#/components/schemas/CorrPair"
+        regulatorDisplay:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Maps each regulator_locus_tag appearing in `pairs` to its
+            "SYMBOL (LOCUS_TAG)" display name (from regulator_display_names),
+            mirroring Shiny's sym_map. The frontend uses it to label + sort the
+            regulator picker and boxplot hovers by gene symbol (B-2/P-4).
+            Regulators absent from regulator_display_names are omitted.
 
     ScatterPoint:
       type: object
@@ -1215,15 +1226,20 @@ components:
         valA:
           type: number
           format: double
+          nullable: true
           description: |
             Measurement value on the A side. Raw value for Pearson; RANK()
-            output for Spearman.
+            output for Spearman. Null when the underlying measurement is
+            NULL/NaN/Inf (B-1: the scatter path is intentionally unfiltered, so
+            non-finite values render as plot gaps rather than being dropped).
         valB:
           type: number
           format: double
+          nullable: true
           description: |
             Measurement value on the B side. Raw value for Pearson; RANK()
-            output for Spearman.
+            output for Spearman. Null when the underlying measurement is
+            NULL/NaN/Inf (see valA).
 
     ScatterResponse:
       type: object
@@ -1250,11 +1266,13 @@ components:
         r:
           type: number
           format: double
+          nullable: true
           description: |
-            Pearson correlation computed server-side over the returned points.
-            Coerced to 0 when fewer than 2 points are returned or when the
-            denominator is zero (matches Shiny's NaN-coercion). Clamped to
-            [-1, 1].
+            Pearson correlation computed server-side over the returned points,
+            mirroring pandas Series.corr (B-1): NaN/NULL pairs are dropped
+            pairwise, and a ±Inf value propagates to null. Null when an Inf
+            value is present. 0 when fewer than 2 finite pairs remain or the
+            series has zero variance. Clamped to [-1, 1].
         points:
           type: array
           items:

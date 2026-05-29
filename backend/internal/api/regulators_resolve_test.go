@@ -31,6 +31,41 @@ func TestRegulatorsResolve_Intersect(t *testing.T) {
 	require.NotEmpty(t, resp.Regulators)
 }
 
+// SD-1: the resolve must be filter-aware so the modal's common set matches the
+// filter-aware matrix cell. Filtering callingcards to condition=SC keeps only
+// cc_extra (regulator YBR289W), so the callingcards∩hackett common set narrows
+// from all 3 shared regulators to just YBR289W.
+func TestRegulatorsResolve_FilterAware(t *testing.T) {
+	s := newTestServer(t)
+
+	doResolve := func(filters string) []string {
+		q := url.Values{"intersect": []string{"callingcards,hackett"}}
+		if filters != "" {
+			q.Set("filters", filters)
+		}
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("GET",
+			"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/regulators/resolve?"+q.Encode(), nil)
+		s.Routes().ServeHTTP(rr, req)
+		require.Equal(t, 200, rr.Code, "body=%s", rr.Body.String())
+		var resp resolveResponse
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		return resp.Regulators
+	}
+
+	unfiltered := doResolve("")
+	require.ElementsMatch(t, []string{"YBR289W", "YML007W", "YGL073W"}, unfiltered)
+
+	filtered := doResolve(`{"callingcards":{"condition":{"type":"categorical","value":["SC"]}}}`)
+	require.Equal(t, []string{"YBR289W"}, filtered,
+		"condition=SC keeps only cc_extra (YBR289W); the common set must narrow")
+
+	// A regulator_locus_tag filter must be STRIPPED (computing the regulator
+	// set — applying it would be circular), so it behaves like no filter.
+	stripped := doResolve(`{"callingcards":{"regulator_locus_tag":{"type":"categorical","value":["YML007W"]}}}`)
+	require.ElementsMatch(t, unfiltered, stripped)
+}
+
 func TestRegulatorsResolve_BadDataset(t *testing.T) {
 	s := newTestServer(t)
 	q := url.Values{"intersect": []string{"not_a_dataset"}}

@@ -28,6 +28,11 @@ WITH
     FROM {{table_b}}
     WHERE regulator_locus_tag = ? {{extra_where_b}}
   )
+-- B-1 parity: NO finite-value filter. Shiny's scatter path is intentionally
+-- unfiltered (reference/.../binding/queries.py: plain `a JOIN b`). NULL/±Inf/NaN
+-- targets are kept so the plotted points match (NULL renders as a plot gap) and
+-- the displayed r matches pandas .corr() (drops NaN pairwise; inf -> nan).
+-- Non-finite/NULL values flow through domain.SafeFloat in the handler.
 SELECT
   a.target_locus_tag AS target_locus_tag,
   a.{{col_a}}        AS val_a,
@@ -35,9 +40,3 @@ SELECT
 FROM a
 INNER JOIN b
   ON a.target_locus_tag = b.target_locus_tag
-WHERE a.{{col_a}} IS NOT NULL
-  AND b.{{col_b}} IS NOT NULL
-  AND NOT isinf(a.{{col_a}})
-  AND NOT isinf(b.{{col_b}})
-  AND NOT isnan(a.{{col_a}})
-  AND NOT isnan(b.{{col_b}})

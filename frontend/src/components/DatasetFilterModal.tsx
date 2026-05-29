@@ -156,8 +156,13 @@ function ModalBody({
     });
   };
 
+  // SD-6: Reset CLEARS this dataset's filters (then the user clicks Apply to
+  // commit the cleared state), mirroring Shiny's _reset_filter_modal
+  // (sidebar.py:401-441) which empties the dataset's filters — NOT the old
+  // "revert pending edits to currentFilters" behavior, which was a different
+  // (and unexpected) affordance.
   const onReset = (): void => {
-    setPending({ ...(currentFilters ?? {}) });
+    setPending({});
     setApplyToAll({});
   };
   const onApplyClick = (): void => {

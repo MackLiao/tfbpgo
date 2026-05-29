@@ -66,7 +66,12 @@ func TestDatasets_V4Metadata(t *testing.T) {
 			"value": []any{float64(45), float64(45)},
 		},
 	}, parsed)
-	require.Equal(t, []string{"mechanism", "restriction", "time"}, hk.ConditionCols)
+	// DM-1: hackett condition_cols is derived to just `time`.
+	require.Equal(t, []string{"time"}, hk.ConditionCols)
+
+	// v5: datasets endpoint surfaces upstreamCols (cascade) + description (DM-2).
+	require.Equal(t, "Synthetic calling-cards fixture dataset.", cc.Description)
+	require.Equal(t, []string{}, cc.UpstreamCols)
 }
 
 // TestDatasets_V4_DefaultFiltersWireShape pins the exact JSON shape

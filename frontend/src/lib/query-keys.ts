@@ -70,8 +70,10 @@ export const qk = {
   sampleConditions: (db: string) => [v(), "sampleConditions", db] as const,
   // Pair is sorted into the key so /regulators/resolve?common=A:B and B:A
   // share a cache entry (the server is order-symmetric for intersect anyway).
-  regulatorsResolveCommon: (dbA: string, dbB: string) => {
+  regulatorsResolveCommon: (dbA: string, dbB: string, filters = "") => {
     const [a, b] = dbA <= dbB ? [dbA, dbB] : [dbB, dbA];
-    return [v(), "regulatorsResolveCommon", a, b] as const;
+    // SD-1: filters participate in the key so a filter-aware resolve never
+    // reuses an unfiltered cache entry.
+    return [v(), "regulatorsResolveCommon", a, b, filters] as const;
   },
 };

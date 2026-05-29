@@ -42,6 +42,17 @@ type DatasetRow struct {
 	DefaultActive  bool   `db:"default_active"`
 	DefaultFilters string `db:"default_filters"`
 	ConditionCols  string `db:"condition_cols"`
+	// v5 additions.
+	//
+	// UpstreamCols: comma-separated categorical columns that drive the
+	// condition-choice cascade in the Select-Datasets filter modal (DM-3 /
+	// SD-6A). Parsed downstream into []string. Validated against SafeIdentRE
+	// at startup (interpolated into SQL by the cascade query).
+	//
+	// Description: free-text per-dataset prose (DM-2) shown in the sidebar
+	// tooltip + export README. May contain any UTF-8; capped at startup.
+	UpstreamCols string `db:"upstream_cols"`
+	Description  string `db:"description"`
 }
 
 // FieldRow mirrors field_manifest.
@@ -104,7 +115,7 @@ func LoadManifests(ctx context.Context, p *Pool) (*Manifests, error) {
 	}
 	m.Artifact = rows[0]
 
-	if err := p.DB.SelectContext(ctx, &m.Datasets, `SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field, effect_col, pvalue_col, default_active, default_filters, condition_cols FROM dataset_manifest ORDER BY db_name`); err != nil {
+	if err := p.DB.SelectContext(ctx, &m.Datasets, `SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field, effect_col, pvalue_col, default_active, default_filters, condition_cols, upstream_cols, description FROM dataset_manifest ORDER BY db_name`); err != nil {
 		return nil, fmt.Errorf("dataset_manifest: %w", err)
 	}
 	if err := p.DB.SelectContext(ctx, &m.Fields, `SELECT db_name, field, role, description, level_definitions, ui_kind_override, numeric_level_sort FROM field_manifest ORDER BY db_name, field`); err != nil {

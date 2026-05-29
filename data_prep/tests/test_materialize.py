@@ -8,6 +8,7 @@ import pytest
 from data_prep.materialize import (
     build_hackett_analysis_set,
     build_regulator_display_names,
+    filter_hackett_to_analysis_set,
     materialize_views_as_tables,
 )
 
@@ -24,9 +25,7 @@ def db_with_views(fresh_duckdb: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyCon
         "('cc_0', 'YBR289W', 'YAL002W', 0.2)) "
         "AS t(gm_id, regulator_locus_tag, target_locus_tag, score)"
     )
-    fresh_duckdb.execute(
-        "CREATE VIEW callingcards AS SELECT * FROM _callingcards_data"
-    )
+    fresh_duckdb.execute("CREATE VIEW callingcards AS SELECT * FROM _callingcards_data")
     fresh_duckdb.execute(
         "CREATE TABLE _callingcards_meta_data AS "
         "SELECT * FROM (VALUES "
@@ -42,7 +41,9 @@ def db_with_views(fresh_duckdb: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyCon
 def test_materialize_converts_views_to_tables(
     db_with_views: duckdb.DuckDBPyConnection,
 ) -> None:
-    materialize_views_as_tables(db_with_views, view_names=["callingcards", "callingcards_meta"])
+    materialize_views_as_tables(
+        db_with_views, view_names=["callingcards", "callingcards_meta"]
+    )
 
     kinds = {
         row[0]: row[1]
@@ -71,7 +72,9 @@ def test_materialize_preserves_row_data(
 def test_build_regulator_display_names_uses_symbol_when_present(
     db_with_views: duckdb.DuckDBPyConnection,
 ) -> None:
-    materialize_views_as_tables(db_with_views, view_names=["callingcards", "callingcards_meta"])
+    materialize_views_as_tables(
+        db_with_views, view_names=["callingcards", "callingcards_meta"]
+    )
     build_regulator_display_names(db_with_views, db_names=["callingcards"])
 
     row = db_with_views.execute(
@@ -122,9 +125,7 @@ def test_build_regulator_display_names_creates_empty_when_no_eligible() -> None:
             "WHERE table_name = 'regulator_display_names'"
         ).fetchone()[0]
         assert kind == "BASE TABLE"
-        n = conn.execute(
-            "SELECT COUNT(*) FROM regulator_display_names"
-        ).fetchone()[0]
+        n = conn.execute("SELECT COUNT(*) FROM regulator_display_names").fetchone()[0]
         assert n == 0
         cols = {
             r[0]
@@ -164,5 +165,52 @@ def test_build_hackett_analysis_set_filters_by_tier() -> None:
         # h_2: tier 3 (no ZEV/P, no GEV/P, takes GEV/M).
         # h_extra is filtered: YBR289W is tier 1 (ZEV/P), so only ZEV/P rows kept.
         assert sample_ids == ["h_0", "h_1", "h_2"]
+    finally:
+        conn.close()
+
+
+def test_filter_hackett_to_analysis_set_drops_non_analysis_rows() -> None:
+    """SQL-1: filter_hackett_to_analysis_set must restrict BOTH hackett and
+    hackett_meta to analysis-set samples, mirroring Shiny's _filter_hackett_views.
+    Without it, the non-analysis-set sample (h_extra) leaks into every hackett
+    query (perturbation tab, select-datasets sample counts, breakdown)."""
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute(
+            "CREATE TABLE hackett_meta AS SELECT * FROM (VALUES "
+            "('h_0', 'YBR289W', 'SNF5', 'ZEV', 'P', 45.0, '2020-01-01', 'BY4741'), "
+            "('h_1', 'YML007W', 'YAP1', 'GEV', 'P', 45.0, '2020-01-01', 'BY4741'), "
+            "('h_2', 'YGL073W', 'HSF1', 'GEV', 'M', 45.0, '2020-01-01', 'BY4741'), "
+            "('h_extra', 'YBR289W', 'SNF5', 'GEV', 'M', 45.0, '2020-01-02', 'BY4741') "
+            ") AS t(sample_id, regulator_locus_tag, regulator_symbol, mechanism, "
+            "restriction, time, date, strain)"
+        )
+        conn.execute(
+            "CREATE TABLE hackett AS SELECT * FROM (VALUES "
+            "('h_0', 'YBR289W', 'YAL001C', 1.0), "
+            "('h_2', 'YGL073W', 'YAL001C', 2.0), "
+            "('h_extra', 'YBR289W', 'YAL002W', 9.0) "
+            ") AS t(sample_id, regulator_locus_tag, target_locus_tag, "
+            "log2_shrunken_timecourses)"
+        )
+        build_hackett_analysis_set(conn)
+        filter_hackett_to_analysis_set(conn)
+
+        meta_ids = sorted(
+            r[0] for r in conn.execute("SELECT sample_id FROM hackett_meta").fetchall()
+        )
+        data_ids = sorted(
+            r[0] for r in conn.execute("SELECT sample_id FROM hackett").fetchall()
+        )
+        # h_extra (GEV/M for a tier-1 regulator) is excluded from the analysis
+        # set and therefore from both materialized tables.
+        assert meta_ids == ["h_0", "h_1", "h_2"]
+        assert "h_extra" not in data_ids
+        # The tables are still BASE TABLEs (filter uses a staging rename).
+        kind = conn.execute(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_name = 'hackett_meta'"
+        ).fetchone()[0]
+        assert kind == "BASE TABLE"
     finally:
         conn.close()

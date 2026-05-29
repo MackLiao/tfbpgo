@@ -80,12 +80,10 @@ def test_fixture_dataset_manifest_v3_columns(built_fixture: Path) -> None:
             "SELECT db_name, effect_col, pvalue_col FROM dataset_manifest "
             "ORDER BY db_name"
         ).fetchall()
-        sv = conn.execute(
-            "SELECT schema_version FROM artifact_manifest"
-        ).fetchone()[0]
+        sv = conn.execute("SELECT schema_version FROM artifact_manifest").fetchone()[0]
     finally:
         conn.close()
-    assert sv == 4
+    assert sv == 5
     by_name = {db: (eff, pv) for (db, eff, pv) in rows}
     assert by_name["callingcards"] == ("callingcards_enrichment", "poisson_pval")
     assert by_name["hackett"] == ("log2_shrunken_timecourses", "")
@@ -103,15 +101,20 @@ def test_fixture_field_manifest_role_column(built_fixture: Path) -> None:
     role_by_key = {(db, f): r for (db, f, r) in rows}
     assert role_by_key[("callingcards", "condition")] == "experimental_condition"
     assert role_by_key[("hackett", "time")] == "experimental_condition"
-    # Sanity: a non-condition field is empty-role.
-    assert role_by_key[("callingcards", "target_locus_tag")] == ""
-    assert role_by_key[("hackett", "log2_shrunken_timecourses")] == ""
+    # harbison.condition is also experimental_condition (kept despite being in
+    # HIDDEN_FILTER_FIELDS — the exp-cond override).
+    assert role_by_key[("harbison", "condition")] == "experimental_condition"
+    # Sanity: a non-condition meta field is empty-role.
+    assert role_by_key[("harbison", "end")] == ""
+    # SD-3: data-only columns are not filter fields at all.
+    assert ("callingcards", "target_locus_tag") not in role_by_key
+    assert ("hackett", "log2_shrunken_timecourses") not in role_by_key
 
 
 def test_fixture_dataset_manifest_v4_columns(built_fixture: Path) -> None:
     """v4: dataset_manifest gains default_active / default_filters /
-    condition_cols. Both fixture datasets are default_active=TRUE; only
-    hackett has a default_filters spec; both carry condition_cols."""
+    condition_cols. All fixture datasets are default_active=TRUE; harbison +
+    hackett have a default_filters spec; condition_cols is derived (DM-1)."""
     conn = duckdb.connect(str(built_fixture), read_only=True)
     try:
         rows = conn.execute(
@@ -125,7 +128,9 @@ def test_fixture_dataset_manifest_v4_columns(built_fixture: Path) -> None:
     assert by_name["hackett"] == (
         True,
         '{"time":{"type":"numeric","value":[45,45]}}',
-        "mechanism,restriction,time",
+        # DM-1: derived condition_cols is just `time` (mechanism/restriction
+        # are hidden, so they no longer leak into the hover label).
+        "time",
     )
 
 
@@ -147,10 +152,11 @@ def test_fixture_field_manifest_v4_columns(built_fixture: Path) -> None:
     }
     # hackett.time: categorical + numeric level-sort.
     assert by_key[("hackett", "time")] == ("", "", "categorical", "numeric")
-    # callingcards.condition: no override.
+    # callingcards.condition: no override; empty description/level_definitions
+    # (the fixture supplies no labretriever column metadata).
     assert by_key[("callingcards", "condition")] == ("", "", "", "")
-    # callingcards.score: no override.
-    assert by_key[("callingcards", "score")] == ("", "", "", "")
+    # harbison.end (reserved-keyword meta column): no override.
+    assert by_key[("harbison", "end")] == ("", "", "", "")
 
 
 def test_fixture_is_reproducible(tmp_path: Path) -> None:

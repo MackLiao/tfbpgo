@@ -78,6 +78,25 @@ func TestExport_HappyPath(t *testing.T) {
 	require.Contains(t, string(files["callingcards/README.md"]), "callingcards")
 }
 
+// P0-2: an export taken after "Select N common regulators" carries a
+// regulator_locus_tag filter on every dataset. That field is hidden from
+// field_manifest but is a valid {db}_meta WHERE column, so the export must
+// succeed (narrow), not 400.
+func TestExport_AcceptsRegulatorFilter(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{
+		"datasets": []string{"callingcards,hackett"},
+		"filters": []string{
+			`{"callingcards":{"regulator_locus_tag":{"type":"categorical","value":["YBR289W"]}},` +
+				`"hackett":{"regulator_locus_tag":{"type":"categorical","value":["YBR289W"]}}}`,
+		},
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/export?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, "body: %s", rr.Body.String())
+}
+
 func TestExport_RejectsUnknownDataset(t *testing.T) {
 	s := newTestServer(t)
 	q := url.Values{"datasets": []string{"definitely_not_a_dataset"}}

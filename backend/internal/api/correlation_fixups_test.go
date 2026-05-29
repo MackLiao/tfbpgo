@@ -18,22 +18,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------- F1: scatter SQL templates filter NULL/Inf/NaN ----------
+// ---------- B-1: scatter SQL templates must NOT filter NULL/Inf/NaN ----------
 
-// TestScatterSQL_HasNullInfNaNFilter asserts the rendered SQL for every
-// (datatype × method) combination of regulator_scatter_*.sql contains the
-// six-clause WHERE filter that excludes NULL / Inf / NaN. Without this
-// filter, an Inf measurement leaks through to the JSON response and
-// json.Marshal returns an error (Go's encoding/json refuses to emit
-// non-finite floats), producing a 500.
-//
-// We test at the rendered-SQL layer rather than over the wire because the
-// committed fixture is finite-by-construction — exercising the new WHERE
-// clause end-to-end would require a synthetic DuckDB with poisoned rows,
-// which is out of scope for this fix-up. A rendered-SQL substring check
-// is the same shape as the test that already pins the corr_pair filter
-// (see correlation_parity_test.go).
-func TestScatterSQL_HasNullInfNaNFilter(t *testing.T) {
+// TestScatterSQL_OmitsFiniteFilter is the inverse of the original F1 test: the
+// scatter path must NOT filter NULL/Inf/NaN. Shiny's regulator_scatter_sql is
+// intentionally unfiltered (the corr_pair path filters only because DuckDB
+// corr() raises on non-finite inputs; the scatter path uses pandas). Filtering
+// before the Spearman RANK() shifts every regulator's ranks when a non-finite
+// target is present, and drops Pearson points Shiny renders as gaps — a
+// numerical-parity divergence (B-1/P-1/SQL-3). Non-finite/NULL values now flow
+// through domain.SafeFloat in the handler instead of being filtered in SQL.
+func TestScatterSQL_OmitsFiniteFilter(t *testing.T) {
 	cases := []struct {
 		method, dataType, colA, colB string
 	}{
@@ -49,14 +44,10 @@ func TestScatterSQL_HasNullInfNaNFilter(t *testing.T) {
 				dbA: "ds_a", dbB: "ds_b",
 				colA: c.colA, colB: c.colB,
 			})
-			// Six required clauses — exactly mirrors corr_pair_*.sql. Column
-			// identifiers are double-quoted (quotedIdent) so a reserved-keyword
-			// measurement column parses.
-			require.Contains(t, sqlStr, "IS NOT NULL", "missing IS NOT NULL clause")
-			require.Contains(t, sqlStr, `NOT isinf(a."`+c.colA+`")`)
-			require.Contains(t, sqlStr, `NOT isinf(b."`+c.colB+`")`)
-			require.Contains(t, sqlStr, `NOT isnan(a."`+c.colA+`")`)
-			require.Contains(t, sqlStr, `NOT isnan(b."`+c.colB+`")`)
+			require.NotContains(t, sqlStr, "isinf",
+				"scatter SQL must not filter inf (B-1 parity)")
+			require.NotContains(t, sqlStr, "isnan",
+				"scatter SQL must not filter nan (B-1 parity)")
 		})
 	}
 }

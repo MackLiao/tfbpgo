@@ -1,9 +1,11 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/cn";
 
 const links = [
   { to: "/", label: "Home", end: true },
-  { to: "/select", label: "Select Datasets", end: false },
+  // H3: label matches Shiny's nav ("Dataset selection", app.py:87) and the
+  // Home feature card, which previously disagreed ("Select Datasets").
+  { to: "/select", label: "Dataset selection", end: false },
   { to: "/binding", label: "Binding", end: false },
   { to: "/perturbation", label: "Perturbation", end: false },
   { to: "/comparison", label: "Comparison", end: false },
@@ -12,6 +14,10 @@ const links = [
 const GITHUB_URL = "https://github.com/BrentLab/tfbpshiny-go";
 
 export function Nav() {
+  // AC-1: carry the current query string (?binding=/?perturbation=/?filters=,
+  // plus per-view params) across tab navigation so the selected datasets +
+  // filters survive — Shiny shares this as reactive state across all tabs.
+  const location = useLocation();
   return (
     <nav className="border-b bg-white">
       <div className="container mx-auto flex items-center justify-between gap-4 p-3">
@@ -28,7 +34,7 @@ export function Nav() {
             {links.map(({ to, label, end }) => (
               <li key={to}>
                 <NavLink
-                  to={to}
+                  to={{ pathname: to, search: location.search }}
                   end={end}
                   className={({ isActive }) =>
                     cn(

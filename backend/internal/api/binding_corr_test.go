@@ -39,6 +39,41 @@ func doGET(t *testing.T, s *Server, path string, q url.Values) *httptest.Respons
 	return rr
 }
 
+// B-1 parity: the scatter path keeps NULL/NaN/±Inf targets (no SQL finite
+// filter). harbison.effect carries an IEEE-NaN cell at (YBR289W, YAL001C), so a
+// callingcards×harbison Pearson scatter on YBR289W must (a) NOT 500 on the NaN
+// (it serializes as JSON null via SafeFloat), and (b) actually include a null
+// valB point — a row the OLD filtered SQL would have dropped.
+func TestBindingScatter_KeepsNonFiniteAsNull(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{
+		"regulator": []string{"YBR289W"},
+		"method":    []string{"pearson"},
+		"col":       []string{"effect"},
+		"pair":      []string{"callingcards,harbison"},
+	}
+	rr := doGET(t, s, scatterPath(s), q)
+	require.Equalf(t, 200, rr.Code, "NaN scatter must serialize as null, not 500; body=%s", rr.Body.String())
+
+	var resp struct {
+		R      json.RawMessage `json:"r"`
+		Points []struct {
+			ValA json.RawMessage `json:"valA"`
+			ValB json.RawMessage `json:"valB"`
+		} `json:"points"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Points)
+	nullValB := 0
+	for _, p := range resp.Points {
+		if string(p.ValB) == "null" {
+			nullValB++
+		}
+	}
+	require.GreaterOrEqual(t, nullValB, 1,
+		"the harbison NaN effect cell must appear as a null valB point, not be filtered out")
+}
+
 // ---------- /binding/corr validation ----------
 
 func TestBindingCorr_RejectsMissingMethod(t *testing.T) {

@@ -3,7 +3,10 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
-import { ComparisonSidebar, type ComparisonSidebarChange } from "@/components/ComparisonSidebar";
+import {
+  ComparisonSidebar,
+  type ComparisonSidebarChange,
+} from "@/components/ComparisonSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
@@ -32,7 +35,9 @@ function parseFacetBy(raw: string | null): "binding" | "perturbation" {
 export function Comparison() {
   const [params, setParams] = useSearchParams();
   const binding = (params.get("binding") ?? "").split(",").filter(Boolean);
-  const perturbation = (params.get("perturbation") ?? "").split(",").filter(Boolean);
+  const perturbation = (params.get("perturbation") ?? "")
+    .split(",")
+    .filter(Boolean);
   const topN = clampNumber(params.get("top_n"), DEFAULTS.topN, 1, 500);
   const effect = clampNumber(params.get("effect"), DEFAULTS.effect, 0, 5);
   const pvalue = clampNumber(params.get("pvalue"), DEFAULTS.pvalue, 0.001, 1);
@@ -68,23 +73,31 @@ export function Comparison() {
         facetBy={facetBy}
         onChange={handleSidebarChange}
       />
-      <ErrorBoundary>
-        {!binding.length || !perturbation.length ? (
-          <p className="text-sm text-slate-600">
-            Pick at least one binding and one perturbation dataset on the Select page to
-            render the Top-N comparison boxplot.
-          </p>
-        ) : null}
-        {topnQuery.error ? (
-          <p className="text-red-600">{(topnQuery.error as Error).message}</p>
-        ) : null}
-        {topnQuery.isPending && binding.length > 0 && perturbation.length > 0 ? (
-          <Skeleton className="h-96 w-full" />
-        ) : null}
-        {topnQuery.data ? (
-          <ComparisonBoxplot resp={topnQuery.data} facetBy={facetBy} />
-        ) : null}
-      </ErrorBoundary>
+      <div className="space-y-4">
+        {/* C-8: page heading, matching Binding/Perturbation (comparison/ui.py:19). */}
+        <h1 className="text-2xl font-semibold">
+          Binding vs. Perturbation Comparison
+        </h1>
+        <ErrorBoundary>
+          {!binding.length || !perturbation.length ? (
+            <p className="text-sm text-slate-600">
+              Pick at least one binding and one perturbation dataset on the
+              Select page to render the Top-N comparison boxplot.
+            </p>
+          ) : null}
+          {topnQuery.error ? (
+            <p className="text-red-600">{(topnQuery.error as Error).message}</p>
+          ) : null}
+          {topnQuery.isPending &&
+          binding.length > 0 &&
+          perturbation.length > 0 ? (
+            <Skeleton className="h-96 w-full" />
+          ) : null}
+          {topnQuery.data ? (
+            <ComparisonBoxplot resp={topnQuery.data} facetBy={facetBy} />
+          ) : null}
+        </ErrorBoundary>
+      </div>
     </section>
   );
 }

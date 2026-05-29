@@ -11,7 +11,9 @@ A third, widely-claimed P0 (NaN→500) was **refuted** — already fixed by `9cb
 
 ---
 
-## P0-3 · Real-data default filters 400 the dataset matrix on first load  ⟵ OBSERVED LIVE
+## ✅ P0-3 · Real-data default filters 400 the dataset matrix on first load  ⟵ FIXED & VERIFIED LIVE
+
+> **Closed (2026-05-28):** `write_field_manifest` now derives `field_manifest` from `{db}_meta` columns only (declared `sample_id_field` as the structural join key; experimental-condition columns kept even when hidden), and a build-time assertion enforces `default_filters ⊆ field_manifest`. Rebuilt the real artifact (`local-20260528-v5`) and confirmed `GET /selection/matrix` on the default selection + seeded filters returns **200** (was 400). See [README → Implementation status](README.md).
 
 **Affects:** `GET /selection/matrix` (and `/selection/breakdown`, `/export`) on the **default dataset selection, with zero user interaction**.
 **Status:** reproduced live 2026-05-28 against the real `tfbp.duckdb` (`artifact_version=local-20260528`): the Select page shows *"Failed to load dataset matrix. Check that filters are valid. (HTTP 400)"* (`frontend/src/plots/SelectionMatrix.tsx:77`, backed by the `selectionMatrix` query → `/selection/matrix`). **Completely masked by the synthetic fixture** — surfaced only once the real artifact was built.
@@ -52,7 +54,9 @@ The same heuristic *leaves* the measurement/coordinate columns in `field_manifes
 
 ---
 
-## P0-2 · Common-regulators narrowing flow 400s end-to-end
+## ✅ P0-2 · Common-regulators narrowing flow 400s end-to-end  ⟵ FIXED & VERIFIED LIVE
+
+> **Closed (2026-05-28):** a shared `checkFilterFields` helper accepts the hidden-but-valid `regulator_locus_tag` WHERE field (matched against a compile-time constant; values stay parameterized) in the matrix, breakdown, export, and comparison handlers, so the filter is applied (narrows) instead of 400-ing. Verified live: a `regulator_locus_tag` filter on the real matrix narrows each diagonal to the chosen regulators. `stripRegulatorFilter` is still used by the `/corr` handlers (regulators resolved via INTERSECT there).
 
 **Affects:** `GET /selection/matrix`, `GET /selection/breakdown`, `GET /export` — the moment the user clicks "Select N common regulators".
 **Verdict:** confirmed (orchestrator-verified directly: handler loops + `CheckField` semantics + manifest exclusion all read at HEAD).

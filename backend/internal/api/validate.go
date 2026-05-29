@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -48,14 +49,35 @@ func dedupeAndCapCSV(name string, items []string, maxItems int) ([]string, error
 	return out, nil
 }
 
-// clampTopN returns top_n in [TopNMin, TopNMax]; defaults to 25 on invalid.
+// clampTopN returns top_n in [TopNMin, TopNMax]. An unparseable value falls
+// back to `def`; a parsed value below TopNMin clamps UP to TopNMin (C-5: 0 -> 1,
+// mirroring Shiny's max(1, val) in sidebar.py:56, not the default). Above
+// TopNMax clamps down.
 func clampTopN(raw string, def int) int {
-	v := atoiOr(raw, def)
-	if v < TopNMin {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
 		return def
+	}
+	if v < TopNMin {
+		return TopNMin
 	}
 	if v > TopNMax {
 		return TopNMax
+	}
+	return v
+}
+
+// parseFloatOr parses a float64 from raw, returning def when raw is empty or
+// malformed (C-5/C-6: comparison thresholds silently fall back to the default
+// rather than 400-ing, matching Shiny's permissive sidebar parsing).
+func parseFloatOr(raw string, def float64) float64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return def
 	}
 	return v
 }

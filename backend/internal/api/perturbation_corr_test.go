@@ -24,6 +24,32 @@ func pertScatterPath(s *Server) string {
 	return "/api/v/" + s.Manifests.Artifact.ArtifactVersion + "/perturbation/scatter"
 }
 
+// B-2/P-4: the corr response carries regulatorDisplay mapping each regulator
+// to its "SYMBOL (LOCUS_TAG)" name, so the frontend can label + sort the picker
+// and hovers by gene symbol. Uses the hackett×kemmeren perturbation pair (both
+// have varying values → non-NaN correlations → regulators present in points).
+func TestPerturbationCorrelations_IncludesRegulatorDisplay(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{
+		"datasets": []string{"hackett,kemmeren"},
+		"method":   []string{"pearson"},
+		"col":      []string{"effect"},
+	}
+	rr := doGET(t, s, pertCorrPath(s), q)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.CorrResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	// Sanity: the pair must actually produce correlation points.
+	total := 0
+	for _, p := range resp.Pairs {
+		total += len(p.Points)
+	}
+	require.Greater(t, total, 0, "hackett×kemmeren must produce correlation points")
+	// regulator_display_names maps YBR289W -> "SNF5 (YBR289W)".
+	require.Equal(t, "SNF5 (YBR289W)", resp.RegulatorDisplay["YBR289W"])
+}
+
 func TestPerturbationCorrelations_RejectsBindingDataset(t *testing.T) {
 	s := newTestServer(t)
 	q := url.Values{
@@ -104,7 +130,8 @@ func TestPerturbationScatter_HappyPath_SelfPair(t *testing.T) {
 	// target yields one row per shared target with val_a == val_b
 	// (same row both sides) → Pearson on ranks = 1.0 exactly.
 	require.NotEmpty(t, resp.Points)
-	require.InDelta(t, 1.0, resp.R, 1e-9,
+	// R is domain.SafeFloat; convert for testify's numeric delta check.
+	require.InDelta(t, 1.0, float64(resp.R), 1e-9,
 		"hackett self-pair (1 sample/reg) → val_a==val_b → r=1")
 }
 

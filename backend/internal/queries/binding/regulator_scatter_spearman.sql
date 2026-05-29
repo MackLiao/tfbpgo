@@ -32,6 +32,11 @@ WITH
     FROM {{table_b}}
     WHERE regulator_locus_tag = ? {{extra_where_b}}
   ),
+  -- B-1 parity: NO finite-value filter in `joined`. Shiny's Spearman scatter
+  -- ranks over the FULL inner-join (NULL/±Inf/NaN targets included), so the
+  -- RANK() positions match Shiny exactly. Filtering here would shift every
+  -- regulator's ranks whenever a non-finite target is present. RANK() outputs
+  -- are finite integers, so the projected val_a/val_b are always non-null.
   joined AS (
     SELECT
       a.target_locus_tag AS target_locus_tag,
@@ -40,12 +45,6 @@ WITH
     FROM a
     INNER JOIN b
       ON a.target_locus_tag = b.target_locus_tag
-    WHERE a.{{col_a}} IS NOT NULL
-      AND b.{{col_b}} IS NOT NULL
-      AND NOT isinf(a.{{col_a}})
-      AND NOT isinf(b.{{col_b}})
-      AND NOT isnan(a.{{col_a}})
-      AND NOT isnan(b.{{col_b}})
   )
 SELECT
   target_locus_tag,

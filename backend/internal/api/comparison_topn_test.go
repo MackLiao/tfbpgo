@@ -1,9 +1,7 @@
 package api
 
-// TODO: happy-path tests land in Task 21 (parity) once fixtures with
-// production columns (poisson_pval, harbison, etc.) exist.
-
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -110,37 +108,100 @@ func TestComparisonTopN_PlaceholderCountInvariant_RegressionPair(t *testing.T) {
 
 // TestComparisonTopN_PlaceholderCountInvariant_AllPairs sanity-checks every
 // supported binding × perturbation combination (4 × 6 = 24 pairs).
-// TestComparisonTopN_HarbisonAppliesFilters pins the H2 fix: when the
-// dedup branch fires for harbison, user-supplied filter values must still
-// surface as positional args in the rendered SQL, matching the
-// non-harbison branch. Before the fix, filters[harbison] was silently
-// dropped.
-func TestComparisonTopN_HarbisonAppliesFilters(t *testing.T) {
+// TestComparisonTopN_HarbisonDropsFilters pins C-1: the harbison dedup branch
+// DROPS user-supplied binding filters (matching Shiny's queries.py:233-234,
+// which sets binding_cte_body = binding_dedup_cte verbatim and never builds a
+// filter WHERE). The MIN(pvalue) dedup aggregation is incompatible with
+// per-row filters. A filter on harbison must therefore not change the rendered
+// pair SQL or its args at all.
+func TestComparisonTopN_HarbisonDropsFilters(t *testing.T) {
 	tmpl := queries.Get("comparison/topn.sql")
 	srv := newServerWithFixtureWhitelist(t)
 	bcfg := bindingConfigs["harbison"]
 	pcfg := pertConfigs["kemmeren"]
 
-	filters := domain.FiltersByDB{
-		"harbison": map[string]domain.FilterSpec{
-			"pvalue": {Type: "numeric", Value: []byte(`[0, 0.01]`)},
-		},
-	}
-	rendered, args, err := srv.buildOnePair(
-		tmpl, "harbison", "kemmeren", bcfg, pcfg,
-		25, 0.0, 0.05, filters,
+	plain, plainArgs, err := srv.buildOnePair(
+		tmpl, "harbison", "kemmeren", bcfg, pcfg, 25, 0.0, 0.05, nil,
 	)
 	require.NoError(t, err)
-	require.NotEmpty(t, args)
-	// The filter `pvalue BETWEEN 0 AND 0.01` injects two numeric args
-	// (the GtOrEq lower bound and the LtOrEq upper bound) inside the
-	// harbison dedup CTE.
-	require.True(t,
-		strings.Contains(rendered, `"pvalue"`),
-		"rendered SQL must reference pvalue from filters: %s", rendered)
-	got := strings.Count(stripSQLComments(rendered), "?")
-	require.Equal(t, len(args), got,
-		"args count must match placeholders after H2 fix")
+
+	filters := domain.FiltersByDB{
+		"harbison": map[string]domain.FilterSpec{
+			"condition": {Type: "categorical", Value: []byte(`["NOT_A_REAL_CONDITION"]`)},
+		},
+	}
+	withFilter, withArgs, err := srv.buildOnePair(
+		tmpl, "harbison", "kemmeren", bcfg, pcfg, 25, 0.0, 0.05, filters,
+	)
+	require.NoError(t, err)
+
+	// Identical rendered SQL + args: the harbison filter was dropped.
+	require.Equal(t, plain, withFilter,
+		"harbison dedup branch must ignore filters[harbison] (C-1)")
+	require.Equal(t, plainArgs, withArgs)
+	require.NotContains(t, withFilter, "NOT_A_REAL_CONDITION")
+}
+
+// C-5: top_n clamps 0/negative UP to 1 (Shiny's max(1, val)), not to the
+// default; empty/unparseable falls back to the default; > max clamps down.
+func TestClampTopN_ParityClamping(t *testing.T) {
+	require.Equal(t, 1, clampTopN("0", 25))
+	require.Equal(t, 1, clampTopN("-5", 25))
+	require.Equal(t, 25, clampTopN("", 25))
+	require.Equal(t, 25, clampTopN("abc", 25))
+	require.Equal(t, TopNMax, clampTopN("99999", 25))
+	require.Equal(t, 50, clampTopN("50", 25))
+}
+
+// C-5/C-6: a malformed effect/pvalue threshold silently falls back to the
+// default rather than 400-ing.
+func TestParseFloatOr_FallsBackOnError(t *testing.T) {
+	require.Equal(t, 0.05, parseFloatOr("", 0.05))
+	require.Equal(t, 0.05, parseFloatOr("not-a-number", 0.05))
+	require.InDelta(t, 0.123, parseFloatOr("0.123", 0.05), 1e-12)
+}
+
+// C-2: keepConfigured drops datasets without a TopN config (and would log a
+// warning) rather than failing the whole request.
+func TestKeepConfigured_SkipsUnconfigured(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	got := keepConfigured(req, []string{"a", "b", "c"}, "binding", func(d string) bool { return d != "b" })
+	require.Equal(t, []string{"a", "c"}, got)
+}
+
+// SQL-2: execution-level numerical parity for the TopN query — the single most
+// complex query in the app, which previously had ZERO value coverage (all
+// prior tests were SQL-substring / placeholder-count checks). This runs the
+// full callingcards×hackett pair end-to-end through the DB and pins the
+// responsive-ratio invariants (n / n_responsive / responsive_ratio = n_resp/n).
+func TestComparisonTopN_ExecutionParity_CallingcardsHackett(t *testing.T) {
+	s := newTestServer(t)
+	rr := httptest.NewRecorder()
+	q := url.Values{}
+	q.Set("binding", "callingcards")
+	q.Set("perturbation", "hackett")
+	q.Set("top_n", "25")
+	reqURL := "/api/v/" + s.Manifests.Artifact.ArtifactVersion + "/comparison/topn?" + q.Encode()
+	s.Routes().ServeHTTP(rr, httptest.NewRequest("GET", reqURL, nil))
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.TopNResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Equal(t, 25, resp.TopN)
+	// dto_expanded wires cc_0_a→h_0 and cc_1_a→h_1, so the pair produces rows.
+	require.NotEmpty(t, resp.Rows, "callingcards×hackett TopN must produce rows")
+	for _, row := range resp.Rows {
+		require.Equal(t, "callingcards__hackett", row.PairKey)
+		require.Greater(t, row.N, int64(0), "n must be positive")
+		require.GreaterOrEqual(t, row.NResponsive, int64(0))
+		require.LessOrEqual(t, row.NResponsive, row.N, "n_responsive <= n")
+		// responsive_ratio == n_responsive / n, in [0, 1].
+		ratio := float64(row.ResponsiveRatio)
+		require.InDelta(t, float64(row.NResponsive)/float64(row.N), ratio, 1e-9,
+			"responsive_ratio must equal n_responsive/n")
+		require.GreaterOrEqual(t, ratio, 0.0)
+		require.LessOrEqual(t, ratio, 1.0)
+	}
 }
 
 // TestComparisonTopN_HackettFilterParity pins the A4 fix: when the

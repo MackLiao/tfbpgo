@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
@@ -246,7 +247,64 @@ func (s *Server) buildCorrResponse(
 		resp.Pairs[slot].Points = append(resp.Pairs[slot].Points, row.CorrPairPoint)
 	}
 
+	// B-2/P-4: attach the regulator display-name map for the regulators that
+	// actually appear in the response, so the frontend can label + sort the
+	// picker and hovers by gene symbol (Shiny's sym_map).
+	dm, err := s.regulatorDisplayMap(ctx, distinctCorrRegulators(resp.Pairs))
+	if err != nil {
+		return nil, fmt.Errorf("corr regulator display map: %w", err)
+	}
+	resp.RegulatorDisplay = dm
+
 	return json.Marshal(resp)
+}
+
+// distinctCorrRegulators collects the unique regulator_locus_tag values across
+// every pair's points, in first-seen order.
+func distinctCorrRegulators(pairs []domain.CorrPair) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, p := range pairs {
+		for _, pt := range p.Points {
+			if _, ok := seen[pt.RegulatorLocusTag]; ok {
+				continue
+			}
+			seen[pt.RegulatorLocusTag] = struct{}{}
+			out = append(out, pt.RegulatorLocusTag)
+		}
+	}
+	return out
+}
+
+// regulatorDisplayMap looks up "SYMBOL (LOCUS_TAG)" display names for the given
+// locus tags from regulator_display_names (B-2/P-4). Returns an empty (non-nil)
+// map for no tags. Tags absent from the table are simply omitted. Values are
+// passed as positional bind args (never interpolated), so the IN-list is safe.
+func (s *Server) regulatorDisplayMap(ctx context.Context, tags []string) (map[string]string, error) {
+	out := make(map[string]string, len(tags))
+	if len(tags) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(tags)), ",")
+	q := "SELECT regulator_locus_tag, display_name FROM regulator_display_names " +
+		"WHERE regulator_locus_tag IN (" + placeholders + ")"
+	args := make([]any, len(tags))
+	for i, t := range tags {
+		args[i] = t
+	}
+	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
+	defer cancel()
+	var rows []struct {
+		Tag     string `db:"regulator_locus_tag"`
+		Display string `db:"display_name"`
+	}
+	if err := s.Pool.DB.SelectContext(dbCtx, &rows, q, args...); err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.Tag] = r.Display
+	}
+	return out, nil
 }
 
 // serveScatter is the shared body of BindingScatter and PerturbationScatter.
@@ -411,7 +469,7 @@ func (s *Server) buildScatterResponse(
 		ColA:      colA,
 		ColB:      colB,
 		Method:    method,
-		R:         pearsonR(points),
+		R:         domain.SafeFloat(pearsonR(points)),
 		Points:    points,
 	}
 	return json.Marshal(resp)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -11,17 +12,20 @@ import (
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/queries"
 )
 
 const (
 	maxExplicitTags = 30
-	maxResolvedTags = 1000
 )
 
 type resolveResponse struct {
 	Regulators []string `json:"regulators"`
-	Truncated  bool     `json:"truncated"`
+	// Truncated is retained for wire compatibility but is now always false:
+	// SD-2 removed the silent 1000-tag cap so the modal selects the FULL
+	// common-regulator set (matching Shiny's unbounded sorted intersection).
+	Truncated bool `json:"truncated"`
 }
 
 // resolvePrefixedDataset removes the optional "binding." or "perturbation."
@@ -120,9 +124,33 @@ func (s *Server) RegulatorsResolve(w http.ResponseWriter, r *http.Request) {
 		explicit = append(explicit, x)
 	}
 
+	// SD-1: the resolve must be filter-aware so the common set the modal shows
+	// (and writes back) matches the filter-aware matrix cell the user clicked.
+	// Parse the active filters, strip regulator_locus_tag from each dataset
+	// (computing the regulator set; an IN-list on it would be circular —
+	// mirrors workspace.py:253-269), and validate the remaining fields.
+	rawFilters := q.Get("filters")
+	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filters, err := parseFilters(rawFilters)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	for db := range filters {
+		filters[db] = stripRegulatorFilter(filters[db])
+	}
+	if err := s.checkFilterFields(filters); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Canonicalize the cache key so semantically identical requests collapse:
 	// `intersect=A,B` and `intersect=B,A` (and `common=A:B` vs `intersect=A,B`)
-	// all hash to the same key. Same for `regulators=B,A`.
+	// all hash to the same key. Same for `regulators=B,A`. The (stripped)
+	// filters participate so a filtered resolve never reuses an unfiltered one.
 	canon := url.Values{}
 	if len(datasets) > 0 {
 		sorted := append([]string{}, datasets...)
@@ -134,29 +162,48 @@ func (s *Server) RegulatorsResolve(w http.ResponseWriter, r *http.Request) {
 		sort.Strings(sortedTags)
 		canon.Set("regulators", strings.Join(sortedTags, ","))
 	}
+	if len(filters) > 0 {
+		b, _ := json.Marshal(filters)
+		canon.Set("filters", string(b))
+	}
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
-		return s.buildResolveResponse(r.Context(), datasets, explicit)
+		return s.buildResolveResponse(r.Context(), datasets, explicit, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)
 	s.writeCachedJSON(w, r, body, hit, err)
 }
 
-func (s *Server) buildResolveResponse(ctx context.Context, datasets, explicit []string) ([]byte, error) {
+func (s *Server) buildResolveResponse(ctx context.Context, datasets, explicit []string, filters domain.FiltersByDB) ([]byte, error) {
 	tags := map[string]struct{}{}
 
 	if len(datasets) > 0 {
 		tmpl := queries.Get("regulators/resolve_intersect.sql")
 		first := datasets[0]
+		// SD-1: each arm is restricted to that dataset's (regulator-stripped)
+		// filters. Args are collected in template-positional order: the first
+		// arm's WHERE, then each subsequent INTERSECT arm's WHERE.
+		var args []any
+		firstWhere, firstArgs, err := buildSquirrelWhere(filters[first])
+		if err != nil {
+			return nil, fmt.Errorf("resolve where %s: %w", first, err)
+		}
+		args = append(args, firstArgs...)
 		var chain strings.Builder
 		for _, d := range datasets[1:] {
+			w, a, err := buildSquirrelWhere(filters[d])
+			if err != nil {
+				return nil, fmt.Errorf("resolve where %s: %w", d, err)
+			}
 			fmt.Fprintf(&chain,
-				"INTERSECT SELECT DISTINCT regulator_locus_tag FROM %s_meta\n",
-				whitelistedIdent(d))
+				"INTERSECT SELECT DISTINCT regulator_locus_tag FROM %s_meta%s\n",
+				whitelistedIdent(d), whereForDiagonal(w))
+			args = append(args, a...)
 		}
 		sqlStr := strings.NewReplacer(
 			"{{first_table}}", whitelistedIdent(first),
+			"{{first_where}}", whereForDiagonal(firstWhere),
 			"{{intersect_chain}}", chain.String(),
 		).Replace(tmpl)
 
@@ -166,7 +213,7 @@ func (s *Server) buildResolveResponse(ctx context.Context, datasets, explicit []
 		var rows []struct {
 			Tag string `db:"tag"`
 		}
-		if err := s.Pool.DB.SelectContext(dbCtx, &rows, sqlStr); err != nil {
+		if err := s.Pool.DB.SelectContext(dbCtx, &rows, sqlStr, args...); err != nil {
 			return nil, fmt.Errorf("resolve intersect: %w", err)
 		}
 		elapsed := time.Since(t0)
@@ -203,10 +250,7 @@ func (s *Server) buildResolveResponse(ctx context.Context, datasets, explicit []
 	}
 	sort.Strings(out)
 
-	resp := resolveResponse{Regulators: out}
-	if len(out) > maxResolvedTags {
-		resp.Regulators = out[:maxResolvedTags]
-		resp.Truncated = true
-	}
-	return jsonMarshal(resp)
+	// SD-2: no cap — the modal selects the full common set (Shiny writes the
+	// full sorted intersection with no bound).
+	return jsonMarshal(resolveResponse{Regulators: out})
 }

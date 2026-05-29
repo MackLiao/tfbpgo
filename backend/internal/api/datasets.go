@@ -28,21 +28,10 @@ func (s *Server) buildDatasetsResponse() ([]byte, error) {
 	}
 	out := domain.DatasetsResponse{}
 	for _, d := range s.Manifests.Datasets {
-		// Parse condition_cols CSV → []string on the server so the JSON
-		// contract is clean. The manifest gate has already validated
-		// every entry against SafeIdentRE; TrimSpace mirrors the
-		// startup check (NewWhitelist), so a stray space anywhere on
-		// the line cannot drift between the two boundaries.
-		cc := []string{}
-		if d.ConditionCols != "" {
-			for _, tok := range strings.Split(d.ConditionCols, ",") {
-				tok = strings.TrimSpace(tok)
-				if tok == "" {
-					continue
-				}
-				cc = append(cc, tok)
-			}
-		}
+		// Parse the condition_cols / upstream_cols CSVs → []string on the
+		// server so the JSON contract is clean (see csvToFields).
+		cc := csvToFields(d.ConditionCols)
+		uc := csvToFields(d.UpstreamCols)
 		// DefaultFilters lives in the manifest as a Go string carrying
 		// JSON bytes. Forward as json.RawMessage so the wire format is
 		// a JSON object, not a JSON-encoded string. Empty manifest
@@ -62,7 +51,30 @@ func (s *Server) buildDatasetsResponse() ([]byte, error) {
 			DefaultActive:  d.DefaultActive,
 			DefaultFilters: df,
 			ConditionCols:  cc,
+			UpstreamCols:   uc,
+			Description:    d.Description,
 		})
 	}
 	return jsonMarshal(out)
+}
+
+// csvToFields parses a comma-separated manifest column (condition_cols /
+// upstream_cols) into a clean []string. The manifest gate (NewWhitelist) has
+// already validated every entry against SafeIdentRE with no-empty/no-whitespace
+// discipline; the TrimSpace + skip-empty here mirror that so a stray space
+// cannot drift between the two boundaries. Always returns a non-nil slice so
+// the JSON contract is an array, never null.
+func csvToFields(csv string) []string {
+	out := []string{}
+	if csv == "" {
+		return out
+	}
+	for _, tok := range strings.Split(csv, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
 }

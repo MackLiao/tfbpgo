@@ -15,7 +15,7 @@ func TestStartupContract_FixturePasses(t *testing.T) {
 
 	report, err := RunStartupChecks(context.Background(), pool, MinSchemaVersion, MaxSchemaVersion)
 	require.NoError(t, err)
-	require.Equal(t, 4, report.Manifests.Artifact.SchemaVersion)
+	require.Equal(t, 5, report.Manifests.Artifact.SchemaVersion)
 	require.NotEmpty(t, report.Manifests.Artifact.ArtifactVersion)
 }
 

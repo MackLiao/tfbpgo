@@ -14,6 +14,8 @@ from data_prep.manifests import (
     HIDDEN_FILTER_FIELDS,
     LEVEL_CACHE_THRESHOLD,
     SCHEMA_VERSION,
+    assert_default_filters_in_field_manifest,
+    harvest_column_metadata,
     write_artifact_manifest,
     write_dataset_manifest,
     write_field_manifest,
@@ -21,8 +23,8 @@ from data_prep.manifests import (
 )
 
 
-def test_schema_version_is_four() -> None:
-    assert SCHEMA_VERSION == 4
+def test_schema_version_is_five() -> None:
+    assert SCHEMA_VERSION == 5
 
 
 def test_artifact_manifest_has_exactly_one_row(
@@ -98,7 +100,9 @@ def test_artifact_manifest_overwrite(
         )
     n = fresh_duckdb.execute("SELECT COUNT(*) FROM artifact_manifest").fetchone()[0]
     assert n == 1
-    v = fresh_duckdb.execute("SELECT artifact_version FROM artifact_manifest").fetchone()[0]
+    v = fresh_duckdb.execute(
+        "SELECT artifact_version FROM artifact_manifest"
+    ).fetchone()[0]
     assert v == "2026-05-13"
 
 
@@ -155,22 +159,37 @@ def test_dataset_manifest_emits_one_row_per_tagged_dataset(
     # to `sample_id` in the VirtualDB view) — see
     # test_dataset_manifest_forces_materialized_sample_id below.
     # hackett:      in DEFAULT_ACTIVE_DATASETS, DEFAULT_DATASET_FILTERS
-    # encodes {"time": {"type":"numeric","value":[45,45]}}, and
-    # CONDITION_COLS=['mechanism','restriction','time'].
+    # encodes {"time": {"type":"numeric","value":[45,45]}}, and condition_cols
+    # is derived to ['time'] (DM-1: mechanism/restriction are hidden).
     assert rows == [
         (
-            "callingcards", "binding", "CallingCards", "2026 Calling Cards",
-            "BrentLab/callingcards", "sample_id",
-            "callingcards_enrichment", "poisson_pval",
-            True, "", "condition",
+            "callingcards",
+            "binding",
+            "CallingCards",
+            "2026 Calling Cards",
+            "BrentLab/callingcards",
+            "sample_id",
+            "callingcards_enrichment",
+            "poisson_pval",
+            True,
+            "",
+            "condition",
         ),
         (
-            "hackett", "perturbation", "overexpression",
-            "2020 Overexpression (Hackett)", "BrentLab/hackett_2020", "sample_id",
-            "log2_shrunken_timecourses", "",
+            "hackett",
+            "perturbation",
+            "overexpression",
+            "2020 Overexpression (Hackett)",
+            "BrentLab/hackett_2020",
+            "sample_id",
+            "log2_shrunken_timecourses",
+            "",
             True,
             '{"time":{"type":"numeric","value":[45,45]}}',
-            "mechanism,restriction,time",
+            # DM-1/DM-5: condition_cols is derived from EXPERIMENTAL_CONDITION_FIELDS
+            # — the hidden, non-experimental-condition columns mechanism/restriction
+            # are no longer included (they produced "ZEV / P / 45" hover labels).
+            "time",
         ),
     ]
 
@@ -196,7 +215,7 @@ def test_dataset_manifest_forces_materialized_sample_id(
     assert row[0] == "sample_id"  # NOT the YAML source name 'gm_id'
 
 
-def test_dataset_manifest_columns_v4(
+def test_dataset_manifest_columns_v5(
     fresh_duckdb: duckdb.DuckDBPyConnection,
 ) -> None:
     config = yaml.safe_load(_SAMPLE_YAML)
@@ -221,8 +240,49 @@ def test_dataset_manifest_columns_v4(
         "default_active",
         "default_filters",
         "condition_cols",
+        # v5 additions
+        "upstream_cols",
+        "description",
     }
     assert cols == expected
+
+
+def test_dataset_manifest_carries_description(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """DM-2: the per-dataset YAML description is read into
+    dataset_manifest.description, with folded-scalar whitespace normalized to a
+    single clean line."""
+    config = {
+        "repositories": {
+            "BrentLab/callingcards": {
+                "dataset": {
+                    "cc": {
+                        "tags": {
+                            "data_type": "binding",
+                            "assay": "CallingCards",
+                            "display_name": "CC",
+                        },
+                        "db_name": "callingcards",
+                        "sample_id": {"field": "gm_id"},
+                        "description": "Data generated\n  with calling cards,\n  near TF sites.",
+                    },
+                },
+            },
+        },
+    }
+    write_dataset_manifest(fresh_duckdb, config)
+    desc = fresh_duckdb.execute(
+        "SELECT description FROM dataset_manifest WHERE db_name='callingcards'"
+    ).fetchone()[0]
+    assert desc == "Data generated with calling cards, near TF sites."
+    # A dataset without a YAML description gets the empty default.
+    config["repositories"]["BrentLab/callingcards"]["dataset"]["cc"].pop("description")
+    write_dataset_manifest(fresh_duckdb, config)
+    desc2 = fresh_duckdb.execute(
+        "SELECT description FROM dataset_manifest WHERE db_name='callingcards'"
+    ).fetchone()[0]
+    assert desc2 == ""
 
 
 def test_dataset_manifest_raises_when_db_name_missing_from_measurement_map(
@@ -301,9 +361,9 @@ def test_dataset_manifest_db_name_unique(
     n_distinct = fresh_duckdb.execute(
         "SELECT COUNT(DISTINCT db_name) FROM dataset_manifest"
     ).fetchone()[0]
-    n_total = fresh_duckdb.execute(
-        "SELECT COUNT(*) FROM dataset_manifest"
-    ).fetchone()[0]
+    n_total = fresh_duckdb.execute("SELECT COUNT(*) FROM dataset_manifest").fetchone()[
+        0
+    ]
     assert n_distinct == n_total
 
 
@@ -340,6 +400,63 @@ def _seed_two_datasets(conn: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def _seed_shared_condition(conn: duckdb.DuckDBPyConnection) -> None:
+    """Mirror the REAL labretriever artifact: metadata columns are replicated
+    into BOTH ``{db}`` and ``{db}_meta``. The experimental-condition column
+    ``condition`` lives in both tables (so the old ``data_cols ∩ meta_cols``
+    join-key heuristic over-excluded it → P0-3), while the measurement columns
+    ``effect``/``pvalue`` live only in the data table (so they must NOT become
+    filter fields → SD-3)."""
+    conn.execute(
+        "CREATE TABLE harbison (sample_id VARCHAR, regulator_locus_tag VARCHAR, "
+        "target_locus_tag VARCHAR, effect DOUBLE, pvalue DOUBLE, condition VARCHAR)"
+    )
+    conn.execute(
+        "CREATE TABLE harbison_meta (sample_id VARCHAR, regulator_locus_tag "
+        "VARCHAR, regulator_symbol VARCHAR, condition VARCHAR)"
+    )
+    conn.execute(
+        "CREATE TABLE dataset_manifest (db_name VARCHAR PRIMARY KEY, "
+        "data_type VARCHAR, assay VARCHAR, display_name VARCHAR, "
+        "source_repo VARCHAR, sample_id_field VARCHAR, "
+        "effect_col VARCHAR, pvalue_col VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO dataset_manifest VALUES "
+        "('harbison', 'binding', 'ChIP-chip', 'harbison', "
+        "'BrentLab/harbison_2004', 'sample_id', 'effect', 'pvalue')"
+    )
+
+
+def test_field_manifest_meta_only_keeps_shared_condition(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """P0-3 / SD-3 regression: field_manifest must derive from ``{db}_meta``
+    only, keep the experimental-condition column even when it is also
+    replicated into the data table (and even though it is in
+    HIDDEN_FILTER_FIELDS), and exclude data-only measurement columns."""
+    _seed_shared_condition(fresh_duckdb)
+    write_field_manifest(fresh_duckdb)
+    fields = {
+        row[0]
+        for row in fresh_duckdb.execute(
+            "SELECT field FROM field_manifest WHERE db_name = 'harbison'"
+        ).fetchall()
+    }
+    # condition: experimental-condition meta column shared into the data table
+    # — must survive (P0-3, even though hidden in Shiny's Title-Case UI).
+    assert "condition" in fields
+    # effect/pvalue/target_locus_tag: data-only — never filter fields (SD-3).
+    assert "effect" not in fields
+    assert "pvalue" not in fields
+    assert "target_locus_tag" not in fields
+    role = fresh_duckdb.execute(
+        "SELECT role FROM field_manifest "
+        "WHERE db_name='harbison' AND field='condition'"
+    ).fetchone()[0]
+    assert role == "experimental_condition"
+
+
 def test_field_manifest_one_row_per_legal_field(
     fresh_duckdb: duckdb.DuckDBPyConnection,
 ) -> None:
@@ -352,11 +469,13 @@ def test_field_manifest_one_row_per_legal_field(
             "SELECT field FROM field_manifest WHERE db_name = 'callingcards'"
         ).fetchall()
     }
-    # Allowed: target_locus_tag, score (data) + condition (meta)
-    # Disallowed: regulator_locus_tag, regulator_symbol (global hidden);
-    #             gm_id (sample_id alias — see Step 3 logic);
-    #             background_total_hops (callingcards-specific hidden)
-    assert cc_fields == {"target_locus_tag", "score", "condition"}
+    # field_manifest derives from {db}_meta ONLY (SD-3): the data-only columns
+    # target_locus_tag / score are NOT filter fields. callingcards_meta carries
+    # {gm_id (=sample_id join key), regulator_locus_tag, regulator_symbol,
+    # condition, background_total_hops}; after excluding the join key + the
+    # globally/locally hidden fields, only the experimental-condition `condition`
+    # remains.
+    assert cc_fields == {"condition"}
 
 
 def test_field_manifest_excludes_globally_hidden(
@@ -365,9 +484,7 @@ def test_field_manifest_excludes_globally_hidden(
     _seed_two_datasets(fresh_duckdb)
     write_field_manifest(fresh_duckdb)
     forbidden = HIDDEN_FILTER_FIELDS["*"]
-    rows = fresh_duckdb.execute(
-        "SELECT field FROM field_manifest"
-    ).fetchall()
+    rows = fresh_duckdb.execute("SELECT field FROM field_manifest").fetchall()
     for (field,) in rows:
         assert field not in forbidden
 
@@ -387,22 +504,45 @@ def test_field_manifest_db_name_field_unique(
 def test_field_manifest_role_for_experimental_condition(
     fresh_duckdb: duckdb.DuckDBPyConnection,
 ) -> None:
-    """v3: callingcards.condition is tagged role='experimental_condition'.
-    All other fields keep role=''."""
+    """callingcards.condition and harbison.condition are both tagged
+    role='experimental_condition'. harbison.condition survives even though it
+    is in HIDDEN_FILTER_FIELDS, because experimental-condition fields override
+    the hidden exclusion (Shiny shows the Title-Case "Experimental condition";
+    the rewrite can only use the lowercase machine column)."""
     assert "condition" in EXPERIMENTAL_CONDITION_FIELDS["callingcards"]
+    assert "condition" in EXPERIMENTAL_CONDITION_FIELDS["harbison"]
     _seed_two_datasets(fresh_duckdb)
     write_field_manifest(fresh_duckdb)
     rows = fresh_duckdb.execute(
-        "SELECT db_name, field, role FROM field_manifest "
-        "ORDER BY db_name, field"
+        "SELECT db_name, field, role FROM field_manifest " "ORDER BY db_name, field"
     ).fetchall()
     role_by_key = {(db, f): r for (db, f, r) in rows}
     assert role_by_key[("callingcards", "condition")] == "experimental_condition"
-    # callingcards.target_locus_tag and harbison.target_locus_tag must be
-    # role=''. (harbison.condition is hidden, so it never reaches the
-    # field_manifest.)
-    assert role_by_key[("callingcards", "target_locus_tag")] == ""
-    assert role_by_key[("harbison", "target_locus_tag")] == ""
+    # harbison.condition is in HIDDEN_FILTER_FIELDS["harbison"] but is an
+    # experimental-condition field, so it is kept with the role set.
+    assert role_by_key[("harbison", "condition")] == "experimental_condition"
+
+
+def test_condition_cols_is_single_source_of_truth() -> None:
+    """DM-1/DM-5: CONDITION_COLS is derived from EXPERIMENTAL_CONDITION_FIELDS
+    (the single source of truth), so the two can never silently disagree, and
+    hidden non-experimental-condition columns (e.g. hackett mechanism/restriction)
+    never appear in condition_cols."""
+    from data_prep.manifests import CONDITION_COLS
+
+    for db, cols in CONDITION_COLS.items():
+        assert set(cols) == set(EXPERIMENTAL_CONDITION_FIELDS[db]), db
+    # hackett's hover label must be driven by `time` alone, not the hidden
+    # mechanism/restriction columns.
+    assert CONDITION_COLS["hackett"] == ["time"]
+    # all five filterable datasets are present and consistent.
+    assert set(EXPERIMENTAL_CONDITION_FIELDS) >= {
+        "callingcards",
+        "harbison",
+        "rossi",
+        "chec_m2025",
+        "hackett",
+    }
 
 
 def test_field_manifest_v4_columns(
@@ -538,10 +678,10 @@ def test_filter_level_cache_excludes_high_cardinality(
     field is omitted."""
     _seed_low_cardinality(fresh_duckdb)
     # Add many distinct target rows so target_locus_tag exceeds the threshold
-    targets = [(f"cc_t_{i}", f"YAL{i:03d}C", 0.1) for i in range(LEVEL_CACHE_THRESHOLD + 5)]
-    fresh_duckdb.executemany(
-        "INSERT INTO callingcards VALUES (?, ?, ?)", targets
-    )
+    targets = [
+        (f"cc_t_{i}", f"YAL{i:03d}C", 0.1) for i in range(LEVEL_CACHE_THRESHOLD + 5)
+    ]
+    fresh_duckdb.executemany("INSERT INTO callingcards VALUES (?, ?, ?)", targets)
     write_filter_level_cache(fresh_duckdb)
     n = fresh_duckdb.execute(
         "SELECT COUNT(*) FROM filter_level_cache "
@@ -558,7 +698,153 @@ def test_filter_level_cache_only_caches_field_manifest_entries(
     _seed_low_cardinality(fresh_duckdb)
     write_filter_level_cache(fresh_duckdb)
     n = fresh_duckdb.execute(
-        "SELECT COUNT(*) FROM filter_level_cache "
-        "WHERE field = 'regulator_locus_tag'"
+        "SELECT COUNT(*) FROM filter_level_cache " "WHERE field = 'regulator_locus_tag'"
     ).fetchone()[0]
     assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# A6: default_filters ⊆ field_manifest tripwire (P0-3 regression guard)
+# ---------------------------------------------------------------------------
+
+
+def _seed_hackett_for_assertion(
+    conn: duckdb.DuckDBPyConnection, *, with_time: bool
+) -> None:
+    meta_cols = (
+        "sample_id VARCHAR, regulator_locus_tag VARCHAR, regulator_symbol VARCHAR"
+    )
+    if with_time:
+        meta_cols += ", time INTEGER"
+    conn.execute(f"CREATE TABLE hackett_meta ({meta_cols})")
+    conn.execute(
+        "CREATE TABLE hackett (sample_id VARCHAR, regulator_locus_tag VARCHAR, "
+        "target_locus_tag VARCHAR)"
+    )
+    conn.execute(
+        "CREATE TABLE callingcards_meta (sample_id VARCHAR, "
+        "regulator_locus_tag VARCHAR, regulator_symbol VARCHAR)"
+    )
+    write_dataset_manifest(conn, yaml.safe_load(_SAMPLE_YAML))
+
+
+def test_assert_default_filters_present_passes(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    _seed_hackett_for_assertion(fresh_duckdb, with_time=True)
+    write_field_manifest(fresh_duckdb)
+    # hackett.time (a seeded default filter) is present → no raise.
+    assert_default_filters_in_field_manifest(fresh_duckdb)
+
+
+def test_assert_default_filters_missing_raises(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    _seed_hackett_for_assertion(fresh_duckdb, with_time=False)
+    write_field_manifest(fresh_duckdb)
+    with pytest.raises(ValueError, match="field_manifest"):
+        assert_default_filters_in_field_manifest(fresh_duckdb)
+
+
+# ---------------------------------------------------------------------------
+# DM-4: best-effort labretriever description / level_definitions harvest
+# ---------------------------------------------------------------------------
+
+
+class _FakeMeta:
+    def __init__(self, *, role=None, level_definitions=None, description=""):
+        self.role = role
+        self.level_definitions = level_definitions
+        self.description = description
+
+
+class _FakeVDB:
+    def __init__(self, data):
+        self._data = data
+
+    def get_column_metadata(self, db):
+        return self._data.get(db)
+
+
+class _BoomVDB:
+    def get_column_metadata(self, db):  # noqa: ARG002
+        raise RuntimeError("metadata extraction failed")
+
+
+def test_harvest_column_metadata_collects_desc_and_levels() -> None:
+    vdb = _FakeVDB(
+        {
+            "harbison": {
+                "condition": _FakeMeta(
+                    role="experimental_condition",
+                    level_definitions={"YPD": "rich medium", "SM": "starvation"},
+                    description="  Environmental condition  ",
+                ),
+                "regulator_locus_tag": _FakeMeta(role="regulator_identifier"),
+            }
+        }
+    )
+    out = harvest_column_metadata(vdb, ["harbison", "not_in_vdb"])
+    assert out["harbison"]["condition"].description == "Environmental condition"
+    import json as _json
+
+    assert _json.loads(out["harbison"]["condition"].level_definitions) == {
+        "SM": "starvation",
+        "YPD": "rich medium",
+    }
+    # A column with neither description nor level_definitions is omitted.
+    assert "regulator_locus_tag" not in out["harbison"]
+    # A dataset absent from the vdb is omitted.
+    assert "not_in_vdb" not in out
+
+
+def test_harvest_column_metadata_is_best_effort() -> None:
+    # A vdb whose metadata extraction raises must degrade to {}, never fail
+    # the build.
+    assert harvest_column_metadata(_BoomVDB(), ["harbison"]) == {}
+    # A vdb without the method at all also degrades.
+    assert harvest_column_metadata(object(), ["harbison"]) == {}
+    # A malformed PER-COLUMN shape (level_definitions is a list, not a mapping;
+    # description is a non-string) must also degrade that dataset to {} rather
+    # than raising — the per-column parse is inside the try/except.
+    bad = _FakeVDB(
+        {
+            "harbison": {
+                "condition": _FakeMeta(level_definitions=["not", "a", "mapping"]),
+                "other": _FakeMeta(description=12345),  # non-string
+            }
+        }
+    )
+    assert harvest_column_metadata(bad, ["harbison"]) == {}
+
+
+def test_field_manifest_uses_harvested_metadata(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """When column_metadata is supplied, field_manifest.description /
+    level_definitions are populated from it (DM-4)."""
+    _seed_two_datasets(fresh_duckdb)
+    cm = {
+        "callingcards": {
+            "condition": harvest_column_metadata(
+                _FakeVDB(
+                    {
+                        "callingcards": {
+                            "condition": _FakeMeta(
+                                level_definitions={"YPD": "rich"},
+                                description="growth condition",
+                            )
+                        }
+                    }
+                ),
+                ["callingcards"],
+            )["callingcards"]["condition"]
+        }
+    }
+    write_field_manifest(fresh_duckdb, cm)
+    desc, lvl = fresh_duckdb.execute(
+        "SELECT description, level_definitions FROM field_manifest "
+        "WHERE db_name='callingcards' AND field='condition'"
+    ).fetchone()
+    assert desc == "growth condition"
+    assert lvl == '{"YPD":"rich"}'

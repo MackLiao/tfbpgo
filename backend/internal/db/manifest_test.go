@@ -16,10 +16,13 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	m, err := LoadManifests(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, "test-fixture", m.Artifact.ArtifactVersion)
-	require.Equal(t, 4, m.Artifact.SchemaVersion)
+	require.Equal(t, 5, m.Artifact.SchemaVersion)
 	require.False(t, m.Artifact.ParityTestsPassed)
 
-	require.Len(t, m.Datasets, 3)
+	// v5 fixture: callingcards + harbison (binding) and hackett + kemmeren
+	// (perturbation). kemmeren is the second perturbation dataset added so
+	// multi-pair perturbation flows are exercised.
+	require.Len(t, m.Datasets, 4)
 	for _, ds := range m.Datasets {
 		require.NotEmpty(t, ds.SampleIDField, "v2 schema requires sample_id_field")
 		require.NotEmpty(t, ds.EffectCol, "v3 schema requires non-empty effect_col for %s", ds.DBName)
@@ -44,11 +47,13 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	require.Equal(t, "", dsByName["hackett"].PValueCol,
 		"hackett intentionally has no p-value column — see buildResponsiveExpr")
 	require.Equal(t, "effect", dsByName["harbison"].EffectCol)
-	require.Equal(t, "condition,end", dsByName["harbison"].ConditionCols)
+	// DM-1/DM-5: condition_cols is derived from EXPERIMENTAL_CONDITION_FIELDS,
+	// so the non-condition `end` column is no longer in harbison's hover cols.
+	require.Equal(t, "condition", dsByName["harbison"].ConditionCols)
 
 	// v4: dataset_manifest carries DefaultActive / DefaultFilters /
-	// ConditionCols. Both fixture datasets are default_active=TRUE; only
-	// hackett has a preset default_filters spec; both carry condition_cols.
+	// ConditionCols. All fixture datasets are default_active=TRUE; harbison +
+	// hackett carry a preset default_filters spec.
 	require.True(t, dsByName["callingcards"].DefaultActive)
 	require.Equal(t, "", dsByName["callingcards"].DefaultFilters)
 	require.Equal(t, "condition", dsByName["callingcards"].ConditionCols)
@@ -57,31 +62,34 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 		`{"time":{"type":"numeric","value":[45,45]}}`,
 		dsByName["hackett"].DefaultFilters,
 	)
-	require.Equal(t, "mechanism,restriction,time", dsByName["hackett"].ConditionCols)
+	// DM-1: hackett condition_cols is just `time` (mechanism/restriction are
+	// hidden, so they no longer leak into the hover label).
+	require.Equal(t, "time", dsByName["hackett"].ConditionCols)
 
-	// Widened in Phase 3 to cover production-only columns referenced by
-	// the binding/perturbation/topn handlers (poisson_pval,
-	// callingcards_enrichment, log2_shrunken_timecourses, time, condition).
-	// Assert key membership rather than a brittle length: the fixture may
-	// gain additional manifest rows without breaking handler contracts.
+	// SD-3 / P0-3: field_manifest is sourced from {db}_meta ONLY, so it carries
+	// the experimental-condition + other non-hidden metadata columns, NOT the
+	// data-only measurement/coordinate columns (score, poisson_pval, effect,
+	// target_locus_tag, …). Assert key membership rather than a brittle length.
 	got := map[string]bool{}
 	for _, f := range m.Fields {
 		got[f.DBName+"."+f.Field] = true
 	}
 	required := []string{
-		"callingcards.target_locus_tag",
-		"callingcards.score",
-		"callingcards.poisson_pval",
-		"callingcards.callingcards_enrichment",
 		"callingcards.condition",
-		"hackett.target_locus_tag",
-		"hackett.effect",
-		"hackett.pvalue",
-		"hackett.log2_shrunken_timecourses",
 		"hackett.time",
+		"harbison.condition",
+		"harbison.end",
 	}
 	for _, k := range required {
 		require.True(t, got[k], "missing field_manifest entry: %s", k)
+	}
+	// Data-only columns must NOT be filter fields (they would 500 when filtered
+	// against the {db}_meta-scoped WHERE).
+	for _, k := range []string{
+		"callingcards.score", "callingcards.target_locus_tag",
+		"hackett.effect", "hackett.target_locus_tag",
+	} {
+		require.False(t, got[k], "data-only column leaked into field_manifest: %s", k)
 	}
 	require.NotEmpty(t, m.Levels)
 
@@ -102,7 +110,9 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	// frontend renders a selectize for it; everything else stays empty.
 	require.Equal(t, "categorical", fieldByKey["hackett.time"].UIKindOverride)
 	require.Equal(t, "numeric", fieldByKey["hackett.time"].NumericLevelSort)
-	require.Equal(t, "", fieldByKey["callingcards.score"].UIKindOverride)
-	require.Equal(t, "", fieldByKey["callingcards.score"].Description)
-	require.Equal(t, "", fieldByKey["callingcards.score"].LevelDefinitions)
+	require.Equal(t, "", fieldByKey["callingcards.condition"].UIKindOverride)
+	// The fixture supplies no labretriever column metadata, so description /
+	// level_definitions stay empty (graceful default).
+	require.Equal(t, "", fieldByKey["callingcards.condition"].Description)
+	require.Equal(t, "", fieldByKey["callingcards.condition"].LevelDefinitions)
 }

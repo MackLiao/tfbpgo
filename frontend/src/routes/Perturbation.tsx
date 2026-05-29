@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
@@ -88,6 +88,40 @@ export function Perturbation() {
     setParams(np);
   };
 
+  // P-2/P-3: the regulators present in the loaded correlation pairs, sorted by
+  // display label (symbol) — the picker's choice list.
+  const sortedRegulators = useMemo(() => {
+    const display = corrQuery.data?.regulatorDisplay ?? {};
+    const seen = new Set<string>();
+    const tags: string[] = [];
+    for (const pair of corrQuery.data?.pairs ?? []) {
+      for (const pt of pair.points) {
+        if (seen.has(pt.regulatorLocusTag)) continue;
+        seen.add(pt.regulatorLocusTag);
+        tags.push(pt.regulatorLocusTag);
+      }
+    }
+    tags.sort((a, b) =>
+      (display[a] ?? a).toLowerCase().localeCompare((display[b] ?? b).toLowerCase()),
+    );
+    return tags;
+  }, [corrQuery.data]);
+
+  // P-2/P-3: default-regulator auto-select + stale-selection reconcile (Shiny's
+  // workspace.py:374-388 `default = current if current in choices else
+  // next(iter(choices))`). When ?regulator= is unset or no longer in the loaded
+  // set, select the first sorted regulator so the scatter + overlay render
+  // immediately. `replace: true` keeps it out of history; the in-set guard
+  // prevents clobbering a manual pick and avoids an update loop.
+  useEffect(() => {
+    const first = sortedRegulators[0];
+    if (first === undefined) return;
+    if (reg && sortedRegulators.includes(reg)) return;
+    const next = new URLSearchParams(params);
+    next.set("regulator", first);
+    setParams(next, { replace: true });
+  }, [sortedRegulators, reg, params, setParams]);
+
   // Per-dataset sample-conditions fetch — see Binding.tsx for the
   // pattern. Feeds the selected-regulator overlay hovertext.
   const participatingDatasets = useMemo<string[]>(() => {
@@ -156,6 +190,7 @@ export function Perturbation() {
               corr={corrQuery.data}
               value={reg}
               onChange={setRegulator}
+              regulatorDisplayMap={corrQuery.data.regulatorDisplay}
             />
           ) : undefined
         }
@@ -179,6 +214,7 @@ export function Perturbation() {
               datasetDisplay={datasetDisplay}
               sampleConditionsByDB={sampleConditionsByDB}
               onRegulatorClick={setRegulator}
+              regulatorDisplayMap={corrQuery.data.regulatorDisplay}
             />
           ) : null}
           {reg && missingDatasetNames.length > 0 ? (

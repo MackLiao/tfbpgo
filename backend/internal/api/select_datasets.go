@@ -392,13 +392,12 @@ func (s *Server) SelectionMatrix(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	for dbName, fs := range filters {
-		for fld := range fs {
-			if err := s.Whitelist.CheckField(dbName, fld); err != nil {
-				writeJSONError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
+	// P0-2: accept the hidden-but-valid regulator_locus_tag WHERE field (the
+	// common-regulators flow writes it to every active dataset) so the matrix
+	// narrows instead of 400-ing.
+	if err := s.checkFilterFields(filters); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	canonFilters := ""
@@ -659,13 +658,10 @@ func (s *Server) SelectionBreakdown(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	for ds, fs := range filters {
-		for fld := range fs {
-			if err := s.Whitelist.CheckField(ds, fld); err != nil {
-				writeJSONError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
+	// P0-2: accept regulator_locus_tag (hidden-but-valid WHERE field).
+	if err := s.checkFilterFields(filters); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	canonFilters := ""

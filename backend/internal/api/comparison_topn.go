@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,31 +82,26 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Validate dataset is configured for topn (binding vs perturbation map).
-	for _, b := range bindingDS {
-		if _, ok := bindingConfigs[b]; !ok {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("no binding config for %q", b))
-			return
-		}
-	}
-	for _, p := range pertDS {
-		if _, ok := pertConfigs[p]; !ok {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("no perturbation config for %q", p))
-			return
-		}
-	}
+	// C-2 parity: datasets without a TopN config are SKIPPED (with a warning)
+	// and the remaining pairs render — matching Shiny's workspace.py, which
+	// filters pairs to configured datasets and logs the rest rather than
+	// failing the whole request. If nothing configured remains, buildTopNResponse
+	// returns an empty result.
+	bindingDS = keepConfigured(r, bindingDS, "binding", func(d string) bool {
+		_, ok := bindingConfigs[d]
+		return ok
+	})
+	pertDS = keepConfigured(r, pertDS, "perturbation", func(d string) bool {
+		_, ok := pertConfigs[d]
+		return ok
+	})
 
+	// C-5/C-6 parity: top_n clamps to [1, max] (0 -> 1, not the default), and a
+	// malformed effect/pvalue silently falls back to the default rather than
+	// 400-ing — matching Shiny's permissive sidebar parsing (sidebar.py:45-89).
 	topN := clampTopN(q.Get("top_n"), 25)
-	effectThr, err := strconv.ParseFloat(orDefault(q.Get("effect"), "0.0"), 64)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("effect: %v", err))
-		return
-	}
-	pvalThr, err := strconv.ParseFloat(orDefault(q.Get("pvalue"), "0.05"), 64)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("pvalue: %v", err))
-		return
-	}
+	effectThr := parseFloatOr(q.Get("effect"), 0.0)
+	pvalThr := parseFloatOr(q.Get("pvalue"), 0.05)
 
 	rawFilters := q.Get("filters")
 	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
@@ -118,13 +113,12 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	for ds, fs := range filters {
-		for fld := range fs {
-			if err := s.Whitelist.CheckField(ds, fld); err != nil {
-				writeJSONError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
+	// P0-2: accept the propagated regulator_locus_tag WHERE field (the
+	// common-regulators flow writes it to every active dataset, which then
+	// reaches Comparison via the shared ?filters=).
+	if err := s.checkFilterFields(filters); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	canonFilters := ""
@@ -210,19 +204,12 @@ func (s *Server) buildOnePair(
 	// binding CTE body
 	var bindingCTE string
 	if bcfg.HarbisonDedup {
-		// Apply user-supplied filters to the dedup CTE so filters[harbison]
-		// is honored — silently dropping them in this branch produced a
-		// parity divergence vs. binding/data.sql.
-		bWhere, bArgs, err := buildSquirrelWhereRaw(filters[bDB])
-		if err != nil {
-			return "", nil, err
-		}
-		extra := ""
-		if bWhere != "" {
-			extra = " AND " + bWhere
-			args = append(args, bArgs...)
-		}
-		bindingCTE = harbisonDedupCTE(extra)
+		// C-1 parity: Shiny sets binding_cte_body = binding_dedup_cte VERBATIM
+		// and never calls _build_filter_where for binding in the harbison dedup
+		// branch (queries.py:233-234) — the MIN(pvalue) dedup aggregation is
+		// incompatible with per-row filters, so filters[harbison] is dropped.
+		// Match that exactly (do NOT inject filters[bDB] here).
+		bindingCTE = harbisonDedupCTE("")
 	} else {
 		extra := []string{}
 		if bcfg.TargetBlackOK && len(CCTargetBlacklist) > 0 {
@@ -374,8 +361,14 @@ func buildSquirrelWhereRaw(fs map[string]domain.FilterSpec) (string, []any, erro
 			if err := json.Unmarshal(spec.Value, &rng); err != nil {
 				return "", nil, err
 			}
-			and = append(and, sq.GtOrEq{`"` + field + `"`: rng[0]})
-			and = append(and, sq.LtOrEq{`"` + field + `"`: rng[1]})
+			// C-3/SQL-4 parity: TRY_CAST the column to DOUBLE before the range
+			// compare (queries.py:129-134) — the metadata columns are stored as
+			// VARCHAR, so a bare `>=`/`<=` does a lexicographic compare. Squirrel
+			// treats the map key as a raw column expression; the field is already
+			// whitelisted + double-quoted.
+			expr := `TRY_CAST("` + field + `" AS DOUBLE)`
+			and = append(and, sq.GtOrEq{expr: rng[0]})
+			and = append(and, sq.LtOrEq{expr: rng[1]})
 		case "bool":
 			var b bool
 			if err := json.Unmarshal(spec.Value, &b); err != nil {
@@ -389,16 +382,18 @@ func buildSquirrelWhereRaw(fs map[string]domain.FilterSpec) (string, []any, erro
 	return and.ToSql()
 }
 
-func atoiOr(s string, d int) int {
-	if v, err := strconv.Atoi(s); err == nil {
-		return v
+// keepConfigured returns the subset of `datasets` that pass `configured`,
+// emitting a structured warning for each dropped dataset (C-2: skip
+// unconfigured datasets rather than 400 the whole request, matching Shiny).
+func keepConfigured(r *http.Request, datasets []string, side string, configured func(string) bool) []string {
+	kept := make([]string, 0, len(datasets))
+	for _, d := range datasets {
+		if configured(d) {
+			kept = append(kept, d)
+			continue
+		}
+		slog.WarnContext(r.Context(), "comparison_topn_skip_unconfigured",
+			"dataset", d, "side", side)
 	}
-	return d
-}
-
-func orDefault(s, d string) string {
-	if s == "" {
-		return d
-	}
-	return s
+	return kept
 }

@@ -55,6 +55,15 @@ func (s *Server) Binding(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The data tab is scoped by the `regulator` param, not by a filter; strip
+	// any regulator_locus_tag the common-regulators flow propagated via the
+	// shared ?filters= (mirrors the /corr handlers) so it neither 400s the
+	// field-check nor double-constrains the query.
+	if filters != nil {
+		for dbName := range filters {
+			filters[dbName] = stripRegulatorFilter(filters[dbName])
+		}
+	}
 	for dbName, fs := range filters {
 		for fld := range fs {
 			if err := s.Whitelist.CheckField(dbName, fld); err != nil {
@@ -144,9 +153,14 @@ func buildSquirrelWhere(fs map[string]domain.FilterSpec) (string, []any, error) 
 			if err := json.Unmarshal(spec.Value, &rng); err != nil {
 				return "", nil, fmt.Errorf("filter %q: %w", field, err)
 			}
+			// SQL-4 parity: TRY_CAST to DOUBLE before the range compare
+			// (Shiny queries.py:111-115) — metadata columns are VARCHAR-stored,
+			// so a bare >=/<= would compare lexicographically. Field already
+			// whitelisted + double-quoted.
+			expr := `TRY_CAST("` + field + `" AS DOUBLE)`
 			and = append(and, sq.And{
-				sq.GtOrEq{`"` + field + `"`: rng[0]},
-				sq.LtOrEq{`"` + field + `"`: rng[1]},
+				sq.GtOrEq{expr: rng[0]},
+				sq.LtOrEq{expr: rng[1]},
 			})
 		case "bool":
 			var b bool

@@ -27,6 +27,12 @@ export interface CommonRegulatorsModalProps {
   displayA: string;
   displayB: string;
   /**
+   * SD-1: active dataset filters (FiltersByDB-shape JSON, scoped to the pair)
+   * so the resolved common set is filter-aware — matching the filter-aware
+   * matrix cell the user clicked. Empty/undefined means no active filters.
+   */
+  filters?: string;
+  /**
    * Called when the user clicks "Select N common regulators". `tags` is
    * the locus-tag list; `pair` is `[displayA, displayB]` for the
    * `fromPair` annotation that the Select route uses to highlight the
@@ -37,7 +43,7 @@ export interface CommonRegulatorsModalProps {
 }
 
 export function CommonRegulatorsModal(props: CommonRegulatorsModalProps) {
-  const { open, onClose, dbA, dbB, displayA, displayB, onSelectCommon } = props;
+  const { open, onClose, dbA, dbB, displayA, displayB, filters, onSelectCommon } = props;
   const dialogRef = useRef<HTMLDialogElement | null>(null);
 
   useEffect(() => {
@@ -60,6 +66,7 @@ export function CommonRegulatorsModal(props: CommonRegulatorsModalProps) {
           dbB={dbB}
           displayA={displayA}
           displayB={displayB}
+          filters={filters ?? ""}
           onClose={onClose}
           onSelectCommon={onSelectCommon}
         />
@@ -73,15 +80,18 @@ interface BodyProps {
   dbB: string;
   displayA: string;
   displayB: string;
+  filters: string;
   onClose: () => void;
   onSelectCommon: (tags: string[], pair: [string, string]) => void;
 }
 
-function Body({ dbA, dbB, displayA, displayB, onClose, onSelectCommon }: BodyProps) {
+function Body({ dbA, dbB, displayA, displayB, filters, onClose, onSelectCommon }: BodyProps) {
   const common = `${dbA}:${dbB}`;
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: qk.regulatorsResolveCommon(dbA, dbB),
-    queryFn: () => api.resolve({ common }),
+    queryKey: qk.regulatorsResolveCommon(dbA, dbB, filters),
+    // Build the query object conditionally so `filters` is omitted (not set
+    // to undefined) when empty — required under exactOptionalPropertyTypes.
+    queryFn: () => api.resolve(filters ? { common, filters } : { common }),
   });
 
   const tags = data?.regulators ?? [];

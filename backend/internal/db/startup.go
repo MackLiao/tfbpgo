@@ -7,8 +7,12 @@ import (
 )
 
 const (
-	MinSchemaVersion = 4
-	MaxSchemaVersion = 4
+	// schema_version=5 (2026-05-28 parity re-audit) adds
+	// dataset_manifest.upstream_cols / description and populates
+	// field_manifest.description / level_definitions. The v5 loader reads
+	// those columns, so a v4 artifact (which lacks them) is incompatible.
+	MinSchemaVersion = 5
+	MaxSchemaVersion = 5
 )
 
 var RequiredTables = []string{

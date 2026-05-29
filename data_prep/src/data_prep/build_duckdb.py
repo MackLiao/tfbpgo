@@ -21,6 +21,8 @@ import duckdb
 import yaml
 
 from data_prep.manifests import (
+    assert_default_filters_in_field_manifest,
+    harvest_column_metadata,
     write_artifact_manifest,
     write_dataset_manifest,
     write_field_manifest,
@@ -29,6 +31,7 @@ from data_prep.manifests import (
 from data_prep.materialize import (
     build_hackett_analysis_set,
     build_regulator_display_names,
+    filter_hackett_to_analysis_set,
 )
 
 
@@ -46,6 +49,7 @@ def _run_manifests(
     yaml_config_path: Path,
     artifact_version: str,
     parity_tests_passed: bool,
+    vdb: object | None = None,
 ) -> None:
     config = yaml.safe_load(yaml_config_path.read_text())
     write_dataset_manifest(conn, config)
@@ -57,14 +61,26 @@ def _run_manifests(
         ).fetchall()
     ]
     if "hackett" in db_names:
-        # Reference vdb_init also conditionally filters hackett views; in
-        # the fixture path this is harmless because the fixture already
-        # contains plain tables.
         build_hackett_analysis_set(conn)
+        # SQL-1: permanently restrict the materialized hackett/hackett_meta
+        # tables to analysis-set samples, mirroring Shiny's _filter_hackett_views
+        # (vdb_init.py:120-146). Must run AFTER build_hackett_analysis_set so the
+        # analysis-set table exists, and BEFORE field_manifest / level cache so
+        # every downstream query inherits the restriction.
+        filter_hackett_to_analysis_set(conn)
     build_regulator_display_names(conn, db_names=db_names)
 
-    write_field_manifest(conn)
+    # DM-4: best-effort harvest of per-column description / level_definitions
+    # from labretriever (real build only; fixture/bootstrap passes vdb=None).
+    column_metadata = (
+        harvest_column_metadata(vdb, db_names) if vdb is not None else None
+    )
+    write_field_manifest(conn, column_metadata)
     write_filter_level_cache(conn)
+    # P0-3 tripwire: refuse to ship an artifact whose seeded default_filters
+    # reference fields missing from field_manifest (would 400 the matrix on
+    # first load).
+    assert_default_filters_in_field_manifest(conn)
     write_artifact_manifest(
         conn,
         artifact_version=artifact_version,
@@ -145,7 +161,7 @@ def build_full(
             # 1. labretriever registers `{db_name}` and `{db_name}_meta` views
             #    on the connection, plus `{db_name}_expanded` for comparative
             #    datasets. Pass token only when present.
-            VirtualDB(
+            vdb = VirtualDB(
                 str(yaml_config_path),
                 duckdb_connection=conn,
                 token=hf_token,
@@ -175,6 +191,7 @@ def build_full(
                 yaml_config_path=yaml_config_path,
                 artifact_version=artifact_version,
                 parity_tests_passed=False,
+                vdb=vdb,
             )
 
             conn.execute("CHECKPOINT")

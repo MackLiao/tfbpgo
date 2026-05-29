@@ -53,6 +53,15 @@ func (s *Server) Perturbation(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The data tab is scoped by the `regulator` param, not by a filter; strip
+	// any regulator_locus_tag the common-regulators flow propagated via the
+	// shared ?filters= (mirrors the /corr handlers) so it neither 400s the
+	// field-check nor double-constrains the query.
+	if filters != nil {
+		for dbName := range filters {
+			filters[dbName] = stripRegulatorFilter(filters[dbName])
+		}
+	}
 	for dbName, fs := range filters {
 		for fld := range fs {
 			if err := s.Whitelist.CheckField(dbName, fld); err != nil {

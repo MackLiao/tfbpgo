@@ -30,6 +30,8 @@ WITH
     FROM {{table_b}}
     WHERE regulator_locus_tag = ? {{extra_where_b}}
   )
+-- B-1/P-1 parity: NO finite-value filter (mirrors Shiny's unfiltered scatter,
+-- shared binding impl). NULL/±Inf/NaN flow through domain.SafeFloat.
 SELECT
   a.target_locus_tag AS target_locus_tag,
   a.{{col_a}}        AS val_a,
@@ -37,9 +39,3 @@ SELECT
 FROM a
 INNER JOIN b
   ON a.target_locus_tag = b.target_locus_tag
-WHERE a.{{col_a}} IS NOT NULL
-  AND b.{{col_b}} IS NOT NULL
-  AND NOT isinf(a.{{col_a}})
-  AND NOT isinf(b.{{col_b}})
-  AND NOT isnan(a.{{col_a}})
-  AND NOT isnan(b.{{col_b}})

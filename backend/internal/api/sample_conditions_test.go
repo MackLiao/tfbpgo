@@ -9,9 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// hackett.condition_cols = "mechanism,restriction,time" in the fixture
-// dataset_manifest; the meta row for sample_id="h_0" is (ZEV, P, 45).
-// Expected label = "ZEV / P / 45".
+// DM-1: hackett.condition_cols is derived from EXPERIMENTAL_CONDITION_FIELDS,
+// so the hidden mechanism/restriction columns are excluded — only `time`
+// remains. The meta row for sample_id="h_0" is (…, time=45), so the hover
+// label is "45", NOT the old buggy "ZEV / P / 45" (which leaked hidden fields).
 func TestSampleConditions_Hackett_BuildsLabel(t *testing.T) {
 	s := newTestServer(t)
 	rr := httptest.NewRecorder()
@@ -23,8 +24,8 @@ func TestSampleConditions_Hackett_BuildsLabel(t *testing.T) {
 	var resp domain.SampleConditionsResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	require.Equal(t, "hackett", resp.DBName)
-	require.Equal(t, []string{"mechanism", "restriction", "time"}, resp.ConditionCols)
-	require.Equal(t, "ZEV / P / 45", resp.Labels["h_0"])
+	require.Equal(t, []string{"time"}, resp.ConditionCols)
+	require.Equal(t, "45", resp.Labels["h_0"])
 }
 
 // callingcards.condition_cols = "condition" in the fixture; the meta

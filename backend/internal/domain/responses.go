@@ -23,6 +23,11 @@ type DatasetEntry struct {
 	DefaultActive  bool            `json:"defaultActive"`
 	DefaultFilters json.RawMessage `json:"defaultFilters"`
 	ConditionCols  []string        `json:"conditionCols"`
+	// v5: UpstreamCols drives the condition-choice cascade in the filter
+	// modal (DM-3 / SD-6A). Description is per-dataset prose shown as the
+	// sidebar toggle tooltip (DM-2); the frontend MUST HTML-escape it.
+	UpstreamCols []string `json:"upstreamCols"`
+	Description  string   `json:"description"`
 }
 
 type DatasetsResponse struct {

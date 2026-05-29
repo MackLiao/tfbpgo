@@ -84,5 +84,8 @@ make test-parity     # parity diffs vs recorded Python reference
   and `Wait()` per spec §8.1.
 - Identifier whitelisting backed by `dataset_manifest` / `field_manifest`.
 
-Schema versions accepted by this binary: `MinSchemaVersion=2,
-MaxSchemaVersion=2` (see `internal/db/startup.go`).
+Schema versions accepted by this binary: `MinSchemaVersion=5,
+MaxSchemaVersion=5` (see `internal/db/startup.go`). The artifact must be
+schema_version=5 (the 2026-05-28 parity re-audit added
+`dataset_manifest.upstream_cols`/`description` and populated
+`field_manifest.description`/`level_definitions`).

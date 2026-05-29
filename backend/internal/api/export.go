@@ -114,13 +114,11 @@ func (s *Server) Export(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	for dbName, fs := range filters {
-		for fld := range fs {
-			if err := s.Whitelist.CheckField(dbName, fld); err != nil {
-				writeJSONError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
+	// P0-2: accept regulator_locus_tag (hidden-but-valid WHERE field) so an
+	// export taken after "Select N common regulators" narrows instead of 400-ing.
+	if err := s.checkFilterFields(filters); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Detach from the router-level 30s middleware.Timeout. We need up
@@ -350,6 +348,12 @@ func buildExportReadme(dbName string, row db.DatasetRow, fs map[string]domain.Fi
 		display = dbName
 	}
 	fmt.Fprintf(&b, "# %s\n\n", display)
+	// DM-2: lead with the dataset's prose description (from the YAML, carried
+	// in dataset_manifest.description) — mirrors Shiny's export README body
+	// (reference/.../select_datasets/export.py:58-81), which otherwise lost it.
+	if row.Description != "" {
+		fmt.Fprintf(&b, "%s\n\n", row.Description)
+	}
 	fmt.Fprintf(&b, "- db_name: `%s`\n", dbName)
 	if row.DataType != "" {
 		fmt.Fprintf(&b, "- data_type: `%s`\n", row.DataType)

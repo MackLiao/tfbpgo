@@ -86,11 +86,16 @@ export const api = {
     common?: string;
     intersect?: string;
     regulators?: string[];
+    // SD-1: active dataset filters (FiltersByDB-shape JSON) so the common
+    // set is computed filter-aware, matching the matrix cell. regulator_locus_tag
+    // is stripped server-side.
+    filters?: string;
   }): Promise<Schemas["ResolveResponse"]> => {
     const s = new URLSearchParams();
     if (q.common) s.set("common", q.common);
     if (q.intersect) s.set("intersect", q.intersect);
     if (q.regulators && q.regulators.length) s.set("regulators", q.regulators.join(","));
+    if (q.filters) s.set("filters", q.filters);
     return get<Schemas["ResolveResponse"]>(vpath("/regulators/resolve"), s);
   },
   binding: (q: {

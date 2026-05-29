@@ -8,15 +8,36 @@ materialized in materialize.py).
 from __future__ import annotations
 
 import json
+from typing import NamedTuple
 
 import duckdb
 
 from data_prep._sql import columns_of, validate_identifier
 
+
+class ColumnFieldMeta(NamedTuple):
+    """Per-(db, field) UX metadata harvested from labretriever at build time
+    (DM-4). ``description`` is free-text tooltip copy; ``level_definitions`` is
+    a compact JSON ``{level: label}`` string (or ``""`` when none). Both default
+    empty so a column with no labretriever metadata degrades gracefully."""
+
+    description: str = ""
+    level_definitions: str = ""
+
+
 # Bump when the set of §5.5 tables, or the meaning of their columns,
 # changes. The Go binary embeds the compatible range and refuses to
 # start against an artifact outside it.
-SCHEMA_VERSION: int = 4
+#
+# v5 (2026-05-28 parity re-audit):
+#   * dataset_manifest gains `description` (DM-2: per-dataset prose used in the
+#     sidebar tooltip + export README) and `upstream_cols` (DM-3/SD-6A: CSV of
+#     the categorical columns that drive the condition-choice cascade).
+#   * field_manifest.description / level_definitions are now populated
+#     (best-effort, from labretriever column metadata) rather than always empty
+#     (DM-4).
+#   * field_manifest field SET is sourced from {db}_meta only (P0-3/SD-3/DM-0).
+SCHEMA_VERSION: int = 5
 
 
 # ---------------------------------------------------------------------------
@@ -25,15 +46,17 @@ SCHEMA_VERSION: int = 4
 
 # Datasets whose toggles are on by default on first visit. Mirrors
 # reference/tfbpshiny/utils/vdb_init.py:40-50.
-DEFAULT_ACTIVE_DATASETS: frozenset[str] = frozenset({
-    "harbison",
-    "rossi",
-    "chec_m2025",
-    "callingcards",
-    "hackett",
-    "kemmeren",
-    "degron",
-})
+DEFAULT_ACTIVE_DATASETS: frozenset[str] = frozenset(
+    {
+        "harbison",
+        "rossi",
+        "chec_m2025",
+        "callingcards",
+        "hackett",
+        "kemmeren",
+        "degron",
+    }
+)
 
 
 # Default filter state applied on first visit. The structure mirrors the
@@ -41,31 +64,69 @@ DEFAULT_ACTIVE_DATASETS: frozenset[str] = frozenset({
 # can be used as the initial value with no additional handling. Sourced from
 # reference/tfbpshiny/utils/vdb_init.py:55-68.
 DEFAULT_DATASET_FILTERS: dict[str, dict[str, dict]] = {
-    "harbison":   {"condition":   {"type": "categorical", "value": ["YPD"]}},
-    "rossi":      {"treatment":   {"type": "categorical", "value": ["Normal"]}},
-    "chec_m2025": {"condition":   {"type": "categorical", "value": ["standard"]}},
+    "harbison": {"condition": {"type": "categorical", "value": ["YPD"]}},
+    "rossi": {"treatment": {"type": "categorical", "value": ["Normal"]}},
+    "chec_m2025": {"condition": {"type": "categorical", "value": ["standard"]}},
     # divergence: Shiny uses [45.0, 45.0] (floats); the Go service represents
     # numeric ranges as [low, high] integers when the underlying DuckDB
     # column is INTEGER (hackett.time). Either form parses to the same
     # interval, but encoding as ints keeps the JSON byte-stable across
     # platforms with differing default float reprs.
-    "hackett":    {"time":        {"type": "numeric",     "value": [45, 45]}},
+    "hackett": {"time": {"type": "numeric", "value": [45, 45]}},
+}
+
+
+# Per-dataset set of fields classified `experimental_condition`. This is the
+# SINGLE SOURCE OF TRUTH for the experimental-condition role (DM-5): it drives
+# (1) field_manifest.role, (2) the derived CONDITION_COLS below, and (3) the
+# "experimental-condition fields override the hidden exclusion" rule in
+# write_field_manifest. Mirrors the columns Shiny classifies role=
+# 'experimental_condition' (reference/tfbpshiny/utils/vdb_init.py:334-340).
+#
+# Note vs Shiny: harbison/chec_m2025/rossi each expose a Title-Case display
+# column ("Experimental condition") AND a lowercase machine column
+# (condition/treatment). Shiny hides the machine column and shows the
+# Title-Case one; the Go rewrite cannot use space-containing identifiers
+# (SafeIdentRE), so it uses the lowercase machine column as the experimental-
+# condition filter — which is why these appear here even though some are listed
+# in HIDDEN_FILTER_FIELDS.
+EXPERIMENTAL_CONDITION_FIELDS: dict[str, frozenset[str]] = {
+    "callingcards": frozenset({"condition"}),
+    "harbison": frozenset({"condition"}),
+    "rossi": frozenset({"treatment"}),
+    "chec_m2025": frozenset({"condition"}),
+    "hackett": frozenset({"time"}),
 }
 
 
 # Per-dataset list of column names whose values together form the sample-
-# condition label shown in hover tooltips on the binding/perturbation
-# overlay. Mirrors AppDatasets.condition_cols computed at startup in
-# reference/tfbpshiny/utils/vdb_init.py:326-351 (the Shiny code derives this
-# at runtime from VirtualDB metadata; for the Go service we encode the
-# resolved values directly since labretriever isn't available at runtime).
+# condition label shown in hover tooltips on the binding/perturbation overlay.
+# Mirrors AppDatasets.condition_cols (reference/tfbpshiny/utils/vdb_init.py:
+# 334-340: role=='experimental_condition' AND level_definitions is not None AND
+# col NOT IN hidden). DERIVED from EXPERIMENTAL_CONDITION_FIELDS so the two can
+# never silently disagree (DM-5) and so hidden non-condition columns (hackett
+# mechanism/restriction) never leak into the hover label (DM-1: '45', not
+# 'ZEV / P / 45').
 CONDITION_COLS: dict[str, list[str]] = {
-    "callingcards": ["condition"],
-    "harbison":     ["condition"],
-    "rossi":        ["treatment"],
-    "chec_m2025":   ["condition"],
-    "hackett":      ["mechanism", "restriction", "time"],
+    db: sorted(fields) for db, fields in EXPERIMENTAL_CONDITION_FIELDS.items()
 }
+
+
+# Per-dataset list of *upstream* categorical columns that drive the condition-
+# choice cascade in the Select-Datasets filter modal (DM-3 / SD-6A). Mirrors
+# AppDatasets.upstream_cols (reference/tfbpshiny/utils/vdb_init.py:341-352:
+# non-condition, non-hidden, non-identifier categoricals with level_definitions
+# is None). Externalized here (CSV → dataset_manifest.upstream_cols) so the Go
+# service + frontend can narrow condition choices without labretriever.
+#
+# Empty for the current production datasets: the labretriever-computed upstream
+# categoricals ("Carbon source", "Experimental condition") are Title-Case
+# display columns that the rewrite cannot expose as filters (SafeIdentRE
+# forbids spaces), and the remaining non-hidden meta columns are not condition
+# drivers. The cascade MECHANISM is wired end-to-end and exercised by a
+# synthetic upstream column in the test fixture; it is simply inert where a
+# dataset exposes no valid-identifier upstream categorical.
+UPSTREAM_COLS: dict[str, list[str]] = {}
 
 
 # UI kind override + level sort hint per (db_name, field). Mirrors
@@ -73,8 +134,8 @@ CONDITION_COLS: dict[str, list[str]] = {
 # A wildcard key ("", field) matches any dataset that exposes `field`.
 # Values are (ui_kind_override, numeric_level_sort).
 FIELD_TYPE_OVERRIDES: dict[tuple[str, str], tuple[str, str]] = {
-    ("hackett", "time"):                ("categorical", "numeric"),
-    ("",        "temperature_celsius"): ("categorical", "string"),
+    ("hackett", "time"): ("categorical", "numeric"),
+    ("", "temperature_celsius"): ("categorical", "string"),
 }
 
 
@@ -88,7 +149,9 @@ FIELD_DESCRIPTIONS: dict[tuple[str, str], str] = {}
 FIELD_LEVEL_DEFINITIONS: dict[tuple[str, str], dict[str, str]] = {}
 
 
-_UI_KIND_OVERRIDE_ALLOWED: frozenset[str] = frozenset({"", "categorical", "numeric", "bool"})
+_UI_KIND_OVERRIDE_ALLOWED: frozenset[str] = frozenset(
+    {"", "categorical", "numeric", "bool"}
+)
 _NUMERIC_LEVEL_SORT_ALLOWED: frozenset[str] = frozenset({"", "numeric", "string"})
 
 
@@ -133,26 +196,16 @@ def _lookup_field_level_definitions(db_name: str, field: str) -> str:
 DATASET_MEASUREMENT_COLUMNS: dict[str, tuple[str, str]] = {
     # binding
     "callingcards": ("callingcards_enrichment", "poisson_pval"),
-    "harbison":     ("effect", "pvalue"),
-    "rossi":        ("enrichment", "poisson_pval"),
-    "chec_m2025":   ("enrichment", "poisson_pval"),
+    "harbison": ("effect", "pvalue"),
+    "rossi": ("enrichment", "poisson_pval"),
+    "chec_m2025": ("enrichment", "poisson_pval"),
     # perturbation
-    "degron":                ("log2FoldChange", "pvalue"),
+    "degron": ("log2FoldChange", "pvalue"),
     "hughes_overexpression": ("mean_norm_log2fc", ""),
-    "hughes_knockout":       ("mean_norm_log2fc", ""),
-    "kemmeren":              ("Madj", "pval"),
-    "hackett":               ("log2_shrunken_timecourses", ""),
-    "hu_reimand":            ("effect", "pval"),
-}
-
-
-# Per-dataset set of fields whose role classification is
-# `experimental_condition`. Used by Select Datasets (and the frontend) to
-# surface the experimental condition control independently from generic
-# filters. All other (db_name, field) rows get role=''.
-EXPERIMENTAL_CONDITION_FIELDS: dict[str, frozenset[str]] = {
-    "callingcards": frozenset({"condition"}),
-    "hackett":      frozenset({"time"}),
+    "hughes_knockout": ("mean_norm_log2fc", ""),
+    "kemmeren": ("Madj", "pval"),
+    "hackett": ("log2_shrunken_timecourses", ""),
+    "hu_reimand": ("effect", "pval"),
 }
 
 
@@ -207,7 +260,9 @@ def write_dataset_manifest(
     `dto` entry). Those tables still exist in the artifact but are not
     user-selectable datasets.
     """
-    rows: list[tuple[str, str, str, str, str, str, str, str, bool, str, str]] = []
+    rows: list[
+        tuple[str, str, str, str, str, str, str, str, bool, str, str, str, str]
+    ] = []
     for repo_id, repo_block in (config.get("repositories") or {}).items():
         datasets = (repo_block or {}).get("dataset") or {}
         for _ds_key, ds_cfg in datasets.items():
@@ -244,6 +299,13 @@ def write_dataset_manifest(
                 else ""
             )
             condition_cols = ",".join(CONDITION_COLS.get(db_name, []))
+            upstream_cols = ",".join(UPSTREAM_COLS.get(db_name, []))
+
+            # v5: per-dataset prose description (DM-2). The YAML stores it as a
+            # folded scalar (`description: >-`); normalize internal whitespace
+            # so the sidebar tooltip + export README get a single clean line.
+            raw_desc = (ds_cfg or {}).get("description") or ""
+            description = " ".join(str(raw_desc).split())
 
             rows.append(
                 (
@@ -258,6 +320,8 @@ def write_dataset_manifest(
                     default_active,
                     default_filters,
                     condition_cols,
+                    upstream_cols,
+                    description,
                 )
             )
 
@@ -280,12 +344,15 @@ def write_dataset_manifest(
             pvalue_col      VARCHAR NOT NULL,
             default_active  BOOLEAN NOT NULL DEFAULT FALSE,
             default_filters VARCHAR NOT NULL DEFAULT '',
-            condition_cols  VARCHAR NOT NULL DEFAULT ''
+            condition_cols  VARCHAR NOT NULL DEFAULT '',
+            upstream_cols   VARCHAR NOT NULL DEFAULT '',
+            description     VARCHAR NOT NULL DEFAULT ''
         )
         """
     )
     conn.executemany(
-        "INSERT INTO dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO dataset_manifest VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
 
@@ -295,12 +362,14 @@ def write_dataset_manifest(
 # this set changes; the runtime Go service consults field_manifest, not
 # this constant, so the table is the source of truth at runtime.
 HIDDEN_FILTER_FIELDS: dict[str, frozenset[str]] = {
-    "*": frozenset({
-        "regulator_locus_tag",
-        "regulator_symbol",
-        "Regulator locus tag",
-        "Regulator symbol",
-    }),
+    "*": frozenset(
+        {
+            "regulator_locus_tag",
+            "regulator_symbol",
+            "Regulator locus tag",
+            "Regulator symbol",
+        }
+    ),
     "callingcards": frozenset({"background_total_hops", "experiment_total_hops"}),
     "harbison": frozenset({"condition"}),
     "chec_m2025": frozenset({"condition", "mahendrawada_symbol"}),
@@ -312,11 +381,9 @@ HIDDEN_FILTER_FIELDS: dict[str, frozenset[str]] = {
     "hughes_knockout": frozenset({"oe_passed_qc", "sgd_description"}),
 }
 
-# Always-excluded structural columns (not user-selectable filters/sorts).
-# Note: per-dataset sample_id field names (gm_id for callingcards, etc.)
-# are also excluded by the introspection rule below — any column named
-# `sample_id` OR appearing in both the data table and the meta table as
-# the join key is treated as structural.
+# Always-excluded structural column (not a user-selectable filter/sort). The
+# per-dataset sample-id join key (gm_id for callingcards, etc.) is excluded
+# additionally via dataset_manifest.sample_id_field inside write_field_manifest.
 _STRUCTURAL_FIELDS: frozenset[str] = frozenset({"sample_id"})
 
 
@@ -326,45 +393,79 @@ def _hidden_for(db_name: str) -> frozenset[str]:
     )
 
 
-def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
+def write_field_manifest(
+    conn: duckdb.DuckDBPyConnection,
+    column_metadata: dict[str, dict[str, ColumnFieldMeta]] | None = None,
+) -> None:
     """Create or replace field_manifest by introspecting per-dataset tables.
 
-    Requires dataset_manifest to exist. For each db_name in dataset_manifest,
-    union the columns of `{db_name}` and `{db_name}_meta`, subtract the
-    hidden fields and structural columns, and emit one row per remaining
-    field.
+    Requires dataset_manifest to exist. For each db_name the filterable /
+    whitelisted field set is the columns of ``{db_name}_meta`` — Shiny builds
+    its filter modal from ``SELECT * FROM {db}_meta`` only
+    (reference/.../dataset_row.py:182-183) — minus:
 
-    The shared join key between `{db_name}` and `{db_name}_meta` (whatever
-    its actual name — `sample_id`, `gm_id`, etc.) is treated as structural
-    and excluded.
+      * the declared sample-id join key (``dataset_manifest.sample_id_field``),
+      * ``_STRUCTURAL_FIELDS``,
+      * the hidden fields (``HIDDEN_FILTER_FIELDS``),
+
+    EXCEPT that experimental-condition fields (``EXPERIMENTAL_CONDITION_FIELDS``)
+    are always kept even when listed as hidden — they are user-facing filters
+    and are seeded by ``DEFAULT_DATASET_FILTERS`` (closing P0-3).
+
+    Why ``{db}_meta`` only (not the old ``{db} ∪ {db}_meta`` union): the
+    matrix/breakdown WHERE runs against ``{db}_meta``, and labretriever
+    replicates the metadata columns into ``{db}`` too, so the old
+    ``data_cols ∩ meta_cols`` join-key heuristic over-excluded the experimental-
+    condition columns on real data (P0-3 / DM-0) while leaking data-only
+    measurement/coordinate columns as bogus filters that 500 when applied
+    (SD-3). Sourcing from ``{db}_meta`` keeps the whitelist and the queryable
+    surface in sync.
+
+    Columns whose names are not safe SQL identifiers — labretriever's Title-Case
+    display duplicates such as ``"Experimental condition"`` / ``"Carbon source"``
+    — are skipped: they are redundant duplicates of the lowercase machine
+    columns and cannot be safely interpolated (SafeIdentRE forbids spaces).
     """
-    db_names = [
-        r[0]
-        for r in conn.execute(
-            "SELECT db_name FROM dataset_manifest ORDER BY db_name"
-        ).fetchall()
-    ]
+    dm_rows = conn.execute(
+        "SELECT db_name, sample_id_field FROM dataset_manifest ORDER BY db_name"
+    ).fetchall()
 
     rows: list[tuple[str, str, str, str, str, str, str]] = []
-    for db_name in db_names:
-        data_cols = columns_of(conn, db_name)
-        meta_cols = columns_of(conn, f"{db_name}_meta")
-        if not data_cols and not meta_cols:
+    for db_name, sample_id_field in dm_rows:
+        # Filter fields come from {db}_meta. Fall back to the data table only
+        # if no _meta table exists (degenerate; every real dataset has one).
+        source_cols = columns_of(conn, f"{db_name}_meta") or columns_of(conn, db_name)
+        if not source_cols:
             continue
 
-        join_keys = set(data_cols) & set(meta_cols)
-        excluded = _hidden_for(db_name) | _STRUCTURAL_FIELDS | join_keys
         exp_cond = EXPERIMENTAL_CONDITION_FIELDS.get(db_name, frozenset())
+        structural = _STRUCTURAL_FIELDS | {sample_id_field}
+        # Experimental-condition fields override the *hidden* exclusion, never
+        # the structural join-key exclusion.
+        excluded = structural | (_hidden_for(db_name) - exp_cond)
 
         seen: set[str] = set()
-        for col in [*data_cols, *meta_cols]:
+        for col in source_cols:
             if col in excluded or col in seen:
+                continue
+            try:
+                validate_identifier(col)
+            except ValueError:
+                # Title-Case display duplicate of a lowercase machine column.
                 continue
             seen.add(col)
             role = "experimental_condition" if col in exp_cond else ""
             ui_kind, level_sort = _lookup_field_override(db_name, col)
-            description = _lookup_field_description(db_name, col)
-            level_defs = _lookup_field_level_definitions(db_name, col)
+            # DM-4: prefer labretriever-harvested description / level_definitions
+            # when available (real build), else fall back to the hand-curated
+            # module dicts (empty by default → graceful degradation).
+            harvested = (column_metadata or {}).get(db_name, {}).get(col)
+            if harvested is not None:
+                description = harvested.description
+                level_defs = harvested.level_definitions
+            else:
+                description = _lookup_field_description(db_name, col)
+                level_defs = _lookup_field_level_definitions(db_name, col)
             rows.append(
                 (db_name, col, role, description, level_defs, ui_kind, level_sort)
             )
@@ -391,6 +492,92 @@ def write_field_manifest(conn: duckdb.DuckDBPyConnection) -> None:
         conn.executemany(
             "INSERT INTO field_manifest VALUES (?, ?, ?, ?, ?, ?, ?)", rows
         )
+
+
+def assert_default_filters_in_field_manifest(
+    conn: duckdb.DuckDBPyConnection,
+) -> None:
+    """Fail the build if any field seeded by DEFAULT_DATASET_FILTERS is missing
+    from field_manifest for its dataset.
+
+    This is the permanent tripwire for P0-3: on first visit the Select page
+    seeds default_filters into the matrix request, and the handler 400s any
+    filter field not in field_manifest. The synthetic fixture masked the
+    original break (its {db}/{db}_meta did not share metadata columns), so this
+    assertion runs against whatever field_manifest the build actually produced
+    — real artifact or fixture-bootstrap — and stops a regression before it
+    ships, not on first user visit.
+    """
+    have = {
+        (db, fld)
+        for db, fld in conn.execute(
+            "SELECT db_name, field FROM field_manifest"
+        ).fetchall()
+    }
+    known_dbs = {
+        r[0] for r in conn.execute("SELECT db_name FROM dataset_manifest").fetchall()
+    }
+    missing: list[str] = []
+    for db, spec in DEFAULT_DATASET_FILTERS.items():
+        if db not in known_dbs:
+            # Dataset not present in this build (e.g. a trimmed fixture) — the
+            # filter is never seeded, so there is nothing to validate.
+            continue
+        for fld in spec:
+            if (db, fld) not in have:
+                missing.append(f"{db}.{fld}")
+    if missing:
+        raise ValueError(
+            "DEFAULT_DATASET_FILTERS references fields absent from field_manifest "
+            f"(matrix would 400 on first load): {sorted(missing)}"
+        )
+
+
+def harvest_column_metadata(
+    vdb: object,
+    db_names: list[str],
+) -> dict[str, dict[str, ColumnFieldMeta]]:
+    """Best-effort harvest of per-column description / level_definitions from a
+    labretriever VirtualDB (DM-4). Used only by the real (build_full) path;
+    the fixture/test path passes None and field_manifest descriptions stay
+    empty.
+
+    Robust by design: labretriever's column metadata is incomplete/inconsistent
+    across datasets (some DataCards lack roles/definitions, some path lookups
+    warn), so every dataset is wrapped in try/except and any failure degrades
+    that dataset to ``{}`` rather than failing the artifact build.
+    """
+    out: dict[str, dict[str, ColumnFieldMeta]] = {}
+    get_cm = getattr(vdb, "get_column_metadata", None)
+    if get_cm is None:
+        return out
+    for db in db_names:
+        # The ENTIRE per-dataset harvest (fetch + per-column parse) is inside the
+        # try: labretriever metadata is incomplete/inconsistent, so a column with
+        # a non-mapping level_definitions or a non-string description must degrade
+        # the dataset to {} — never fail the artifact build.
+        try:
+            cm = get_cm(db) or {}
+            per_col: dict[str, ColumnFieldMeta] = {}
+            for col, meta in cm.items():
+                desc = str(getattr(meta, "description", None) or "").strip()
+                level_defs = getattr(meta, "level_definitions", None)
+                ld_json = ""
+                if level_defs:
+                    ld_json = json.dumps(
+                        {str(k): str(v) for k, v in level_defs.items()},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                if desc or ld_json:
+                    per_col[col] = ColumnFieldMeta(
+                        description=desc, level_definitions=ld_json
+                    )
+        except Exception:  # noqa: BLE001 — metadata is best-effort, never fatal
+            continue
+        if per_col:
+            out[db] = per_col
+    return out
 
 
 # Maximum distinct values for a field to be cached. Above this, the field

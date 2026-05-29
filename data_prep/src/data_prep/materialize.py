@@ -103,6 +103,46 @@ def build_hackett_analysis_set(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(_HACKETT_ANALYSIS_SET_SQL)
 
 
+def filter_hackett_to_analysis_set(conn: duckdb.DuckDBPyConnection) -> None:
+    """SQL-1: permanently restrict the materialized ``hackett`` and
+    ``hackett_meta`` tables to the samples in ``hackett_analysis_set``.
+
+    Port of reference/tfbpshiny/utils/vdb_init.py:_filter_hackett_views
+    (`WHERE sample_id IN (SELECT sample_id FROM hackett_analysis_set)`), but
+    operating on the materialized tables instead of DuckDB views so every
+    downstream query (perturbation data tab, perturbation correlation, the
+    Select-Datasets regulator listing / sample counts / breakdown) sees only
+    analysis-set samples — exactly as Shiny does after filtering once at init.
+
+    Requires ``build_hackett_analysis_set`` to have run first. No-op if the
+    ``hackett`` tables are absent. Uses a staging table to avoid a self-
+    referential CREATE OR REPLACE (mirrors ``materialize_views_as_tables``).
+    """
+    existing = {
+        r[0]
+        for r in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+    if "hackett_analysis_set" not in existing:
+        raise ValueError(
+            "filter_hackett_to_analysis_set requires hackett_analysis_set; "
+            "call build_hackett_analysis_set first"
+        )
+    for tbl in ("hackett", "hackett_meta"):
+        if tbl not in existing:
+            continue
+        safe = validate_identifier(tbl)
+        stage = f"_hackett_filter_stage_{safe}"
+        conn.execute(
+            f'CREATE TABLE "{stage}" AS SELECT * FROM "{safe}" '
+            f"WHERE sample_id IN (SELECT sample_id FROM hackett_analysis_set)"
+        )
+        conn.execute(f'DROP TABLE "{safe}"')
+        conn.execute(f'ALTER TABLE "{stage}" RENAME TO "{safe}"')
+
+
 def build_regulator_display_names(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -136,8 +176,7 @@ def build_regulator_display_names(
         return
 
     union_sql = " UNION ALL ".join(
-        f"SELECT DISTINCT regulator_locus_tag, regulator_symbol "
-        f'FROM "{db}_meta"'
+        f"SELECT DISTINCT regulator_locus_tag, regulator_symbol " f'FROM "{db}_meta"'
         for db in eligible
     )
     conn.execute(_DISPLAY_NAMES_SQL.format(union_sql=union_sql))

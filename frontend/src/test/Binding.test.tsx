@@ -201,6 +201,68 @@ describe("Binding route URL keys", () => {
     expect(optionValues).toContain("YAL001C");
   });
 
+  it("auto-selects the first regulator (sorted) into the URL when none is set (B-3)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch((url) => {
+        if (url.endsWith("/datasets")) {
+          return {
+            datasets: [
+              { dbName: "callingcards", displayName: "Calling Cards" },
+              { dbName: "hackett", displayName: "Hackett" },
+            ],
+          };
+        }
+        if (url.includes("/binding/corr")) {
+          return {
+            method: "pearson",
+            col: "effect",
+            regulatorDisplay: {},
+            pairs: [
+              {
+                dbA: "callingcards",
+                dbB: "hackett",
+                colA: "callingcards_enrichment",
+                colB: "effect",
+                points: [
+                  { dbA: "callingcards", dbAId: "cc_0", dbB: "hackett", dbBId: "h_0", regulatorLocusTag: "YBR289W", correlation: 0.5 },
+                  { dbA: "callingcards", dbAId: "cc_1", dbB: "hackett", dbBId: "h_1", regulatorLocusTag: "YAL001C", correlation: 0.2 },
+                ],
+              },
+            ],
+          };
+        }
+        if (url.includes("/sample-conditions")) return { dbName: "x", conditionCols: [], labels: {} };
+        if (url.includes("/binding/scatter"))
+          return { regulator: "YAL001C", dbA: "callingcards", dbB: "hackett", colA: "callingcards_enrichment", colB: "effect", method: "pearson", r: 0, points: [] };
+        return {};
+      }),
+    );
+
+    function LocationProbe() {
+      const loc = useLocation();
+      return <div data-testid="loc-search">{loc.search}</div>;
+    }
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        {/* No ?regulator= in the URL. */}
+        <MemoryRouter initialEntries={["/binding?binding=callingcards,hackett"]}>
+          <Routes>
+            <Route path="/binding" element={<><Binding /><LocationProbe /></>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Once corr loads, the effect writes the first sorted regulator. With an
+    // empty display map the sort is by locus tag (case-insensitive), so
+    // "YAL001C" < "YBR289W" → regulator=YAL001C.
+    await waitFor(() => {
+      expect(screen.getByTestId("loc-search").textContent).toMatch(/regulator=YAL001C/);
+    });
+  });
+
   it("renders the correlation boxplot trace + selected-regulator overlay when corr data is present", async () => {
     vi.stubGlobal(
       "fetch",

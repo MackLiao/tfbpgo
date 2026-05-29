@@ -70,7 +70,8 @@ export function PerturbationScatterPair({
           showlegend: false,
           annotations: [
             {
-              text: `r=${resp.r.toFixed(3)}`,
+              // B-1: r is null when pandas .corr() would be NaN. Shiny shows "r=nan".
+              text: `r=${resp.r == null ? "nan" : resp.r.toFixed(3)}`,
               xref: "paper",
               yref: "paper",
               x: 0.98,

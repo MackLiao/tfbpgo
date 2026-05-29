@@ -44,13 +44,14 @@ func TestDatasetFields_HappyCallingcards(t *testing.T) {
 	require.Equal(t, "categorical", condition.Kind)
 	require.ElementsMatch(t, []string{"SC", "YPD"}, condition.Levels)
 
-	// `score` (DOUBLE) → numeric with min/max from aggregate.
-	score, ok := byField["score"]
-	require.True(t, ok)
-	require.Equal(t, "numeric", score.Kind)
-	require.NotNil(t, score.NumericMin)
-	require.NotNil(t, score.NumericMax)
-	require.LessOrEqual(t, *score.NumericMin, *score.NumericMax)
+	// SD-3: data-only measurement columns (score, poisson_pval, target_locus_tag)
+	// are NOT filter fields — field_manifest is sourced from {db}_meta only, so
+	// the modal cannot offer columns that would 500 when filtered against the
+	// {db}_meta-scoped WHERE.
+	_, hasScore := byField["score"]
+	require.False(t, hasScore, "data-only `score` must not be a filter field (SD-3)")
+	_, hasTarget := byField["target_locus_tag"]
+	require.False(t, hasTarget, "data-only `target_locus_tag` must not be a filter field (SD-3)")
 }
 
 func TestDatasetFields_HackettTimeOverride(t *testing.T) {
@@ -152,7 +153,9 @@ func TestSelectionMatrix_HappyTwoDatasets(t *testing.T) {
 	hk, ok := byName["hackett"]
 	require.True(t, ok)
 	require.Equal(t, int64(3), hk.NRegulators)
-	require.Equal(t, int64(4), hk.NSamples) // h_0..h_3
+	// SQL-1: hackett_meta is filtered to the analysis set, so the non-analysis
+	// sample h_3 no longer leaks into the sample count — h_0..h_2 only.
+	require.Equal(t, int64(3), hk.NSamples)
 
 	// Cross cell.
 	cross := resp.CrossDataset[0]
@@ -161,7 +164,7 @@ func TestSelectionMatrix_HappyTwoDatasets(t *testing.T) {
 	require.Equal(t, "hackett", cross.DBB)
 	require.Equal(t, int64(3), cross.NCommon)
 	require.Equal(t, int64(7), cross.SamplesA)
-	require.Equal(t, int64(4), cross.SamplesB)
+	require.Equal(t, int64(3), cross.SamplesB)
 }
 
 func TestSelectionMatrix_MissingDatasets400(t *testing.T) {
@@ -215,6 +218,37 @@ func TestSelectionMatrix_WithCallingcardsFilter(t *testing.T) {
 	require.Equal(t, "callingcards__hackett", cross.PairID)
 	require.Equal(t, int64(3), cross.NCommon,
 		"3 regulators common to YPD-filtered callingcards and unfiltered hackett")
+}
+
+// P0-2: the common-regulators flow writes a `regulator_locus_tag` categorical
+// filter to every active dataset. That field is hidden from field_manifest, but
+// it is a real {db}_meta column and a legitimate WHERE target in Shiny
+// (queries.py:45-48). The matrix/breakdown/export handlers must ACCEPT it
+// (not 400) and APPLY it so the matrix narrows to the chosen regulators —
+// matching Shiny's _matrix_data which passes dataset_filters() straight in.
+func TestSelectionMatrix_WithRegulatorFilter(t *testing.T) {
+	s := newTestServer(t)
+	rr := httptest.NewRecorder()
+	q := url.Values{}
+	q.Set("datasets", "callingcards,hackett")
+	// "Select N common regulators" writes regulator_locus_tag IN (...) to every
+	// active dataset. Narrow to a single regulator (YBR289W).
+	q.Set("filters", `{"callingcards":{"regulator_locus_tag":{"type":"categorical","value":["YBR289W"]}},"hackett":{"regulator_locus_tag":{"type":"categorical","value":["YBR289W"]}}}`)
+	req := httptest.NewRequest("GET", apiVPath(s, "/selection/matrix")+"?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.MatrixResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	byName := map[string]domain.MatrixDiagonalCell{}
+	for _, c := range resp.Diagonal {
+		byName[c.DBName] = c
+	}
+	// The matrix must be narrowed to the single chosen regulator.
+	require.Equal(t, int64(1), byName["callingcards"].NRegulators)
+	require.Equal(t, int64(1), byName["hackett"].NRegulators)
+	require.Len(t, resp.CrossDataset, 1)
+	require.Equal(t, int64(1), resp.CrossDataset[0].NCommon)
 }
 
 // TestSelectionMatrix_FilteredCrossPair guards the cross-dataset matrix
@@ -313,17 +347,30 @@ func TestSelectionBreakdown_Hackett(t *testing.T) {
 
 	var resp domain.BreakdownResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	// Only YBR289W has 2 samples (h_0 + h_3); others are single.
-	require.Equal(t, int64(1), resp.NMulti)
-	// `time` is the eligible manifest column for hackett (mechanism/restriction/
-	// date/strain are not in field_manifest for the fixture). YBR289W's two
-	// samples share time=45, so the per-reg distinct count is 1 → the FILTER
-	// (WHERE > 1) count is 0.
+	// SQL-1: after filtering hackett to the analysis set, the previously
+	// duplicated YBR289W sample (h_3) is gone, so every regulator now maps to a
+	// single sample → no multi-sample regulators.
+	require.Equal(t, int64(0), resp.NMulti)
+	// `time` is the eligible manifest column for hackett; with no multi-sample
+	// regulators the FILTER (WHERE distinct_per_reg > 1) count is 0.
 	byField := map[string]int64{}
 	for _, c := range resp.Columns {
 		byField[c.Field] = c.DistinctValues
 	}
 	require.Equal(t, int64(0), byField["time"])
+}
+
+// P0-2: the breakdown modal opened after "Select N common regulators" carries
+// a regulator_locus_tag filter; it must be accepted (not 400).
+func TestSelectionBreakdown_AcceptsRegulatorFilter(t *testing.T) {
+	s := newTestServer(t)
+	rr := httptest.NewRecorder()
+	q := url.Values{}
+	q.Set("dataset", "callingcards")
+	q.Set("filters", `{"callingcards":{"regulator_locus_tag":{"type":"categorical","value":["YBR289W"]}}}`)
+	req := httptest.NewRequest("GET", apiVPath(s, "/selection/breakdown")+"?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
 }
 
 func TestSelectionBreakdown_MissingDataset400(t *testing.T) {

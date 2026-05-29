@@ -37,28 +37,40 @@ type CorrPair struct {
 
 // CorrResponse is the wire envelope returned by /binding/corr and
 // /perturbation/correlations.
+//
+// RegulatorDisplay (B-2/P-4) maps each regulator_locus_tag appearing in Pairs
+// to its "SYMBOL (LOCUS_TAG)" display name (from regulator_display_names),
+// mirroring Shiny's sym_map (vdb_init.py:165-180). The frontend uses it to
+// label the regulator picker + boxplot hovers and to sort the picker by symbol.
+// Regulators absent from regulator_display_names are simply omitted (the
+// frontend falls back to the bare locus tag).
 type CorrResponse struct {
-	Method string     `json:"method"` // "pearson" | "spearman"
-	Col    string     `json:"col"`    // "effect" | "pvalue"
-	Pairs  []CorrPair `json:"pairs"`
+	Method           string            `json:"method"` // "pearson" | "spearman"
+	Col              string            `json:"col"`    // "effect" | "pvalue"
+	Pairs            []CorrPair        `json:"pairs"`
+	RegulatorDisplay map[string]string `json:"regulatorDisplay"`
 }
 
 // ScatterPoint is one (target, val_a, val_b) row produced by the
-// regulator_scatter_{method}.sql template. For Pearson, val* are raw
-// numeric values; for Spearman, val* are RANK() outputs (we still
-// represent as float64 — DuckDB INTEGER scanning into float64 widens
-// without precision loss for our row counts).
+// regulator_scatter_{method}.sql template. For Pearson, val* are raw numeric
+// values; for Spearman, val* are RANK() outputs. val* are SafeFloat: B-1 parity
+// removed the SQL finite-value filter (Shiny's scatter path is intentionally
+// unfiltered), so a NULL/NaN/±Inf measurement can now reach this row — it
+// serializes as JSON `null` (a plot gap) instead of 500-ing the response, and
+// scans a SQL NULL via SafeFloat.Scan.
 type ScatterPoint struct {
-	TargetLocusTag string  `json:"targetLocusTag" db:"target_locus_tag"`
-	ValA           float64 `json:"valA" db:"val_a"`
-	ValB           float64 `json:"valB" db:"val_b"`
+	TargetLocusTag string    `json:"targetLocusTag" db:"target_locus_tag"`
+	ValA           SafeFloat `json:"valA" db:"val_a"`
+	ValB           SafeFloat `json:"valB" db:"val_b"`
 }
 
 // ScatterResponse is the wire envelope for /binding/scatter and
-// /perturbation/scatter. R is the Pearson correlation of (valA, valB)
-// over Points, computed server-side (mirrors Shiny's
-// r=corr(_val_a,_val_b) in workspace.py). For Spearman variants this is
-// Pearson-on-ranks → exactly the Spearman coefficient by construction.
+// /perturbation/scatter. R is the Pearson correlation of (valA, valB) over
+// Points, computed server-side (mirrors Shiny's r=corr(_val_a,_val_b) in
+// workspace.py). For Spearman variants this is Pearson-on-ranks → exactly the
+// Spearman coefficient by construction. R is SafeFloat: pandas .corr() returns
+// NaN when an ±Inf value is present (B-1 inf-parity) or fewer than two finite
+// pairs remain, and that serializes as JSON `null`.
 type ScatterResponse struct {
 	Regulator string         `json:"regulator"`
 	DBA       string         `json:"dbA"`
@@ -66,6 +78,6 @@ type ScatterResponse struct {
 	ColA      string         `json:"colA"`
 	ColB      string         `json:"colB"`
 	Method    string         `json:"method"`
-	R         float64        `json:"r"`
+	R         SafeFloat      `json:"r"`
 	Points    []ScatterPoint `json:"points"`
 }

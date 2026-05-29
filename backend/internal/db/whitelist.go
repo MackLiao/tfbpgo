@@ -114,6 +114,26 @@ func NewWhitelist(m *Manifests) (*Whitelist, error) {
 		if len(d.DefaultFilters) > maxDefaultFiltersBytes {
 			return nil, fmt.Errorf("manifest default_filters for %q exceeds %d-byte cap (%d)", d.DBName, maxDefaultFiltersBytes, len(d.DefaultFilters))
 		}
+		// v5: upstream_cols (CSV) is interpolated into SQL by the condition-
+		// choice cascade query, so validate every token against SafeIdentRE
+		// with the same no-empty / no-whitespace discipline as condition_cols.
+		if d.UpstreamCols != "" {
+			for _, c := range strings.Split(d.UpstreamCols, ",") {
+				trimmed := strings.TrimSpace(c)
+				if trimmed == "" {
+					return nil, fmt.Errorf("manifest contains empty upstream_cols entry for %q (raw=%q)", d.DBName, d.UpstreamCols)
+				}
+				if trimmed != c {
+					return nil, fmt.Errorf("manifest contains whitespace in upstream_cols entry for %q: %q", d.DBName, c)
+				}
+				if !SafeIdentRE.MatchString(trimmed) {
+					return nil, fmt.Errorf("manifest contains unsafe upstream_cols entry for %q: %q", d.DBName, c)
+				}
+			}
+		}
+		if len(d.Description) > maxDescriptionBytes {
+			return nil, fmt.Errorf("manifest dataset description for %q exceeds %d-byte cap (%d)", d.DBName, maxDescriptionBytes, len(d.Description))
+		}
 	}
 	for _, f := range m.Fields {
 		if !SafeIdentRE.MatchString(f.DBName) || !SafeIdentRE.MatchString(f.Field) {
