@@ -25,8 +25,9 @@ func TestMetrics_RegistryServesExpectedNames(t *testing.T) {
 	m.CacheHits.WithLabelValues("/api/v/{v}/datasets").Inc()
 	m.CacheMisses.WithLabelValues("/api/v/{v}/datasets").Inc()
 	m.SFShared.WithLabelValues("/api/v/{v}/datasets").Inc()
-	m.CacheReject.Inc()
-	m.CacheOversize.Inc()
+	m.CacheLoadSeconds.WithLabelValues("/api/v/{v}/datasets").Add(1)
+	m.CacheReject.WithLabelValues("/api/v/{v}/datasets").Inc()
+	m.CacheOversize.WithLabelValues("/api/v/{v}/datasets").Inc()
 	m.CacheEviction.Inc()
 
 	h := promhttp.HandlerFor(m.Reg, promhttp.HandlerOpts{})
@@ -51,6 +52,7 @@ func TestMetrics_RegistryServesExpectedNames(t *testing.T) {
 		"cache_hits_total",
 		"cache_misses_total",
 		"singleflight_shared_calls_total",
+		"cache_load_seconds_total",
 		"cache_admission_rejected_total",
 		"cache_oversize_responses_total",
 		"cache_evictions_total",

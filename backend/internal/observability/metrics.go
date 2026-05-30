@@ -31,12 +31,13 @@ type Metrics struct {
 	DBPoolOpen                     prometheus.Gauge
 	DBPoolInUse                    prometheus.Gauge
 
-	CacheHits     *prometheus.CounterVec
-	CacheMisses   *prometheus.CounterVec
-	SFShared      *prometheus.CounterVec
-	CacheReject   prometheus.Counter
-	CacheOversize prometheus.Counter
-	CacheEviction prometheus.Counter
+	CacheHits        *prometheus.CounterVec
+	CacheMisses      *prometheus.CounterVec
+	SFShared         *prometheus.CounterVec
+	CacheLoadSeconds *prometheus.CounterVec
+	CacheReject      *prometheus.CounterVec
+	CacheOversize    *prometheus.CounterVec
+	CacheEviction    prometheus.Counter
 
 	ArtifactInfo *prometheus.GaugeVec
 }
@@ -103,14 +104,18 @@ func New() *Metrics {
 			Name: "singleflight_shared_calls_total",
 			Help: "Singleflight-coalesced requests per endpoint.",
 		}, []string{"endpoint"}),
-		CacheReject: prometheus.NewCounter(prometheus.CounterOpts{
+		CacheLoadSeconds: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cache_load_seconds_total",
+			Help: "Cumulative wall-seconds spent inside the cache loader (cold/miss path) per endpoint.",
+		}, []string{"endpoint"}),
+		CacheReject: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cache_admission_rejected_total",
-			Help: "Cache Set() calls rejected by ristretto admission policy.",
-		}),
-		CacheOversize: prometheus.NewCounter(prometheus.CounterOpts{
+			Help: "Cache Set() calls rejected by ristretto admission policy, per endpoint.",
+		}, []string{"endpoint"}),
+		CacheOversize: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cache_oversize_responses_total",
-			Help: "Responses larger than the per-item oversize threshold (budget/20).",
-		}),
+			Help: "Responses larger than the per-item oversize threshold (budget/20), per endpoint.",
+		}, []string{"endpoint"}),
 		CacheEviction: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "cache_evictions_total",
 			Help: "Cache evictions reported by ristretto.",
@@ -126,7 +131,7 @@ func New() *Metrics {
 		m.DBDuration, m.DBPoolWait,
 		m.DBPoolWaitDurationSecondsTotal, m.DBPoolWaitCount,
 		m.DBPoolOpen, m.DBPoolInUse,
-		m.CacheHits, m.CacheMisses, m.SFShared,
+		m.CacheHits, m.CacheMisses, m.SFShared, m.CacheLoadSeconds,
 		m.CacheReject, m.CacheOversize, m.CacheEviction,
 		m.ArtifactInfo,
 		collectors.NewGoCollector(),

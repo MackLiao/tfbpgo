@@ -135,7 +135,7 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 		"filters":      canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildTopNResponse(r.Context(), bindingDS, pertDS, topN, effectThr, pvalThr, filters)
 	})
 	MarkCacheHit(r.Context(), hit)

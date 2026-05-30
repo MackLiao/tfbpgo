@@ -27,7 +27,7 @@ func (s *Server) Regulators(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		ctx, cancel := contextWithDB(r.Context(), db.QueryTimeout)
 		defer cancel()
 		t0 := time.Now()

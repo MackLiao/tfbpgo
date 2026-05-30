@@ -22,7 +22,7 @@ func TestSingleflight_ConcurrentMissesProduceOneCall(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, shared, _ := c.GetOrLoad(context.Background(), "k1", func() ([]byte, error) {
+			_, _, shared, _ := c.GetOrLoad(context.Background(), "test", "k1", func() ([]byte, error) {
 				calls.Add(1)
 				time.Sleep(50 * time.Millisecond)
 				return []byte(`{"v":1}`), nil
@@ -45,11 +45,11 @@ func TestSetWaitMakesValueVisibleImmediately(t *testing.T) {
 	c, err := New(Options{BudgetBytes: 1 << 20})
 	require.NoError(t, err)
 	body := []byte(`{"x":42}`)
-	_, hit, shared, err := c.GetOrLoad(context.Background(), "k2", func() ([]byte, error) { return body, nil })
+	_, hit, shared, err := c.GetOrLoad(context.Background(), "test", "k2", func() ([]byte, error) { return body, nil })
 	require.NoError(t, err)
 	require.False(t, hit)
 	require.False(t, shared, "uncontended miss should not be shared")
-	got, hit, shared, err := c.GetOrLoad(context.Background(), "k2", func() ([]byte, error) { t.Fatal("should not run"); return nil, nil })
+	got, hit, shared, err := c.GetOrLoad(context.Background(), "test", "k2", func() ([]byte, error) { t.Fatal("should not run"); return nil, nil })
 	require.NoError(t, err)
 	require.True(t, hit)
 	require.False(t, shared, "cache hit short-circuits singleflight")
@@ -60,8 +60,8 @@ func TestOversizeResponseTracked(t *testing.T) {
 	c, err := New(Options{BudgetBytes: 1000}) // tiny budget => threshold = 50 bytes
 	require.NoError(t, err)
 	big := make([]byte, 200)
-	_, _, _, _ = c.GetOrLoad(context.Background(), "k3", func() ([]byte, error) { return big, nil })
-	require.Equal(t, int64(1), c.OversizeCount())
+	_, _, _, _ = c.GetOrLoad(context.Background(), "test", "k3", func() ([]byte, error) { return big, nil })
+	require.Equal(t, int64(1), c.OversizeCount()["test"])
 }
 
 // TestEvictionCounterFires forces ristretto to evict by inserting items
@@ -77,7 +77,7 @@ func TestEvictionCounterFires(t *testing.T) {
 	body := make([]byte, 1024)
 	for i := 0; i < 200; i++ {
 		key := fmt.Sprintf("k-%d", i)
-		_, _, _, err := c.GetOrLoad(context.Background(), key, func() ([]byte, error) {
+		_, _, _, err := c.GetOrLoad(context.Background(), "test", key, func() ([]byte, error) {
 			return body, nil
 		})
 		require.NoError(t, err)
@@ -88,4 +88,22 @@ func TestEvictionCounterFires(t *testing.T) {
 	}, 2*time.Second, 25*time.Millisecond,
 		"expected EvictionCount > 0 after overfilling cache, got %d",
 		c.EvictionCount())
+}
+
+// TestOversizeAndRejectAttributedToEndpoint proves an oversize response and an
+// admission-rejected Set are attributed to the endpoint label passed to
+// GetOrLoad. Budget is tiny so the body is both oversize (> budget/20) and
+// rejected by ristretto admission.
+func TestOversizeAndRejectAttributedToEndpoint(t *testing.T) {
+	c, err := New(Options{BudgetBytes: 1000}) // threshold = 50 bytes
+	require.NoError(t, err)
+	big := make([]byte, 200) // > 50-byte oversize threshold
+	_, _, _, err = c.GetOrLoad(context.Background(), "/api/v/{v}/comparison/topn", "k1",
+		func() ([]byte, error) { return big, nil })
+	require.NoError(t, err)
+
+	require.Equal(t, int64(1), c.OversizeCount()["/api/v/{v}/comparison/topn"],
+		"oversize must attribute to the topn endpoint")
+	require.NotContains(t, c.OversizeCount(), "/api/v/{v}/datasets",
+		"a different endpoint must not be charged")
 }

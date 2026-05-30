@@ -13,7 +13,7 @@ func (s *Server) Datasets(w http.ResponseWriter, r *http.Request) {
 	// /datasets ignores query params entirely; canonical key has none so
 	// junk-key fuzzing cannot expand the cache namespace.
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, nil)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildDatasetsResponse()
 	})
 	MarkCacheHit(r.Context(), hit)

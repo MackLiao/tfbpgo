@@ -120,7 +120,7 @@ func (s *Server) serveCorr(w http.ResponseWriter, r *http.Request, dataType stri
 		"filters":  canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildCorrResponse(r.Context(), dataType, method, col, dsList, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
@@ -398,7 +398,7 @@ func (s *Server) serveScatter(w http.ResponseWriter, r *http.Request, dataType s
 		"filters": canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildScatterResponse(r.Context(), dataType, method, col, regulator, pair, filters)
 	})
 	MarkCacheHit(r.Context(), hit)

@@ -236,7 +236,7 @@ func (s *Server) DatasetFields(w http.ResponseWriter, r *http.Request) {
 	// Cache key: no query params drive the response, so the canonical
 	// component is empty.
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, nil)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildDatasetFieldsResponse(r.Context(), dbName)
 	})
 	MarkCacheHit(r.Context(), hit)
@@ -314,7 +314,7 @@ func (s *Server) DatasetRegulators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, nil)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildDatasetRegulatorsResponse(r.Context(), dbName)
 	})
 	MarkCacheHit(r.Context(), hit)
@@ -410,7 +410,7 @@ func (s *Server) SelectionMatrix(w http.ResponseWriter, r *http.Request) {
 		"filters":  canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildMatrixResponse(r.Context(), dsList, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
@@ -674,7 +674,7 @@ func (s *Server) SelectionBreakdown(w http.ResponseWriter, r *http.Request) {
 		"filters": canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), key, func() ([]byte, error) {
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
 		return s.buildBreakdownResponse(r.Context(), dbName, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
