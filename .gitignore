@@ -35,3 +35,7 @@ coverage.out
 frontend/node_modules/
 frontend/dist/
 backend/static/dist/
+
+# k6 scenario summary outputs (operator-run artifacts, not source)
+tests/loadtest/k6/scenarios/*.summary.json
+tests/loadtest/k6/scenarios/*-summary.json
