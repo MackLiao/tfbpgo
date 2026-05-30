@@ -48,9 +48,15 @@ func New() *Metrics {
 	m := &Metrics{
 		Reg: reg,
 		HTTPDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "http_request_duration_seconds",
-			Help:    "HTTP request latency by route pattern + status.",
-			Buckets: prometheus.DefBuckets,
+			Name: "http_request_duration_seconds",
+			Help: "HTTP request latency by route pattern + status.",
+			// DefBuckets widened with .15/.2/.3/.5 so the open-model
+			// p95<200ms / p99<500ms thresholds land on real bucket edges.
+			Buckets: []float64{
+				0.005, 0.01, 0.025, 0.05, 0.1,
+				0.15, 0.2, 0.25, 0.3, 0.5,
+				1, 2.5, 5, 10,
+			},
 		}, []string{"route", "status"}),
 		HTTPRequestSize: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "http_request_bytes",
