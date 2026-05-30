@@ -4,6 +4,7 @@
         parity parity-snapshot-record \
         loadtest-profile loadtest-cold-burst \
         loadtest-smoke loadtest-coverage loadtest-cold-fanout \
+        loadtest-headtohead-go loadtest-headtohead-shiny loadtest-headtohead \
         docker-build docker-run
 
 # ----- docker (Phase 3) ------------------------------------------------------
@@ -143,6 +144,74 @@ loadtest-coverage:
 # (setup() asserts cache_hits_total==0). Override K/N via env.
 loadtest-cold-fanout:
 	cd tests/loadtest/k6 && ARTIFACT_KIND=fixture BASE_URL=$(BASE_URL) K=$${K:-3} N=$${N:-40} k6 run scenarios/cold_fanout.js
+
+# ----- Phase D: head-to-head Go vs legacy Shiny (G3) -------------------------
+# OPERATIONAL: runs against LIVE hosts on matched t3.small hardware.
+# k6 must be run OFF-BOX (not on either target). See:
+#   tests/loadtest/k6/headtohead/METHODOLOGY.md  (pinned protocol)
+#   tests/loadtest/k6/headtohead/RUNBOOK.md      (step-by-step procedure)
+#   tests/loadtest/k6/headtohead/CAPTURE.md      (frame capture prerequisite)
+#
+# Override via env:
+#   RATES=5,40,80  STEP_HOLD=4m  RAMP=30s  WARM=1
+#   BASE_URL_GO=https://tfbindingandperturbation.com
+#   BASE_URL_SHINY=https://legacy.tfbindingandperturbation.com
+#   SHINY_ACTION_TIMEOUT=30000
+
+BASE_URL_GO    ?= https://tfbindingandperturbation.com
+BASE_URL_SHINY ?= https://legacy.tfbindingandperturbation.com
+
+# Go arm: arrival_slo.js against the Go service (METHODOLOGY.md §3).
+# Set WARM=1 for warm posture; leave unset for cold posture.
+loadtest-headtohead-go:
+	cd tests/loadtest/k6 && \
+	  ARTIFACT_KIND=real \
+	  BASE_URL=$(BASE_URL_GO) \
+	  $${WARM:+WARM=$$WARM} \
+	  k6 run \
+	    -e ARTIFACT_KIND=real \
+	    -e BASE_URL=$(BASE_URL_GO) \
+	    $$([ -n "$$WARM" ] && echo "-e WARM=$$WARM") \
+	    $$([ -n "$$RATES" ] && echo "-e RATES=$$RATES") \
+	    $$([ -n "$$STEP_HOLD" ] && echo "-e STEP_HOLD=$$STEP_HOLD") \
+	    $$([ -n "$$RAMP" ] && echo "-e RAMP=$$RAMP") \
+	    --out json=headtohead_go_$$([ -n "$$WARM" ] && echo warm || echo cold).json \
+	    scenarios/arrival_slo.js
+
+# Shiny arm: shiny_k6.js against the legacy Shiny service.
+# Requires frame capture to be complete (frames.js __CAPTURED__ = true).
+loadtest-headtohead-shiny:
+	cd tests/loadtest/k6 && \
+	  k6 run \
+	    -e ARTIFACT_KIND=real \
+	    -e BASE_URL=$(BASE_URL_SHINY) \
+	    -e SHINY_ACTION_TIMEOUT=$${SHINY_ACTION_TIMEOUT:-30000} \
+	    $$([ -n "$$RATES" ] && echo "-e RATES=$$RATES") \
+	    $$([ -n "$$STEP_HOLD" ] && echo "-e STEP_HOLD=$$STEP_HOLD") \
+	    $$([ -n "$$RAMP" ] && echo "-e RAMP=$$RAMP") \
+	    --out json=headtohead_shiny_$$([ -n "$$WARM" ] && echo warm || echo cold).json \
+	    headtohead/shiny_k6.js
+
+# Full head-to-head sequence: warm Go -> cold Go -> warm Shiny -> cold Shiny.
+# Operator must restart containers between warm/cold runs as directed by RUNBOOK.md.
+loadtest-headtohead:
+	@echo "=== Phase D head-to-head: Go (warm) ==="
+	$(MAKE) loadtest-headtohead-go WARM=1
+	@echo ""
+	@echo "=== Phase D head-to-head: Go (cold) — restart tfbp container first ==="
+	@echo "Restart the Go container (docker compose restart tfbp) then press Enter..."
+	@read _confirm
+	$(MAKE) loadtest-headtohead-go
+	@echo ""
+	@echo "=== Phase D head-to-head: Shiny (warm) ==="
+	$(MAKE) loadtest-headtohead-shiny WARM=1
+	@echo ""
+	@echo "=== Phase D head-to-head: Shiny (cold) — restart Shiny container first ==="
+	@echo "Restart the Shiny container (docker compose restart shiny) then press Enter..."
+	@read _confirm
+	$(MAKE) loadtest-headtohead-shiny
+	@echo ""
+	@echo "=== Run complete. Fill in tests/loadtest-summary.md crossover table. ==="
 
 # ----- aggregate -------------------------------------------------------------
 

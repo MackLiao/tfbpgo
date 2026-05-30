@@ -189,3 +189,65 @@ Verify on the running container during the cutover window:
 6. Start the on-box peak sampler, run `breakpoint.js` off-box → Breaking-point table.
 7. Tick the observability boxes.
 8. `git add tests/loadtest-summary.md && git commit -m "docs(cutover): record v2 load-test summary for <date>"` then proceed with DNS cutover.
+
+---
+
+## Head-to-head vs legacy Python Shiny (G3)
+
+> **Phase D — fast-follow, NOT a cutover blocker** (spec §3, §11).
+> Protocol is pinned in `tests/loadtest/k6/headtohead/METHODOLOGY.md`.
+> Run procedure: `tests/loadtest/k6/headtohead/RUNBOOK.md`.
+> Drivers: `arrival_slo.js` (Go arm), `shiny_k6.js` (Shiny arm).
+>
+> **Frame-capture prerequisite:** before running the Shiny arm, capture the
+> SockJS frames per `CAPTURE.md` and paste them into `frames.js`. With
+> `frames.js __CAPTURED__ = false` the Shiny arm refuses to run.
+
+### req/s-at-SLO crossover
+
+The deliverable is the highest arrival rate (req/s) at which each arm still
+meets the availability SLO (`shiny_action_ok` rate ≥ 0.995 / `http_req_failed`
+rate == 0) AND the latency SLO (p95 < 200 ms, p99 < 500 ms), at both warm and
+cold postures. See METHODOLOGY.md §7 for the full pass criterion.
+
+| Target | Posture | Highest req/s at SLO | Degradation rate | Degradation mode |
+| ------ | ------- | -------------------- | ---------------- | ---------------- |
+| Go (tfbindingandperturbation.com) | warm | `<FILL IN>` req/s | `<FILL IN>` | `<FILL IN>` |
+| Go (tfbindingandperturbation.com) | cold | `<FILL IN>` req/s | `<FILL IN>` | `<FILL IN>` |
+| Shiny (legacy.tfbindingandperturbation.com) | warm | `<FILL IN>` req/s | `<FILL IN>` | `<FILL IN>` |
+| Shiny (legacy.tfbindingandperturbation.com) | cold | `<FILL IN>` req/s | `<FILL IN>` | `<FILL IN>` |
+
+### Shiny arm SLO metrics
+
+Read from `shiny_adapter.summary.json` after the Shiny ladder run.
+
+| Metric | Gate | Measured | Pass? |
+| ------ | ---- | -------- | ----- |
+| `shiny_action_ok` rate (warm) | ≥ 0.995 | `<FILL IN>` | `<✓/✗>` |
+| `shiny_action_ms` p95 (warm) | < 200 ms | `<FILL IN>` ms | `<✓/✗>` |
+| `shiny_action_ms` p99 (warm) | < 500 ms | `<FILL IN>` ms | `<✓/✗>` |
+| `shiny_action_ok` rate (cold) | informational | `<FILL IN>` | — |
+| `shiny_action_ms` p95 (cold) | informational | `<FILL IN>` ms | — |
+| `shiny_reconnects_total` | informational | `<FILL IN>` | — |
+| `dropped_iterations` (Shiny arm) | == 0 | `<FILL IN>` | `<✓/✗>` |
+
+### G3 pass criterion
+
+**PASS** if: Go meets the availability SLO (`http_req_failed` rate == 0,
+`readyz_available` > 0.995, p99 < 500 ms) at the arrival rate where Shiny
+first degrades below its SLO (`shiny_action_ok` rate < 0.995 OR
+`shiny_action_ms` p99 > 500 ms).
+
+**G3 result:** `<FILL IN — PASS / FAIL / BOTH DEGRADE AT SAME RATE>`
+
+### Environment (matched per METHODOLOGY.md §2)
+
+```
+Run date (UTC):           <FILL IN>
+Go host:                  <FILL IN — t3.small instance id>
+Shiny host:               <FILL IN — t3.small instance id>
+k6 host (off-box):        <FILL IN>
+Artifact sha256:          <FILL IN — same file on both hosts>
+Go binary SHA:            <FILL IN>
+Shiny version (pip show): <FILL IN — e.g. shiny==1.4.0>
+```
