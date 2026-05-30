@@ -1,7 +1,7 @@
 // tests/loadtest/k6/lib/__tests__/config.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apiBase, parseEnv, DEFAULTS } from '../config.js';
+import { apiBase, parseEnv, DEFAULTS } from '../config_pure.js';
 
 test('apiBase joins base and version into the /api/v/{v} prefix', () => {
   assert.equal(

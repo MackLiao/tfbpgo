@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseCounter, metricDelta, cacheHitRate, poolWaitMeanMs,
-} from '../metrics.js';
+} from '../metrics_pure.js';
 
 const TEXT_BEFORE = `# HELP cache_hits_total Cache hits.
 # TYPE cache_hits_total counter

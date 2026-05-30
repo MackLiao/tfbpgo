@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   makeZipf, makeUniform, datasetCombos,
   validFilter, filterToParam, parseRegulators, STATIC_REGULATORS,
-} from '../keyspace.js';
+} from '../keyspace_pure.js';
 
 // Deterministic LCG returning floats in [0,1). Seeded so the test is stable.
 function lcg(seed) {
