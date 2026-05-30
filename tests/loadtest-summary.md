@@ -1,133 +1,191 @@
-# Cutover load-test summary — TEMPLATE
+# Cutover load-test summary — TEMPLATE (v2)
 
-> **This is a TEMPLATE.** The cutover gate (warm + cold-burst k6 runs, peak-RSS
-> measurement, parity diff, observability checklist) is an **operational step**
-> performed by the operator on the production EC2 host. Docker and k6 are
-> required and are **not** available in the development environment that
-> generated this file. The committed copy is therefore unfilled; the operator
-> replaces each `<FILL IN>` placeholder with the actual measurement and commits
-> the updated copy alongside the cutover deploy.
+> **This is a TEMPLATE.** The cutover gate is an **operational step** run by the
+> operator against the production EC2 `t3.small` with the **real** artifact and
+> **k6 OFF-box** (the load generator must not steal the backend's 2 vCPUs).
+> Every `<FILL IN>` is replaced with a measured value and committed alongside
+> the cutover deploy. Mechanics of each scenario are validated locally on the
+> fixture (the `*.local.sh` harnesses); the numbers below are NOT valid unless
+> produced with `ARTIFACT_KIND=real`.
 >
-> See `deploy/README.md` for how to run each gate and where its numbers come
-> from. See `docs/superpowers/specs/2026-05-12-go-react-rewrite-design.md`
-> §11.3 for the authoritative gate definitions.
+> Scenarios: `tests/loadtest/k6/scenarios/arrival_slo.js`,
+> `hitrate_curve.js`, `breakpoint.js`. Shared libs under
+> `tests/loadtest/k6/lib/`. Gate definitions: spec
+> `docs/superpowers/specs/2026-05-12-go-react-rewrite-design.md` §11.3 and the
+> loadtest-program design §10.
 
 ---
 
 ## Environment
 
 ```
-Cutover date (UTC):      <FILL IN — e.g. 2026-05-14>
-Host:                    <FILL IN — e.g. ec2-XX-XX-XX-XX.compute-1.amazonaws.com (t3.small)>
-Backend version:         <FILL IN — git SHA or tag, e.g. v1.0.0 / abc1234>
-Image digest:            <FILL IN — e.g. ghcr.io/brentlab/tfbpshiny-go@sha256:...>
-Artifact key:            <FILL IN — e.g. tfbp/2026-05-13/tfbp.duckdb>
-Artifact sha256:         <FILL IN — 64-char hex from .env>
-DuckDB version (binary): <FILL IN — go.mod duckdb-go/v2 release>
+Cutover date (UTC):      <FILL IN — e.g. 2026-05-30>
+Backend host:            <FILL IN — t3.small, e.g. ec2-XX.compute-1.amazonaws.com>
+k6 host (OFF-box):       <FILL IN — laptop/bastion; MUST be a different machine>
+BASE_URL:                <FILL IN — e.g. https://tfbindingandperturbation.com>
+ARTIFACT_KIND:           real          (MUST be 'real' — 'fixture' runs are mechanics-only)
+artifactVersion:         <FILL IN — from /api/version, stamped in every summary JSON>
+Backend version:         <FILL IN — git SHA / image digest>
+Artifact sha256:         <FILL IN>
+DuckDB version (binary): <FILL IN>
 ```
 
-## Warm-cache profile (§11.3.2 / §11.3.3)
+### Calibration precondition (the run is INVALID if either fails)
 
-Run on the production host **after** pre-warming the popular regulator subset
-(see `deploy/README.md` §"Cutover gate"). Numbers come from
-`profile-result.csv` (k6 `--out csv=...`) and `ps -o rss=`.
+| Check | Requirement | Observed | OK? |
+| ----- | ----------- | -------- | --- |
+| k6 host CPU during run | < 70% (`mpstat 5` on the **off-box** k6 host) | `<FILL IN>` % | `<✓/✗>` |
+| `dropped_iterations` (every scenario summary) | == 0 | `<FILL IN>` | `<✓/✗>` |
 
-| Metric                              | Gate         | Measured       | Pass? |
-| ----------------------------------- | ------------ | -------------- | ----- |
-| `http_req_duration` p95             | < 200 ms     | `<FILL IN>` ms | `<✓/✗>` |
-| `http_req_duration` p99             | < 500 ms     | `<FILL IN>` ms | `<✓/✗>` |
-| `http_req_failed` rate (5xx + net)  | == 0         | `<FILL IN>`    | `<✓/✗>` |
-| Peak RSS                            | < 1.5 GB     | `<FILL IN>` MB | `<✓/✗>` |
-| `cache_hit_ratio` (popular segment) | > 0.85       | `<FILL IN>`    | `<✓/✗>` |
-| `db_pool_wait_duration_seconds` p95 | < 100 ms     | `<FILL IN>` ms | `<✓/✗>` |
-| OOM kills (`dmesg`)                 | == 0         | `<FILL IN>`    | `<✓/✗>` |
-
-How to derive each:
-- p95/p99/failed rate → k6 summary at end of `profile.js` run.
-- Peak RSS → `while sleep 1; do ps -o rss= -p $(pidof tfbp-server); done` during the run; record max.
-- `cache_hit_ratio` (popular) → from `cache_hits_total{segment="popular"} / (cache_hits_total + cache_misses_total)` over the run window via Prometheus / `/metrics` deltas; can also be eyeballed from the k6-emitted `popular_cache_hit` rate if the backend exposes `X-Cache`.
-- `db_pool_wait_duration_seconds` p95 → `/metrics` histogram quantile over the run window.
-- OOM kills → `dmesg -T | grep -i 'killed process' | grep tfbp-server` after the run.
-
-## Cold-burst (singleflight coalescing, §11.3.3)
-
-Run **immediately after a backend restart** (cache cleared) using `cold_burst.js`.
-The teardown block prints the relevant `/metrics` deltas; the operator records
-the before/after diffs here.
-
-| Metric                                                    | Gate     | Δ during burst | Pass? |
-| --------------------------------------------------------- | -------- | -------------- | ----- |
-| `singleflight_shared_calls_total`                         | ≥ 99     | `<FILL IN>`    | `<✓/✗>` |
-| `db_query_duration_seconds_count{endpoint="binding/data"}`| == 1     | `<FILL IN>`    | `<✓/✗>` |
-| `cache_misses_total` Δ for the burst URL                  | == 1     | `<FILL IN>`    | `<✓/✗>` |
-| `cache_hits_total` Δ for the burst URL                    | == 0     | `<FILL IN>`    | `<✓/✗>` |
-| `http_req_failed` rate                                    | == 0     | `<FILL IN>`    | `<✓/✗>` |
-
-`cache_hits_total` must NOT increase during the burst: the 99 singleflight
-waiters receive the in-flight result directly from `singleflight.Do`, and
-the loader populates the cache exactly once at the very end of its single
-SQL round-trip — none of the 100 in-burst requests go through the
-ristretto-hit path. Requests issued *after* the burst settles would be
-hits, but those are out of scope for this gate.
-
-## Parity (§11.3.1)
-
-After Task 2's fixture widening, all 11 golden URLs must match their committed
-snapshots byte-for-byte.
-
-```
-make parity
-```
-
-| Endpoint count | Pass? |
-| -------------- | ----- |
-| 11 / 11        | ✓     |
-
-(If anything regresses, `make parity` exits non-zero and prints the diffing URL.)
-
-## Bundle size (spec §7.5)
-
-Measured from `frontend/dist/assets/plotly-*.js` after `pnpm build`:
-
-| Chunk                  | Target              | Measured       | Notes |
-| ---------------------- | ------------------- | -------------- | ----- |
-| Plotly chunk (gzip)    | < 512 000 bytes     | 512 649 bytes  | +649 B / +0.13% over target. Accepted at cutover unless first-paint regresses measurably in DevTools side-by-side during the warm-cache k6 run. |
-| Plotly chunk (raw)     | informational       | 1 488 717 bytes | |
-| Initial entry (gzip)   | informational       | `<FILL IN>` KB | Measure via `du -hb frontend/dist/assets/index-*.js` (gzipped Vite output). |
-
-Decision at cutover (delete whichever doesn't apply):
-- [ ] **ACCEPT** the 0.13 % overage — load test shows no measurable first-paint regression.
-- [ ] **DROP** a trace (`scattergl` or `heatmap` — pick least-used) and rebuild.
-
-## Observability checklist
-
-Verify each on the running container during the cutover window:
-
-- [ ] `/healthz` returns 200.
-- [ ] `/readyz` returns 200 and reports artifact metadata.
-- [ ] `/api/version` returns `{ artifactVersion, schemaVersion, ... }`.
-- [ ] `/metrics` exposes every counter / histogram in spec §6.7
-  (`http_requests_total`, `http_request_duration_seconds`, `cache_hits_total`,
-  `cache_misses_total`, `cache_admission_rejected_total`,
-  `cache_oversize_responses_total`, `singleflight_shared_calls_total`,
-  `db_query_duration_seconds`, `db_pool_wait_duration_seconds`,
-  `db_pool_open_connections`, `db_pool_in_use_connections`).
-- [ ] Structured logs (`docker compose logs tfbp`) include `artifact_version`,
-  `route`, `status`, `duration_ms` on every request line.
-- [ ] Stale `/api/v/{v}/...` request with a non-current `{v}` returns **410**
-  with `Location: /api/version` header.
-- [ ] `legacy.tfbindingandperturbation.com` resolves and returns the Shiny app;
-  `tfbindingandperturbation.com` returns the Go SPA (see Task 13 in the Phase 3 plan).
+If either fails, the offered arrival rate is a lie: recalibrate (raise
+`MAX_VUS`/`PREALLOC_VUS`, or shard k6 across two off-box generators) and rerun.
+No numbers below are valid until both are green.
 
 ---
 
+## Warm-cache open-model SLO
+
+Scenario: `scenarios/arrival_slo.js` with `WARM=1` after a popular-keyspace
+pre-warm. Open model (`ramping-arrival-rate`), step rate 5 → 40 → 80 req/s held
+4m each. Read the thresholds block of the k6 summary / `arrival_slo.warm.json`.
+
+| Metric (read from summary) | Gate | Measured | Pass? |
+| -------------------------- | ---- | -------- | ----- |
+| `http_req_failed` rate | == 0 | `<FILL IN>` | `<✓/✗>` |
+| `http_req_duration{arm:mix}` p95 | < 200 ms | `<FILL IN>` ms | `<✓/✗>` |
+| `http_req_duration{arm:mix}` p99 | < 500 ms | `<FILL IN>` ms | `<✓/✗>` |
+| `dropped_iterations` | == 0 | `<FILL IN>` | `<✓/✗>` |
+| `cache_hits_total / (hits+misses)` for `binding/data` | > 0.85 | `<FILL IN>` | `<✓/✗>` |
+| `db_pool_wait_duration_seconds_total` / `db_pool_wait_count_total` mean (see Pool wait below) | < 100 ms | `<FILL IN>` ms | `<✓/✗>` |
+| Peak RSS (`process_resident_memory_bytes`, sampled) | < 1.5 GB | `<FILL IN>` MB | `<✓/✗>` |
+| OOM kills (`dmesg`) | == 0 | `<FILL IN>` | `<✓/✗>` |
+
+> **SLO verdict (transcribe the scenario's `=== SLO VERDICT ===` block):** `<FILL IN>`
+
+Off-box invocation actually run:
+```
+<FILL IN — paste the exact k6 command, including -e ARTIFACT_KIND=real -e WARM=1>
+```
+
+## Cold cutover number (honest)
+
+Scenario: `scenarios/arrival_slo.js` **without** `WARM`, run **immediately after
+`docker compose restart tfbp`** (ristretto empty). NOT gated — this is the
+honest cold p95 the first users see before the cache fills. Recorded per spec
+§11.3.3 "cold-cache containment".
+
+| Metric | Value | Notes |
+| ------ | ----- | ----- |
+| `http_req_duration{arm:mix}` p95 (cold) | `<FILL IN>` ms | honest cold cutover p95 |
+| `http_req_duration{arm:mix}` p99 (cold) | `<FILL IN>` ms | |
+| Cold p95 for `comparison/topn` specifically | `<FILL IN>` ms | most expensive endpoint |
+| `singleflight_shared_calls_total{endpoint:"comparison/topn"}` Δ | `<FILL IN>` | coalescing firing on cold popular keys |
+| `dropped_iterations` | `<FILL IN>` (must be 0) | else number invalid |
+
+## Hit-rate vs p95 curve
+
+Scenario: `scenarios/hitrate_curve.js`, `KEYSPACE_MODE=zipf`, swept across
+`ZIPF_EXP` (one run per point, backend restarted between points). Each row from
+`hitrate_exp_<EXP>.json`. A row is VALID only if `inBand:true`
+(|achieved − target| ≤ 3%).
+
+| ZIPF_EXP | target hit rate | achieved hit rate | in-band (±3%)? | aggregate p95 (ms) | `binding/data` per-endpoint hit rate |
+| -------- | --------------- | ----------------- | -------------- | ------------------ | ------------------------------------ |
+| 0.6 | `<FILL IN>` | `<FILL IN>` | `<✓/✗>` | `<FILL IN>` | `<FILL IN>` |
+| 0.9 | `<FILL IN>` | `<FILL IN>` | `<✓/✗>` | `<FILL IN>` | `<FILL IN>` |
+| 1.2 | `<FILL IN>` | `<FILL IN>` | `<✓/✗>` | `<FILL IN>` | `<FILL IN>` |
+| 1.5 | `<FILL IN>` | `<FILL IN>` | `<✓/✗>` | `<FILL IN>` | `<FILL IN>` |
+| 2.0 | `<FILL IN>` | `<FILL IN>` | `<✓/✗>` | `<FILL IN>` | `<FILL IN>` |
+
+**Operating-point assertion:** at the realistic skew (≈ `ZIPF_EXP 1.2`)
+`perEndpointHitRate["binding/data"]` > 0.85 **and** aggregate p95 < 200 ms.
+Result: `<FILL IN — PASS/FAIL>`.
+
+`cache_load_seconds_total{endpoint}` (cold-path wall-seconds, splits route
+latency from DB+marshal): `<FILL IN — top 3 endpoints by Δ over the run>`.
+
+## Breaking point
+
+Scenario: `scenarios/breakpoint.js`, `KEYSPACE_MODE=uniform` (mostly-miss),
+expensive endpoints, pushed to ~300 req/s. True `db_pool_in_use` /
+`go_goroutines` / RSS peaks come from the on-box `breakpoint-peaks.txt`
+sampler, NOT the post-run scrape. From `breakpoint.json`.
+
+| Field | Value | Source |
+| ----- | ----- | ------ |
+| Knee (last sane rate, p95 < 500 ms) | `<FILL IN>` req/s | `kneeReqS` |
+| Cliff (first rate with failures) | `<FILL IN>` req/s | `cliffReqS` |
+| Degradation mode | `<FILL IN — queue-then-504 \| OOM \| credit-throttle \| spill>` | `degradationMode` |
+| Degradation reason | `<FILL IN>` | `degradationReason` |
+| `db_pool_in_use` peak / `db_pool_open_connections` | `<FILL IN>` / `<FILL IN>` | sampler + scrape |
+| `go_goroutines` peak | `<FILL IN>` | sampler |
+| RSS peak | `<FILL IN>` MB | sampler |
+| `cache_misses_total` Δ | `<FILL IN>` | scrape delta |
+| `cache_evictions_total` Δ | `<FILL IN>` | scrape delta |
+| `http_in_flight_requests` peak | `<FILL IN>` | sampler |
+
+**Headroom assertion:** `kneeReqS` must sit comfortably above the warm SLO
+offered rate (80 req/s). `kneeReqS <= 80` is a cutover blocker. Result:
+`<FILL IN — PASS/FAIL>`.
+
+Degradation-mode reference:
+- **queue-then-504** — pool pegged at `db_pool_open_connections`, `db_pool_wait`
+  mean climbs, 30s-ctx timeouts → 504s; goroutines pile up.
+- **OOM** — RSS near `mem_limit` + sudden failure spike (container OOM-killed).
+- **credit-throttle** — latency/failures rise with a **healthy** pool and flat
+  RSS → t3.small CPU-credit exhaustion.
+- **spill** — `db_query_duration` climbs with moderate pool wait + evictions →
+  DuckDB spilling to `temp_directory` (check `max_temp_directory_size`).
+
+## Availability / error budget
+
+From `arrival_slo.js`'s `readyz_available` probe arm (low-rate `/readyz`+`/healthz`)
+and `http_req_failed`.
+
+| Metric | Gate | Measured | Pass? |
+| ------ | ---- | -------- | ----- |
+| `readyz_available` (Rate) | > 0.995 | `<FILL IN>` | `<✓/✗>` |
+| `http_req_failed` rate (warm) | < 0.005 | `<FILL IN>` | `<✓/✗>` |
+| Error budget consumed during run | informational | `<FILL IN>` | — |
+
+## Pool wait (counter-pair)
+
+`db_pool_wait_duration_seconds` is exported as a counter PAIR. Compute the mean
+wait over the run window — do NOT read a single histogram quantile.
+
+```
+mean_wait_ms = 1000 * Δ(db_pool_wait_duration_seconds_total)
+                    / Δ(db_pool_wait_count_total)
+```
+
+(This is exactly `metrics.js poolWaitMeanMs(before, after)`.)
+
+| Window | `db_pool_wait_duration_seconds_total` Δ | `db_pool_wait_count_total` Δ | mean wait (ms) | Gate | Pass? |
+| ------ | --------------------------------------- | ---------------------------- | -------------- | ---- | ----- |
+| Warm SLO run | `<FILL IN>` | `<FILL IN>` | `<FILL IN>` | < 100 ms | `<✓/✗>` |
+| Breaking-point run | `<FILL IN>` | `<FILL IN>` | `<FILL IN>` | informational | — |
+
+---
+
+## Observability checklist
+
+Verify on the running container during the cutover window:
+
+- [ ] `/healthz` 200, `/readyz` 200 with artifact metadata, `/api/version` returns `{artifactVersion, schemaVersion, ...}`.
+- [ ] `/metrics` exposes every §6.7 metric **plus** the Phase-A additions:
+  `http_in_flight_requests`, `cache_load_seconds_total{endpoint}`,
+  `cache_admission_rejected_total{endpoint}`, `cache_oversize_responses_total{endpoint}`.
+- [ ] Structured logs include `artifact_version`, `route`, `status`, `latency_ms` per request.
+- [ ] Stale `/api/v/{v}/...` with non-current `{v}` returns 410 with `Location: /api/version`.
+- [ ] `legacy.tfbindingandperturbation.com` serves Shiny; `tfbindingandperturbation.com` serves the Go SPA.
+
 ## How to fill this in
 
-1. Provision artifact + image per `deploy/README.md` §"Routine deploy".
-2. Pre-warm + run `tests/loadtest/k6/profile.js` → fill the warm-cache table.
-3. `docker compose restart tfbp`, then run `tests/loadtest/k6/cold_burst.js` →
-   fill the cold-burst table.
-4. `make parity` against the running backend → confirm 11/11.
-5. Tick the observability boxes.
-6. `git add tests/loadtest-summary.md && git commit -m "docs(cutover): record
-   load-test summary for <date>"` and push, then proceed with DNS cutover.
+1. Provision real artifact + image per `deploy/README.md`. Confirm `ARTIFACT_KIND=real`.
+2. From an **off-box** k6 host, confirm the calibration precondition (CPU < 70%, `dropped_iterations==0`).
+3. Pre-warm, run `arrival_slo.js WARM=1` → Warm-cache SLO table + Availability + Pool wait (warm row).
+4. `docker compose restart tfbp`, run `arrival_slo.js` (no WARM) → Cold cutover table.
+5. Sweep `hitrate_curve.js` over `ZIPF_EXP` (restart between points) → Hit-rate curve.
+6. Start the on-box peak sampler, run `breakpoint.js` off-box → Breaking-point table.
+7. Tick the observability boxes.
+8. `git add tests/loadtest-summary.md && git commit -m "docs(cutover): record v2 load-test summary for <date>"` then proceed with DNS cutover.
