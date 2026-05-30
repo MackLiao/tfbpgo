@@ -5,9 +5,12 @@
 // ctx carries the resolved version, the loaded regulator pool, and dataset
 // combos; rng01 selects both the endpoint and the per-endpoint variations.
 
-// WEIGHTS: relative traffic share per endpoint (spec §9.1). Reconcile the
-// exact ratios with §9.1 when the spec lands; the shape mirrors profile.js's
-// read-heavy 60/30/10 intent extended across the full endpoint surface.
+// WEIGHTS: relative traffic share per endpoint, used ONLY by the Phase-A
+// fixture-mechanics smoke scenario (correctness/coverage, NOT authoritative
+// latency). The authoritative §9.1-calibrated mix (~50% cheap-cached / ~35%
+// expensive-cached / ~10% medium) is owned by the Phase-B arrival-rate
+// scenarios (arrival_slo.js / hitrate_curve.js); do not treat these ratios as
+// the perf workload shape. Tests assert only positivity + reachability.
 export const WEIGHTS = Object.freeze({
   binding: 34,
   perturbation: 22,
