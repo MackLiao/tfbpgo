@@ -39,3 +39,7 @@ backend/static/dist/
 # k6 scenario summary outputs (operator-run artifacts, not source)
 tests/loadtest/k6/scenarios/*.summary.json
 tests/loadtest/k6/scenarios/*-summary.json
+
+# chaos sampler CSV output (operator-run artifacts, written to /tmp or beside the script)
+tests/loadtest/k6/chaos/sampler.csv
+tests/loadtest/k6/chaos/*.csv
