@@ -3,6 +3,7 @@
         test-parity data-fixture-bootstrap parity-record \
         parity parity-snapshot-record \
         loadtest-profile loadtest-cold-burst \
+        loadtest-smoke loadtest-coverage loadtest-cold-fanout \
         docker-build docker-run
 
 # ----- docker (Phase 3) ------------------------------------------------------
@@ -122,6 +123,26 @@ loadtest-profile:
 
 loadtest-cold-burst:
 	cd tests/loadtest/k6 && k6 run cold_burst.js
+
+# Phase-A fixture scenarios. All are run against a backend already listening on
+# $(BASE_URL) (default :8080) backed by tests/fixtures/tfbp_test.duckdb.
+# These assert BEHAVIOR + cache/singleflight MECHANICS, not absolute latency,
+# so they are safe to gate in CI on the committed fixture.
+BASE_URL ?= http://127.0.0.1:8080
+
+# ~20 req/s over the full endpoint mix + negative checks + MISS->HIT flip.
+loadtest-smoke:
+	cd tests/loadtest/k6 && ARTIFACT_KIND=fixture BASE_URL=$(BASE_URL) k6 run scenarios/smoke.js
+
+# Per-route cold/warm X-Cache flip + Cache-Control matrix + negatives table.
+# REQUIRES a freshly restarted backend (cacheable routes must be cold).
+loadtest-coverage:
+	cd tests/loadtest/k6 && ARTIFACT_KIND=fixture BASE_URL=$(BASE_URL) k6 run scenarios/coverage.js
+
+# Small-K singleflight fan-in mechanics. REQUIRES a freshly restarted backend
+# (setup() asserts cache_hits_total==0). Override K/N via env.
+loadtest-cold-fanout:
+	cd tests/loadtest/k6 && ARTIFACT_KIND=fixture BASE_URL=$(BASE_URL) K=$${K:-3} N=$${N:-40} k6 run scenarios/cold_fanout.js
 
 # ----- aggregate -------------------------------------------------------------
 

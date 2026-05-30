@@ -1,0 +1,148 @@
+name: loadtest-smoke
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'tests/loadtest/k6/**'
+      - 'tests/fixtures/tfbp_test.duckdb'
+      - '.github/workflows/loadtest-smoke.yml'
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  loadtest-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: backend/go.sum
+
+      # //go:embed all:dist requires backend/static/dist/ to exist at build time.
+      # The React dist/ is gitignored; stub it so the Go binary compiles without
+      # a full frontend build. The smoke/coverage/cold_fanout scenarios only
+      # exercise the JSON API, so a minimal HTML stub is sufficient.
+      - name: Stub SPA dist for CGO build
+        run: mkdir -p backend/static/dist && printf '<!doctype html><title>stub</title>' > backend/static/dist/index.html
+
+      # duckdb-go/v2 needs CGO; the ubuntu-latest runner ships gcc.
+      - name: Build backend (CGO)
+        working-directory: backend
+        env:
+          CGO_ENABLED: '1'
+        run: go build -o tfbp-server ./cmd/tfbp-server
+
+      - name: Stage fixture as the runtime artifact
+        run: cp tests/fixtures/tfbp_test.duckdb tfbp.duckdb
+
+      # Install k6 v2.x via the official Grafana apt repository.
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+          k6 version
+
+      # smoke: full endpoint mix + negatives. Backend starts cold here.
+      - name: Start backend (cold) for smoke
+        run: |
+          set -euo pipefail
+          DUCKDB_PATH=./tfbp.duckdb ./backend/tfbp-server --port=8080 \
+            > backend-smoke.log 2>&1 &
+          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/readyz >/dev/null 2>&1; then
+              echo "backend ready after ${i}s"; break
+            fi
+            if ! kill -0 "$!" 2>/dev/null; then
+              echo "backend exited during startup"; cat backend-smoke.log; exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/readyz >/dev/null || { echo "backend not ready after 30s"; cat backend-smoke.log; exit 1; }
+
+      - name: Run smoke.js
+        env:
+          ARTIFACT_KIND: fixture
+          BASE_URL: http://127.0.0.1:8080
+        run: cd tests/loadtest/k6 && k6 run scenarios/smoke.js
+
+      # coverage: needs a cold cache for the MISS->HIT flip — restart first.
+      - name: Restart backend (cold) for coverage
+        run: |
+          set -euo pipefail
+          kill "${BACKEND_PID}" 2>/dev/null || true
+          sleep 1
+          DUCKDB_PATH=./tfbp.duckdb ./backend/tfbp-server --port=8080 \
+            > backend-coverage.log 2>&1 &
+          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/readyz >/dev/null 2>&1; then
+              echo "backend ready after ${i}s"; break
+            fi
+            if ! kill -0 "$!" 2>/dev/null; then
+              echo "backend exited during startup"; cat backend-coverage.log; exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/readyz >/dev/null || { echo "backend not ready after 30s"; cat backend-coverage.log; exit 1; }
+
+      - name: Run coverage.js
+        env:
+          ARTIFACT_KIND: fixture
+          BASE_URL: http://127.0.0.1:8080
+        run: cd tests/loadtest/k6 && k6 run scenarios/coverage.js
+
+      # cold_fanout: setup() asserts cache_hits_total==0 — restart first.
+      - name: Restart backend (cold) for cold_fanout
+        run: |
+          set -euo pipefail
+          kill "${BACKEND_PID}" 2>/dev/null || true
+          sleep 1
+          DUCKDB_PATH=./tfbp.duckdb ./backend/tfbp-server --port=8080 \
+            > backend-fanout.log 2>&1 &
+          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/readyz >/dev/null 2>&1; then
+              echo "backend ready after ${i}s"; break
+            fi
+            if ! kill -0 "$!" 2>/dev/null; then
+              echo "backend exited during startup"; cat backend-fanout.log; exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/readyz >/dev/null || { echo "backend not ready after 30s"; cat backend-fanout.log; exit 1; }
+
+      # K=3: the fixture has exactly 3 callingcards regulators; K must not exceed that.
+      - name: Run cold_fanout.js (K=3 N=40)
+        env:
+          ARTIFACT_KIND: fixture
+          BASE_URL: http://127.0.0.1:8080
+          K: '3'
+          N: '40'
+        run: cd tests/loadtest/k6 && k6 run scenarios/cold_fanout.js
+
+      - name: Stop backend
+        if: always()
+        run: kill "${BACKEND_PID}" 2>/dev/null || true
+
+      - name: Upload k6 summaries and backend logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-smoke-summaries
+          path: |
+            tests/loadtest/k6/*-summary.json
+            backend*.log
+          if-no-files-found: ignore

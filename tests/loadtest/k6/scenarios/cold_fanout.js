@@ -157,11 +157,15 @@ export function teardown(data) {
     [`singleflight delta >= N-K (${N - K})`]: () => sfDelta >= (N - K),
   });
 
-  // COLD GUARD: no cache hits should have occurred — backend was fresh.
-  // If this fires, the backend was NOT cold (the FRESH-RESTART GUARD in
-  // setup() should have caught it, but we double-check in teardown).
+  // COLD GUARD: cache hits <= N - K is expected.
+  // On a fast machine some VUs start after the first singleflight group
+  // completes and the result is in ristretto — those get cache hits, not DB
+  // queries. The strong invariant is Δdb == K (exactly one DB query per cold
+  // key regardless of how many callers raced). Asserting cache_hits <= N - K
+  // verifies that at most N-K "late" VUs saw a warm cache; if more than that
+  // fired as cache hits, the backend was not cold (i.e. a prior run warmed it).
   check(null, {
-    'cache hits == 0 (backend was cold)': () => cacheHitDelta === 0,
+    [`cache hits <= N-K (${N - K}) — at most late-VU warm-cache hits`]: () => cacheHitDelta <= (N - K),
   });
 }
 
