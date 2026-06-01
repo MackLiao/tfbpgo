@@ -62,24 +62,39 @@ func New(opts Options) (*Cache, error) {
 	return c, nil
 }
 
-// Loader produces the JSON bytes for a cache miss.
-type Loader func() ([]byte, error)
+// Loader produces the JSON bytes for a cache miss. It receives a context that
+// is DECOUPLED from any single caller's request lifetime (see GetOrLoad): the
+// loader should derive its query timeout from this ctx, not from the request,
+// so coalesced work survives a caller disconnect.
+type Loader func(ctx context.Context) ([]byte, error)
 
-// GetOrLoad returns (bytes, hit, shared, err). On miss, calls fn under
-// singleflight. `shared` is true when this caller's request was coalesced
-// with at least one concurrent in-flight loader for the same key. endpoint is
-// the chi route pattern used to attribute loader wall-time, oversize responses,
-// and admission rejections to a low-cardinality label.
-func (c *Cache) GetOrLoad(_ context.Context, endpoint, key string, fn Loader) ([]byte, bool, bool, error) {
+// GetOrLoad returns (bytes, hit, shared, err). On miss, runs fn under
+// singleflight via DoChan so concurrent identical misses coalesce into one
+// load. `shared` is true when this caller's request was coalesced with at
+// least one other in-flight caller for the same key. endpoint is the chi route
+// pattern used to attribute loader wall-time, oversize responses, and admission
+// rejections to a low-cardinality label.
+//
+// Cancellation semantics: a caller whose ctx is cancelled/times out returns
+// promptly with ctx.Err() WITHOUT killing the shared load — the loader runs
+// under context.WithoutCancel, so the in-flight query completes and populates
+// the cache for the remaining waiters and the next request. This prevents both
+// (a) a slow loader pinning a cancelled caller forever and (b) a disconnecting
+// leader poisoning every coalesced waiter with context.Canceled.
+func (c *Cache) GetOrLoad(ctx context.Context, endpoint, key string, fn Loader) ([]byte, bool, bool, error) {
 	if v, ok := c.store.Get(key); ok {
 		c.hitCount.Add(1)
 		return v, true, false, nil
 	}
 	c.missCount.Add(1)
 
-	v, err, shared := c.sf.Do(key, func() (any, error) {
+	ch := c.sf.DoChan(key, func() (any, error) {
+		// Run the shared load under a context detached from the triggering
+		// request's cancellation (but retaining its values for metric sinks).
+		// The loader applies its own QueryTimeout on top of this.
+		loadCtx := context.WithoutCancel(ctx)
 		loadStart := time.Now()
-		body, err := fn()
+		body, err := fn(loadCtx)
 		elapsed := time.Since(loadStart).Seconds()
 		if err != nil {
 			// Still attribute the wall-time burned on a failed load so a
@@ -93,13 +108,19 @@ func (c *Cache) GetOrLoad(_ context.Context, endpoint, key string, fn Loader) ([
 		c.recordLoad(endpoint, elapsed, size, admitted)
 		return body, nil
 	})
-	if shared {
-		c.sharedCount.Add(1)
+
+	select {
+	case <-ctx.Done():
+		return nil, false, false, ctx.Err()
+	case res := <-ch:
+		if res.Shared {
+			c.sharedCount.Add(1)
+		}
+		if res.Err != nil {
+			return nil, false, res.Shared, res.Err
+		}
+		return res.Val.([]byte), false, res.Shared, nil
 	}
-	if err != nil {
-		return nil, false, shared, err
-	}
-	return v.([]byte), false, shared, nil
 }
 
 // recordLoad attributes one completed loader run to the endpoint: load-seconds

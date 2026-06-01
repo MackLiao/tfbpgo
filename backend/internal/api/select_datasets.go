@@ -236,8 +236,8 @@ func (s *Server) DatasetFields(w http.ResponseWriter, r *http.Request) {
 	// Cache key: no query params drive the response, so the canonical
 	// component is empty.
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, nil)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildDatasetFieldsResponse(r.Context(), dbName)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildDatasetFieldsResponse(loadCtx, dbName)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)
@@ -314,8 +314,8 @@ func (s *Server) DatasetRegulators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, nil)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildDatasetRegulatorsResponse(r.Context(), dbName)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildDatasetRegulatorsResponse(loadCtx, dbName)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)
@@ -410,8 +410,8 @@ func (s *Server) SelectionMatrix(w http.ResponseWriter, r *http.Request) {
 		"filters":  canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildMatrixResponse(r.Context(), dsList, filters)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildMatrixResponse(loadCtx, dsList, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)
@@ -674,8 +674,8 @@ func (s *Server) SelectionBreakdown(w http.ResponseWriter, r *http.Request) {
 		"filters": canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildBreakdownResponse(r.Context(), dbName, filters)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildBreakdownResponse(loadCtx, dbName, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)

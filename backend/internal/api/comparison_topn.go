@@ -135,8 +135,8 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 		"filters":      canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildTopNResponse(r.Context(), bindingDS, pertDS, topN, effectThr, pvalThr, filters)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildTopNResponse(loadCtx, bindingDS, pertDS, topN, effectThr, pvalThr, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)
@@ -175,6 +175,11 @@ func (s *Server) buildTopNResponse(
 		return json.Marshal(domain.TopNResponse{TopN: topN, EffectThreshold: effectThr, PValueThreshold: pvalThr})
 	}
 	full := strings.Join(parts, "\nUNION ALL\n")
+	// Deterministic total order over the assembled UNION so the serialized JSON
+	// (and version-scoped cache bytes) is a pure function of the inputs and does
+	// not flap under preserve_insertion_order=false. pair_key discriminates the
+	// per-pair blocks; the remaining columns are that pair's GROUP BY key.
+	full += "\nORDER BY pair_key, binding_sample_id, regulator_locus_tag, perturbation_sample_id"
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
 	defer cancel()
 	t0 := time.Now()

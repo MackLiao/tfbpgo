@@ -21,7 +21,7 @@ func TestLoadSecondsAccumulatesOnMissNotHit(t *testing.T) {
 
 	// MISS — loader runs for ~loadDelay.
 	_, hit, _, err := c.GetOrLoad(context.Background(), "/api/v/{v}/binding", "k1",
-		func() ([]byte, error) {
+		func(context.Context) ([]byte, error) {
 			time.Sleep(loadDelay)
 			return body, nil
 		})
@@ -35,7 +35,7 @@ func TestLoadSecondsAccumulatesOnMissNotHit(t *testing.T) {
 
 	// HIT — loader must NOT run, accumulator must NOT advance.
 	_, hit, _, err = c.GetOrLoad(context.Background(), "/api/v/{v}/binding", "k1",
-		func() ([]byte, error) { t.Fatal("loader ran on a hit"); return nil, nil })
+		func(context.Context) ([]byte, error) { t.Fatal("loader ran on a hit"); return nil, nil })
 	require.NoError(t, err)
 	require.True(t, hit)
 
@@ -48,9 +48,9 @@ func TestLoadSecondsKeyedPerEndpoint(t *testing.T) {
 	c, err := New(Options{BudgetBytes: 1 << 20})
 	require.NoError(t, err)
 	_, _, _, _ = c.GetOrLoad(context.Background(), "/api/v/{v}/binding", "a",
-		func() ([]byte, error) { time.Sleep(20 * time.Millisecond); return []byte("x"), nil })
+		func(context.Context) ([]byte, error) { time.Sleep(20 * time.Millisecond); return []byte("x"), nil })
 	_, _, _, _ = c.GetOrLoad(context.Background(), "/api/v/{v}/datasets", "b",
-		func() ([]byte, error) { time.Sleep(20 * time.Millisecond); return []byte("y"), nil })
+		func(context.Context) ([]byte, error) { time.Sleep(20 * time.Millisecond); return []byte("y"), nil })
 
 	ls := c.LoadSeconds()
 	require.Greater(t, ls["/api/v/{v}/binding"], 0.0)
@@ -68,7 +68,7 @@ func TestLoadSecondsAttributedOnFailedLoad(t *testing.T) {
 
 	const loadDelay = 30 * time.Millisecond
 	_, _, _, err = c.GetOrLoad(context.Background(), "/api/v/{v}/binding", "kerr",
-		func() ([]byte, error) {
+		func(context.Context) ([]byte, error) {
 			time.Sleep(loadDelay)
 			return nil, errors.New("boom")
 		})

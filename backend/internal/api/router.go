@@ -14,6 +14,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// defaultMaxInFlight bounds concurrent in-flight requests to the DB-backed API
+// group when Server.MaxInFlight is unset. Sized as a small multiple of the
+// 2-connection pool: cache hits drain fast; cold misses queue on the pool while
+// the cap keeps resident goroutines/memory bounded on a t3.small.
+const defaultMaxInFlight = 128
+
 // Server holds dependencies for HTTP handlers.
 type Server struct {
 	ArtifactVersion string
@@ -25,6 +31,10 @@ type Server struct {
 	// StaticFS, when non-nil, is mounted as a fallback http.FileServer for
 	// any unmatched routes. Phase 2 populates this with the embedded React bundle.
 	StaticFS fs.FS
+
+	// MaxInFlight caps concurrent in-flight requests to the DB-backed API
+	// group. <= 0 falls back to defaultMaxInFlight. Set from config in main.
+	MaxInFlight int
 
 	// --- A5 Select Datasets handler state ---
 	// Per-(db, field) DuckDB type introspection and numeric min/max
@@ -48,7 +58,6 @@ func (s *Server) Routes() http.Handler {
 		})
 	})
 	r.Use(middleware.Compress(5))
-	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(RequestGuard)
 	r.Use(RequestLogger(s.ArtifactVersion, s.Metrics))
 
@@ -60,36 +69,56 @@ func (s *Server) Routes() http.Handler {
 		r.Handle("/metrics", promhttp.HandlerFor(s.Metrics.Reg, promhttp.HandlerOpts{}))
 	}
 
+	maxInFlight := s.MaxInFlight
+	if maxInFlight <= 0 {
+		maxInFlight = defaultMaxInFlight
+	}
+
 	r.Route("/api/v/{v}", func(r chi.Router) {
+		// Load-shed before requests reach the 2-connection DuckDB pool.
+		// Without this, unbounded concurrent requests on an unauthenticated
+		// public endpoint pile up goroutines + request bodies + 30s contexts
+		// against mem_limit=1.6g (swap disabled) → OOM. ThrottleBacklog admits
+		// `maxInFlight` concurrently, queues up to 2x more for a short window,
+		// then returns 429. Health/metrics/version are registered above this
+		// group so liveness/readiness probes always respond while the API sheds.
+		r.Use(middleware.ThrottleBacklog(maxInFlight, maxInFlight*2, 5*time.Second))
 		r.Use(s.RequireArtifactVersion)
-		r.Get("/datasets", s.Datasets)
-		// Per-dataset Select-Datasets endpoints (A5). Registered before the
-		// catch-all /regulators routes so chi resolves the /datasets/{db}
-		// prefix correctly.
-		r.Get("/datasets/{db}/fields", s.DatasetFields)
-		r.Get("/datasets/{db}/regulators", s.DatasetRegulators)
-		r.Get("/datasets/{db}/sample-conditions", s.SampleConditions)
-		r.Get("/selection/matrix", s.SelectionMatrix)
-		r.Get("/selection/breakdown", s.SelectionBreakdown)
-		r.Get("/regulators/resolve", s.RegulatorsResolve)
-		r.Get("/regulators", s.Regulators)
-		// Order: /binding/corr and /binding/scatter must register before
-		// /binding so chi's route trie does not greedy-match them against
-		// the catch-all binding handler. The trie is path-segment-based
-		// (so /binding/* would never resolve to /binding's leaf node), but
-		// keeping these literal-prefix routes adjacent to /binding makes
-		// the override surface easy to read.
-		r.Get("/binding/corr", s.BindingCorr)
-		r.Get("/binding/scatter", s.BindingScatter)
-		r.Get("/binding", s.Binding)
-		r.Get("/perturbation/correlations", s.PerturbationCorrelations)
-		r.Get("/perturbation/scatter", s.PerturbationScatter)
-		r.Get("/perturbation", s.Perturbation)
-		r.Get("/comparison/topn", s.ComparisonTopN)
-		r.Get("/comparison/dto", s.ComparisonDTO)
-		// Export — streams a multi-dataset .tar.gz. The handler detaches
-		// from the 30s router-level Timeout via context.WithoutCancel and
-		// applies its own 5-minute deadline; see api.ExportTimeout.
+
+		// All DB-backed read endpoints get the 30s per-request deadline.
+		// /export is deliberately registered OUTSIDE this group: it streams a
+		// multi-dataset .tar.gz for up to api.ExportTimeout (5 min) and detaches
+		// via context.WithoutCancel. Under middleware.Timeout, chi writes a 504
+		// in a defer once the 30s deadline trips, racing a superfluous
+		// WriteHeader against the already-streamed 200 body.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(30 * time.Second))
+			r.Get("/datasets", s.Datasets)
+			// Per-dataset Select-Datasets endpoints (A5). Registered before the
+			// catch-all /regulators routes so chi resolves the /datasets/{db}
+			// prefix correctly.
+			r.Get("/datasets/{db}/fields", s.DatasetFields)
+			r.Get("/datasets/{db}/regulators", s.DatasetRegulators)
+			r.Get("/datasets/{db}/sample-conditions", s.SampleConditions)
+			r.Get("/selection/matrix", s.SelectionMatrix)
+			r.Get("/selection/breakdown", s.SelectionBreakdown)
+			r.Get("/regulators/resolve", s.RegulatorsResolve)
+			r.Get("/regulators", s.Regulators)
+			// Order: /binding/corr and /binding/scatter must register before
+			// /binding so chi's route trie does not greedy-match them against
+			// the catch-all binding handler. The trie is path-segment-based
+			// (so /binding/* would never resolve to /binding's leaf node), but
+			// keeping these literal-prefix routes adjacent to /binding makes
+			// the override surface easy to read.
+			r.Get("/binding/corr", s.BindingCorr)
+			r.Get("/binding/scatter", s.BindingScatter)
+			r.Get("/binding", s.Binding)
+			r.Get("/perturbation/correlations", s.PerturbationCorrelations)
+			r.Get("/perturbation/scatter", s.PerturbationScatter)
+			r.Get("/perturbation", s.Perturbation)
+			r.Get("/comparison/topn", s.ComparisonTopN)
+			r.Get("/comparison/dto", s.ComparisonDTO)
+		})
 		r.Get("/export", s.Export)
 	})
 

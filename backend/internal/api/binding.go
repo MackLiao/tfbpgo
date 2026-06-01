@@ -90,8 +90,8 @@ func (s *Server) Binding(w http.ResponseWriter, r *http.Request) {
 		"filters":   canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildBindingResponse(r.Context(), regulator, dsList, filters)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildBindingResponse(loadCtx, regulator, dsList, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)

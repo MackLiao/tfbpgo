@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/observability"
@@ -25,9 +26,13 @@ func MarkCacheHit(ctx context.Context, hit bool) {
 	}
 }
 
+// AddDBMillis accumulates query wall-time for the request's log line. It is
+// safe to call from the cache loader goroutine (which may outlive or run
+// concurrently with the request after GetOrLoad switched to DoChan), so the
+// sink is an atomic.Int64.
 func AddDBMillis(ctx context.Context, ms int64) {
 	if v := ctx.Value(ctxDBMillis); v != nil {
-		*(v.(*int64)) += ms
+		v.(*atomic.Int64).Add(ms)
 	}
 }
 
@@ -49,7 +54,7 @@ func RequestLogger(artifactVersion string, metrics *observability.Metrics) func(
 			}
 
 			cacheHit := false
-			var dbMs int64
+			var dbMs atomic.Int64
 			ctx := context.WithValue(r.Context(), ctxCacheHit, &cacheHit)
 			ctx = context.WithValue(ctx, ctxDBMillis, &dbMs)
 
@@ -72,7 +77,7 @@ func RequestLogger(artifactVersion string, metrics *observability.Metrics) func(
 				"status", ww.Status(),
 				"latency_ms", elapsed.Milliseconds(),
 				"cache_hit", cacheHit,
-				"db_ms", dbMs,
+				"db_ms", dbMs.Load(),
 				"bytes", ww.BytesWritten(),
 				"artifact_version", artifactVersion,
 			)

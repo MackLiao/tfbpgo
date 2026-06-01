@@ -39,15 +39,18 @@ The Go service is designed to run as **exactly one replica** today.
   an error rather than looping. Plan rollovers for low-traffic windows.
 - The binary's compatible schema range is `[MinSchemaVersion,
   MaxSchemaVersion]` in `backend/internal/db/startup.go` — today both are
-  `2`. When `schema_version=3` ships (post-cutover Phase 1.6), the migration
-  path is:
-  1. Ship a v=3-aware binary with `Min=2, Max=3` so it reads both. Roll
+  **`5`** (single supported version; no read-both window). An artifact whose
+  `schema_version != 5` will **fail-fast on startup**. ⚠️ This means
+  **rollback to any pre-v5 artifact is NOT a valid recovery path** with the
+  current binary — see Rollback ▸ Bad artifact.
+  When the next schema (`v=6`) ships, the safe migration path is:
+  1. Ship a v=6-aware binary with `Min=5, Max=6` so it reads both. Roll
      the binary first.
-  2. Publish + load the v=3 artifact. The binary picks it up.
-  3. (Later) ship a v=3-only binary with `Min=3, Max=3` to drop the v=2
-     path. This step is optional and only when v=2 is permanently retired.
-  Updating only `TAG` while the artifact is still v=2, or only
-  `ARTIFACT_KEY` while the binary is still v=2-only, refuses to start
+  2. Publish + load the v=6 artifact. The binary picks it up.
+  3. (Later) ship a v=6-only binary with `Min=6, Max=6` to drop the v=5
+     path. Optional, only when v=5 is permanently retired.
+  Updating only `TAG` while the artifact is still v=5, or only
+  `ARTIFACT_KEY` to a version outside the binary's range, refuses to start
   (see Rollback ▸ Bad image). The fail-fast is intentional.
 
 ---
@@ -64,6 +67,18 @@ cd /opt/tfbp
 
 # 2. Make sure Traefik's shared docker network exists.
 docker network create web 2>/dev/null || true
+
+# 2a. Confirm host swap is OFF. The mem_limit constraints assume no swap;
+#     with swap enabled DuckDB spills into swap under pressure and masks the
+#     OOM signal the cutover gate relies on.
+swapon --show           # expect EMPTY output (no swap devices)
+# If swap is present: sudo swapoff -a  (and remove the swap entry from /etc/fstab)
+
+# 2b. Confirm the root/data volume has headroom. The artifact is ~3GB, and an
+#     artifact REFRESH transiently holds both tfbp.duckdb (3GB) AND
+#     tfbp.duckdb.new (3GB) on the tfbp_data volume before the atomic mv, plus
+#     up to 2GB DuckDB spill on tfbp_tmp and the GHCR images. Provision >= 30GB.
+df -h /
 
 # 3. Copy and fill in .env.
 cp .env.example .env
@@ -93,6 +108,23 @@ Traefik must already be configured to terminate TLS on the `web` network with a
 `letsencrypt` cert resolver; the `docker-compose.yml` here adds router labels
 only, not the Traefik instance itself. See `reference/compose/production/` for
 the existing Traefik config that this stack plugs into.
+
+### Legacy grace-period co-tenancy (read before cutover)
+
+During the 30-day grace period `tfbp` and the legacy `shinyapp` both run behind
+the same Traefik. **They do not both fit on a single 2GB t3.small**:
+`tfbp` is capped at `mem_limit=1.6g`, `shinyapp` at `512m`, plus Traefik + OS —
+that sums to > 2GB, so the host OOM killer can fire under concurrent load.
+Pick one before cutover:
+
+- **Preferred:** run the legacy `shinyapp` on a SEPARATE small instance (its own
+  Traefik route to `legacy.tfbindingandperturbation.com`) and run only `tfbp` on
+  the cutover host. Bring `shinyapp` up there instead of on the new host.
+- **Or:** keep both on one host but shrink `tfbp` for the overlap — lower the
+  compose `mem_limit` (e.g. `1.0g`) AND set `DUCKDB_MEMORY_LIMIT=600MB` (now
+  env-tunable, see `docker-compose.yml` env / `config.go`) so
+  `tfbp + shinyapp + Traefik` fits under 2GB. Revert to 1.6g once the legacy
+  service is retired.
 
 ## Routine deploy
 
@@ -235,9 +267,12 @@ curl -sf https://tfbindingandperturbation.com/api/version | jq .artifactVersion
 ```
 
 The Go binary's startup contract (§9.5) gates on `schema_version` and the
-canary `SELECT`, so a broken artifact fails the restart immediately — the old
-container stays up via the previous image's running process is **already
-stopped** by `restart`, so verify `/readyz` returns 200 before walking away.
+canary `SELECT`, so a broken artifact fails the restart immediately. Note that
+`docker compose restart tfbp` **stops the running (healthy) container first**,
+then the new process fails to come up — so a bad artifact takes the service
+DOWN, it does not leave the old one serving. Always verify `/readyz` returns
+200 after the restart before walking away; if it does not, roll the artifact
+back (below) immediately.
 
 ## Rollback
 
@@ -261,9 +296,13 @@ docker compose --profile init up tfbp-data-init
 docker compose restart tfbp
 ```
 
-Both rollback paths are safe to run together; the binary refuses to start if
-the image's `schema_version` range doesn't cover the artifact's
-`schema_version`.
+The binary refuses to start if its `schema_version` range (currently exactly
+`5`) doesn't cover the artifact's `schema_version`. ⚠️ **A "previous-good"
+artifact is only a valid rollback target if it is also `schema_version=5`.**
+Rolling `ARTIFACT_KEY` back to a pre-v5 artifact will fail-fast and leave the
+service down — in that case roll the **image** (`TAG`) back to the binary that
+matched that artifact's schema as well. Keep the (image-tag ↔ artifact-key ↔
+schema_version) triple recorded per release so rollbacks stay consistent.
 
 ## Cutover gate checklist
 

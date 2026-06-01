@@ -14,6 +14,23 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	require.Equal(t, int64(134217728), cfg.CacheSizeBytes) // 128 MiB
 	require.Equal(t, "info", cfg.LogLevel)
 	require.Equal(t, 8080, cfg.Port)
+	// §6.3 pool-knob defaults — these are the spec contract for a t3.small.
+	require.Equal(t, "800MB", cfg.MemoryLimit)
+	require.Equal(t, "2GB", cfg.MaxTempSize)
+	require.Equal(t, 2, cfg.MaxOpenConns)
+	require.Equal(t, 128, cfg.MaxInFlight)
+}
+
+func TestLoadFromEnv_PoolKnobsOverride(t *testing.T) {
+	t.Setenv("DUCKDB_PATH", "/tmp/x.duckdb")
+	t.Setenv("DUCKDB_MEMORY_LIMIT", "600MB")
+	t.Setenv("DB_MAX_OPEN_CONNS", "4")
+	t.Setenv("MAX_INFLIGHT_REQUESTS", "256")
+	cfg, err := Load([]string{})
+	require.NoError(t, err)
+	require.Equal(t, "600MB", cfg.MemoryLimit)
+	require.Equal(t, 4, cfg.MaxOpenConns)
+	require.Equal(t, 256, cfg.MaxInFlight)
 }
 
 func TestLoadFromEnv_FlagOverridesPort(t *testing.T) {

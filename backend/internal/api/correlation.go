@@ -182,7 +182,13 @@ func renderCorrUnionAllSQL(method, dataType string, pairs []pairSpec) (string, [
 		segments = append(segments, "SELECT *, '"+key+"' AS pair_key FROM (\n"+inner+"\n)")
 		args = append(args, innerArgs...)
 	}
-	return strings.Join(segments, "\nUNION ALL\n"), args
+	unionSQL := strings.Join(segments, "\nUNION ALL\n")
+	// Deterministic total order over the assembled UNION → reproducible cache
+	// bytes and stable within-pair ordering when buildCorrResponse partitions by
+	// pair_key. pair_key discriminates per-pair blocks; (regulator, db_a_id,
+	// db_b_id) is each pair's unique GROUP BY key.
+	unionSQL += "\nORDER BY pair_key, regulator_locus_tag, db_a_id, db_b_id"
+	return unionSQL, args
 }
 
 // renderScatterSQL fills the regulator_scatter_{method}.sql template. The

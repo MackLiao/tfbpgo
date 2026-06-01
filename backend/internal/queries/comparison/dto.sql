@@ -27,3 +27,11 @@ WHERE
     AND (d.perturbation_id_source != 'hackett'      OR h.sample_id IS NOT NULL)
     AND (d.binding_id_source      != 'callingcards' OR cc.sample_id IS NOT NULL)
     AND (d.binding_id_source      != 'harbison'     OR harb.sample_id IS NOT NULL)
+-- Deterministic total order → reproducible cache bytes. A hackett perturbation
+-- can match multiple analysis-set time rows, so `time` is the final tie-breaker.
+ORDER BY
+    d.binding_id_source,
+    d.perturbation_id_source,
+    CAST(d.binding_id_id AS VARCHAR),
+    CAST(d.perturbation_id_id AS VARCHAR),
+    COALESCE(CAST(h.time AS VARCHAR), 'standard')

@@ -52,3 +52,6 @@ JOIN perturbation pert
 LEFT JOIN regulator_display_names rdn
     ON  rdn.regulator_locus_tag = b.regulator_locus_tag
 GROUP BY b.binding_sample_id, b.regulator_locus_tag, rdn.display_name, pert.perturbation_sample_id
+-- NOTE: no ORDER BY here — per-pair segments are combined with a UNION in
+-- comparison_topn.go, which appends a single trailing ORDER BY to the assembled
+-- query (an ORDER BY inside a UNION branch is a syntax error).

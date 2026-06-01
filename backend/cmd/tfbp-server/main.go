@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -37,7 +38,17 @@ func run() error {
 		return fmt.Errorf("config_load_failed: %w", err)
 	}
 
-	pool, err := db.Open(db.Options{Path: cfg.DuckDBPath, TempDir: cfg.TempDir})
+	// Re-init the default logger at the configured level now that cfg is
+	// loaded (main() bootstraps at info so config-load errors are visible).
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(cfg.LogLevel)})))
+
+	pool, err := db.Open(db.Options{
+		Path:         cfg.DuckDBPath,
+		TempDir:      cfg.TempDir,
+		MemoryLimit:  cfg.MemoryLimit,
+		MaxTempSize:  cfg.MaxTempSize,
+		MaxOpenConns: cfg.MaxOpenConns,
+	})
 	if err != nil {
 		return fmt.Errorf("startup_failed (db.Open): %w", err)
 	}
@@ -94,6 +105,7 @@ func run() error {
 		Manifests:       report.Manifests,
 		Metrics:         metrics,
 		StaticFS:        static.FS(),
+		MaxInFlight:     cfg.MaxInFlight,
 	}
 
 	// Eager-load the per-(db, field) introspection cache before binding the
@@ -172,6 +184,21 @@ func run() error {
 	_ = httpSrv.Shutdown(shutdownCtx)
 
 	return serveErr
+}
+
+// parseLogLevel maps a LOG_LEVEL string to a slog.Level, defaulting to info
+// for empty/unrecognized values.
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 func samplePoolStats(stop <-chan struct{}, pool *db.Pool, m *observability.Metrics) {

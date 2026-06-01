@@ -39,3 +39,6 @@ SELECT
 FROM a
 INNER JOIN b
   ON a.target_locus_tag = b.target_locus_tag
+-- Deterministic total order so the scatter point list (and cached bytes) is a
+-- pure function of inputs. Order-invariant for the r computed in the handler.
+ORDER BY target_locus_tag, val_a, val_b

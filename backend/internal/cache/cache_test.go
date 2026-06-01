@@ -22,7 +22,7 @@ func TestSingleflight_ConcurrentMissesProduceOneCall(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, shared, _ := c.GetOrLoad(context.Background(), "test", "k1", func() ([]byte, error) {
+			_, _, shared, _ := c.GetOrLoad(context.Background(), "test", "k1", func(context.Context) ([]byte, error) {
 				calls.Add(1)
 				time.Sleep(50 * time.Millisecond)
 				return []byte(`{"v":1}`), nil
@@ -45,22 +45,74 @@ func TestSetWaitMakesValueVisibleImmediately(t *testing.T) {
 	c, err := New(Options{BudgetBytes: 1 << 20})
 	require.NoError(t, err)
 	body := []byte(`{"x":42}`)
-	_, hit, shared, err := c.GetOrLoad(context.Background(), "test", "k2", func() ([]byte, error) { return body, nil })
+	_, hit, shared, err := c.GetOrLoad(context.Background(), "test", "k2", func(context.Context) ([]byte, error) { return body, nil })
 	require.NoError(t, err)
 	require.False(t, hit)
 	require.False(t, shared, "uncontended miss should not be shared")
-	got, hit, shared, err := c.GetOrLoad(context.Background(), "test", "k2", func() ([]byte, error) { t.Fatal("should not run"); return nil, nil })
+	got, hit, shared, err := c.GetOrLoad(context.Background(), "test", "k2", func(context.Context) ([]byte, error) { t.Fatal("should not run"); return nil, nil })
 	require.NoError(t, err)
 	require.True(t, hit)
 	require.False(t, shared, "cache hit short-circuits singleflight")
 	require.Equal(t, body, got)
 }
 
+// TestGetOrLoad_CallerCancelDoesNotKillSharedLoad locks in the H4 behavior:
+// a caller whose context is cancelled mid-load returns promptly with ctx.Err()
+// WITHOUT cancelling the shared loader, which still completes, is decoupled
+// from the caller's cancellation, and populates the cache for the next request.
+func TestGetOrLoad_CallerCancelDoesNotKillSharedLoad(t *testing.T) {
+	c, err := New(Options{BudgetBytes: 1 << 20})
+	require.NoError(t, err)
+
+	loaderStarted := make(chan struct{})
+	releaseLoader := make(chan struct{})
+	var loaderRuns atomic.Int64
+	var loadCtxCancelled atomic.Bool
+	body := []byte(`{"v":1}`)
+
+	loader := func(loadCtx context.Context) ([]byte, error) {
+		loaderRuns.Add(1)
+		close(loaderStarted)
+		<-releaseLoader // hold the loader open until after the caller cancels
+		if loadCtx.Err() != nil {
+			loadCtxCancelled.Store(true)
+		}
+		return body, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, e := c.GetOrLoad(ctx, "test", "k", loader)
+		done <- e
+	}()
+
+	<-loaderStarted
+	cancel() // caller bails while the shared loader is still running
+	require.ErrorIs(t, <-done, context.Canceled,
+		"a cancelled caller must return ctx.Err() promptly")
+
+	close(releaseLoader) // now let the shared loader finish + Set
+
+	// The shared load must have populated the cache despite the cancellation;
+	// the next request is a hit and the loader does NOT run again.
+	require.Eventually(t, func() bool {
+		v, hit, _, e := c.GetOrLoad(context.Background(), "test", "k",
+			func(context.Context) ([]byte, error) { return []byte("SHOULD-NOT-RUN"), nil })
+		return e == nil && hit && string(v) == string(body)
+	}, 2*time.Second, 20*time.Millisecond,
+		"shared load should have cached the value despite caller cancellation")
+
+	require.Equal(t, int64(1), loaderRuns.Load(), "exactly one loader execution")
+	require.False(t, loadCtxCancelled.Load(),
+		"shared loader context must be decoupled from the cancelled caller")
+}
+
 func TestOversizeResponseTracked(t *testing.T) {
 	c, err := New(Options{BudgetBytes: 1000}) // tiny budget => threshold = 50 bytes
 	require.NoError(t, err)
 	big := make([]byte, 200)
-	_, _, _, _ = c.GetOrLoad(context.Background(), "test", "k3", func() ([]byte, error) { return big, nil })
+	_, _, _, _ = c.GetOrLoad(context.Background(), "test", "k3", func(context.Context) ([]byte, error) { return big, nil })
 	require.Equal(t, int64(1), c.OversizeCount()["test"])
 }
 
@@ -77,7 +129,7 @@ func TestEvictionCounterFires(t *testing.T) {
 	body := make([]byte, 1024)
 	for i := 0; i < 200; i++ {
 		key := fmt.Sprintf("k-%d", i)
-		_, _, _, err := c.GetOrLoad(context.Background(), "test", key, func() ([]byte, error) {
+		_, _, _, err := c.GetOrLoad(context.Background(), "test", key, func(context.Context) ([]byte, error) {
 			return body, nil
 		})
 		require.NoError(t, err)
@@ -99,7 +151,7 @@ func TestOversizeAndRejectAttributedToEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	big := make([]byte, 200) // > 50-byte oversize threshold
 	_, _, _, err = c.GetOrLoad(context.Background(), "/api/v/{v}/comparison/topn", "k1",
-		func() ([]byte, error) { return big, nil })
+		func(context.Context) ([]byte, error) { return big, nil })
 	require.NoError(t, err)
 
 	require.Equal(t, int64(1), c.OversizeCount()["/api/v/{v}/comparison/topn"],

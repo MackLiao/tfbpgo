@@ -10,12 +10,18 @@
 #      artifact SHA256, LEGACY_TAG, HF_TOKEN, etc.). The stack will not
 #      start cleanly without it.
 #
-# Bring-up order:
+# Bring-up order (clean host — run these IN ORDER):
 #   docker compose pull
-#   docker compose up -d
-# The `tfbp-data-init` container runs once, downloads `tfbp.duckdb` from S3
-# into the `tfbp_data` volume, verifies SHA256, and exits 0. `tfbp` waits
-# for it via `depends_on: { condition: service_completed_successfully }`.
+#   docker compose --profile init up tfbp-data-init   # one-shot: download + sha256-verify the artifact
+#   docker compose up -d                              # starts tfbp + shinyapp
+#
+# IMPORTANT: `tfbp` has NO `depends_on` on tfbp-data-init. Compose refuses to
+# start a service whose dependency lives in an inactive profile, and the init
+# container is profile-gated (`profiles: ["init"]`). So you MUST run the
+# `--profile init` step yourself before `up -d`. If you skip it, `tfbp` starts
+# against an empty `tfbp_data` volume, fails the read-only DuckDB open at
+# startup (fail-fast, §9.5), and — because `restart: unless-stopped` — crash-loops.
+# See deploy/README.md "One-time host setup".
 #
 # 410 routing for stale `/api/v/{v}/*` URLs is handled INSIDE the Go
 # service (Phase 1 `RequireArtifactVersion` middleware returns 410 +
@@ -44,12 +50,21 @@ services:
       CACHE_SIZE_BYTES: "134217728"
       LOG_LEVEL: info
       PORT: "8080"
+      # §6.3 pool knobs — env-tunable so the cutover load test can retune them
+      # without recompiling. Defaults match the spec t3.small values. Lower
+      # DUCKDB_MEMORY_LIMIT (e.g. 600MB) for the legacy co-tenancy overlap.
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-800MB}
+      DUCKDB_MAX_TEMP_SIZE: ${DUCKDB_MAX_TEMP_SIZE:-2GB}
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
+      MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
     volumes:
       - tfbp_data:/data:ro
       - tfbp_tmp:/tmp/duckdb
     networks: [web]
-    mem_limit: 1.6g
-    memswap_limit: 1.6g
+    # Lower TFBP_MEM_LIMIT (e.g. 1.0g) for the legacy co-tenancy overlap; revert
+    # to 1.6g once shinyapp is retired. memswap_limit == mem_limit ⇒ swap off.
+    mem_limit: ${TFBP_MEM_LIMIT:-1.6g}
+    memswap_limit: ${TFBP_MEM_LIMIT:-1.6g}
     labels:
       - traefik.enable=true
       - traefik.docker.network=web
@@ -92,6 +107,15 @@ services:
   shinyapp:
     image: ghcr.io/brentlab/tfbpshiny:${LEGACY_TAG:-latest}
     restart: unless-stopped
+    # Bound the legacy app's memory so it cannot balloon unboundedly and
+    # trigger the host OOM killer (which might reap `tfbp` or Traefik rather
+    # than Shiny). NOTE: tfbp(1.6g) + shinyapp(0.5g) + Traefik + OS does NOT
+    # fit a 2GB t3.small. For the 30-day grace overlap you MUST either run this
+    # legacy service on a SEPARATE instance, or temporarily lower tfbp's
+    # mem_limit and DUCKDB_MEMORY_LIMIT (now env-tunable) so the sum fits.
+    # See deploy/README.md "Legacy grace-period co-tenancy".
+    mem_limit: 512m
+    memswap_limit: 512m
     environment:
       HF_TOKEN: ${HF_TOKEN}
     volumes:

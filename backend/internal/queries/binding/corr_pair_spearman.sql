@@ -94,3 +94,6 @@ SELECT
 FROM ranked
 GROUP BY regulator_locus_tag, db_a_id, db_b_id
 HAVING COUNT(*) >= 3
+-- NOTE: no ORDER BY here — per-pair segments are combined with a UNION in
+-- renderCorrUnionAllSQL, which appends one trailing ORDER BY to the assembled
+-- query (an ORDER BY inside a UNION branch is a syntax error).

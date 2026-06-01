@@ -167,8 +167,8 @@ func (s *Server) RegulatorsResolve(w http.ResponseWriter, r *http.Request) {
 		canon.Set("filters", string(b))
 	}
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildResolveResponse(r.Context(), datasets, explicit, filters)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildResolveResponse(loadCtx, datasets, explicit, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)

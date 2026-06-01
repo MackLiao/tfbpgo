@@ -16,6 +16,19 @@ type Config struct {
 	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
 	Port           int    `env:"PORT" envDefault:"8080"`
 	TempDir        string `env:"DUCKDB_TEMP_DIR" envDefault:"/tmp/duckdb"`
+
+	// §6.3 DuckDB pool knobs. These default to the conservative t3.small
+	// values from the spec, but are env-tunable so the §11.3 cutover load
+	// test can re-tune them (e.g. drop memory_limit to 600MB, sweep
+	// MaxOpenConns) WITHOUT recompiling the binary.
+	MemoryLimit  string `env:"DUCKDB_MEMORY_LIMIT" envDefault:"800MB"`
+	MaxTempSize  string `env:"DUCKDB_MAX_TEMP_SIZE" envDefault:"2GB"`
+	MaxOpenConns int    `env:"DB_MAX_OPEN_CONNS" envDefault:"2"`
+
+	// MaxInFlight caps concurrent in-flight requests to the DB-backed API
+	// group (load-shedding before the connection pool). Health/metrics/version
+	// live outside this cap so probes always respond.
+	MaxInFlight int `env:"MAX_INFLIGHT_REQUESTS" envDefault:"128"`
 }
 
 // Load parses environment variables, then applies CLI flag overrides.

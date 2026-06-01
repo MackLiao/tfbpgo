@@ -56,8 +56,8 @@ func (s *Server) SampleConditions(w http.ResponseWriter, r *http.Request) {
 	// No query params drive the response — canonical key has none so
 	// the per-dataset path alone is the cache key.
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, nil)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		return s.buildSampleConditionsResponse(r.Context(), dbName)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		return s.buildSampleConditionsResponse(loadCtx, dbName)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)

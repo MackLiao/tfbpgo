@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,8 +28,8 @@ func (s *Server) Regulators(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
-	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func() ([]byte, error) {
-		ctx, cancel := contextWithDB(r.Context(), db.QueryTimeout)
+	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
+		ctx, cancel := contextWithDB(loadCtx, db.QueryTimeout)
 		defer cancel()
 		t0 := time.Now()
 		var rows []domain.Regulator

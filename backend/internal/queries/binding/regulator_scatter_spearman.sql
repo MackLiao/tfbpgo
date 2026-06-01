@@ -51,3 +51,6 @@ SELECT
   RANK() OVER (ORDER BY {{order_a_expr}}) AS val_a,
   RANK() OVER (ORDER BY {{order_b_expr}}) AS val_b
 FROM joined
+-- Deterministic total order so the rank-pair point list (and cached bytes) is a
+-- pure function of inputs. Order-invariant for the r computed in the handler.
+ORDER BY target_locus_tag, val_a, val_b

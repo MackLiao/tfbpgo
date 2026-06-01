@@ -64,3 +64,6 @@ WHERE a.{{col_a}} IS NOT NULL
   AND NOT isnan(b.{{col_b}})
 GROUP BY a.regulator_locus_tag, a.sample_id, b.sample_id
 HAVING COUNT(*) >= 3
+-- NOTE: no ORDER BY here — per-pair segments are combined with a UNION in
+-- renderCorrUnionAllSQL, which appends one trailing ORDER BY to the assembled
+-- query (an ORDER BY inside a UNION branch is a syntax error).
