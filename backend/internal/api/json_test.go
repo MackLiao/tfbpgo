@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,45 @@ func TestRespondInternalError_SanitizesBody(t *testing.T) {
 	require.JSONEq(t, `{"error":"internal error"}`, rr.Body.String())
 	require.NotContains(t, rr.Body.String(), "postgres")
 	require.NotContains(t, rr.Body.String(), "/var/run/db.sock")
+}
+
+// TestWriteCachedJSON_ContextErrorsAreNotServerErrors guards the regression
+// where a caller-cancelled request (TanStack Query aborts the in-flight topn
+// request on every sidebar change) surfaced as a 500 + ERROR log. Since
+// GetOrLoad began honoring caller cancellation (DoChan + select), a
+// context.Canceled must map to 499 (client closed request) — never a 500 with
+// the "internal error" body. A genuine error must still be a 500.
+func TestWriteCachedJSON_ContextErrorsAreNotServerErrors(t *testing.T) {
+	s := &Server{}
+	cases := []struct {
+		name       string
+		err        error
+		wantCode   int
+		wantNot500 bool
+	}{
+		{name: "client_canceled", err: context.Canceled, wantCode: statusClientClosedRequest, wantNot500: true},
+		{name: "deadline_exceeded", err: context.DeadlineExceeded, wantNot500: true},
+		{name: "genuine_error", err: errors.New("boom"), wantCode: http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/v/x/comparison/topn", nil)
+			s.writeCachedJSON(rr, req, nil, false, tc.err)
+			if tc.wantCode != 0 {
+				require.Equal(t, tc.wantCode, rr.Code)
+			}
+			if tc.wantNot500 {
+				require.NotEqual(t, http.StatusInternalServerError, rr.Code,
+					"a context error must not surface as a 500")
+				require.NotContains(t, rr.Body.String(), "internal error",
+					"a context error must not render the sanitized 500 body")
+			}
+			if tc.name == "genuine_error" {
+				require.Contains(t, rr.Body.String(), "internal error")
+			}
+		})
+	}
 }
 
 func TestVersionedPathSetsImmutableCacheControl(t *testing.T) {
