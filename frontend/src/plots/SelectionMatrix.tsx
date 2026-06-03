@@ -48,10 +48,10 @@ export function SelectionMatrix(props: SelectionMatrixProps) {
   // when there are no active datasets rather than early-returning above it.
   const { data, isLoading, isError, error } = useQuery({
     queryKey: qk.selectionMatrix(datasets, filters),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       filters
-        ? api.selectionMatrix({ datasets, filters })
-        : api.selectionMatrix({ datasets }),
+        ? api.selectionMatrix({ datasets, filters }, signal)
+        : api.selectionMatrix({ datasets }, signal),
     enabled: datasets.length > 0,
   });
 

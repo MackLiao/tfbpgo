@@ -62,7 +62,7 @@ export function RegulatorFilterCard(props: RegulatorFilterCardProps) {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: qk.datasetRegulators(db),
-    queryFn: () => api.datasetRegulators({ db }),
+    queryFn: ({ signal }) => api.datasetRegulators({ db }, signal),
     enabled: db.length > 0,
   });
 

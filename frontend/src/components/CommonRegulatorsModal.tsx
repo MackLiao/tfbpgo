@@ -118,7 +118,7 @@ function Body({ dbA, dbB, displayA, displayB, filters, onClose, onSelectCommon }
     queryKey: qk.regulatorsResolveCommon(dbA, dbB, filters),
     // Build the query object conditionally so `filters` is omitted (not set
     // to undefined) when empty — required under exactOptionalPropertyTypes.
-    queryFn: () => api.resolve(filters ? { common, filters } : { common }),
+    queryFn: ({ signal }) => api.resolve(filters ? { common, filters } : { common }, signal),
   });
 
   // The resolve drops regulator_locus_tag; re-apply each side's regulator

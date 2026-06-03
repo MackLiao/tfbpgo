@@ -50,6 +50,32 @@ describe("Comparison route", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the diagram-shaped loading skeleton while the top_n query is pending", () => {
+    // A fetch that never resolves keeps the query in the pending state, which
+    // is what the user sees during the multi-second top_n load on real data.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockReturnValue(new Promise<Response>(() => {})),
+    );
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={[
+            "/comparison?binding=callingcards&perturbation=hackett",
+          ]}
+        >
+          <Comparison />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(
+      screen.getByLabelText("Loading comparison chart"),
+    ).toBeInTheDocument();
+  });
+
   it("toggling facet_by radio writes to the URL", async () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false } },

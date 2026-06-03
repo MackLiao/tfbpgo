@@ -52,7 +52,7 @@ export function Binding() {
   // is effectively free after the first render.
   const datasetsQuery = useQuery({
     queryKey: qk.datasets(),
-    queryFn: () => api.datasets(),
+    queryFn: ({ signal }) => api.datasets(signal),
   });
   const datasetDisplay = useMemo(() => {
     const map = new Map<string, string>();
@@ -64,9 +64,9 @@ export function Binding() {
 
   const corrQuery = useQuery({
     queryKey: qk.bindingCorr(datasets, method, col, filters),
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const base = { datasets, method, col };
-      return api.bindingCorr(filters ? { ...base, filters } : base);
+      return api.bindingCorr(filters ? { ...base, filters } : base, signal);
     },
     enabled: datasets.length >= 2,
   });
@@ -142,7 +142,7 @@ export function Binding() {
   const sampleCondQueries = useQueries({
     queries: participatingDatasets.map((db) => ({
       queryKey: qk.sampleConditions(db),
-      queryFn: () => api.sampleConditions({ db }),
+      queryFn: ({ signal }) => api.sampleConditions({ db }, signal),
     })),
   });
 

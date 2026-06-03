@@ -71,10 +71,10 @@ interface BodyProps {
 function Body({ db, displayName, filters, onClose }: BodyProps) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: [getArtifactVersion(), "selectionBreakdown", db, filters] as const,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       filters
-        ? api.selectionBreakdown({ dataset: db, filters })
-        : api.selectionBreakdown({ dataset: db }),
+        ? api.selectionBreakdown({ dataset: db, filters }, signal)
+        : api.selectionBreakdown({ dataset: db }, signal),
   });
 
   const nMulti = data?.nMulti ?? 0;

@@ -146,7 +146,7 @@ function ModalBody({
 }: ModalBodyProps) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: qk.datasetFields(db),
-    queryFn: () => api.datasetFields({ db }),
+    queryFn: ({ signal }) => api.datasetFields({ db }, signal),
   });
 
   const initial = useMemo<Record<string, AnnotatedFilterSpec>>(

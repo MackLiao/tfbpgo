@@ -50,14 +50,14 @@ export function PerturbationScatterRow({
   const queries = useQueries({
     queries: pairs.map(([dbA, dbB]) => ({
       queryKey: qk.perturbationScatter(regulator, [dbA, dbB], method, col, filters),
-      queryFn: () => {
+      queryFn: ({ signal }) => {
         const base = {
           regulator,
           pair: [dbA, dbB] as [string, string],
           method,
           col,
         };
-        return api.perturbationScatter(filters ? { ...base, filters } : base);
+        return api.perturbationScatter(filters ? { ...base, filters } : base, signal);
       },
       enabled: Boolean(regulator) && datasets.length >= 2,
     })),

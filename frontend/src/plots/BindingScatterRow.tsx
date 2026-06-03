@@ -48,14 +48,14 @@ export function BindingScatterRow({
   const queries = useQueries({
     queries: pairs.map(([dbA, dbB]) => ({
       queryKey: qk.bindingScatter(regulator, [dbA, dbB], method, col, filters),
-      queryFn: () => {
+      queryFn: ({ signal }) => {
         const base = {
           regulator,
           pair: [dbA, dbB] as [string, string],
           method,
           col,
         };
-        return api.bindingScatter(filters ? { ...base, filters } : base);
+        return api.bindingScatter(filters ? { ...base, filters } : base, signal);
       },
       enabled: Boolean(regulator) && datasets.length >= 2,
     })),

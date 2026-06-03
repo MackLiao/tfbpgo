@@ -146,7 +146,7 @@ export function Select() {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: qk.datasets(),
-    queryFn: () => api.datasets(),
+    queryFn: ({ signal }) => api.datasets(signal),
   });
 
   // C4 (audit row 1): sort client-side by displayName so the sidebar follows
@@ -193,7 +193,7 @@ export function Select() {
   const fieldQueries = useQueries({
     queries: activeDbs.map((db) => ({
       queryKey: qk.datasetFields(db),
-      queryFn: () => api.datasetFields({ db }),
+      queryFn: ({ signal }) => api.datasetFields({ db }, signal),
     })),
   });
   /**

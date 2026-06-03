@@ -22,9 +22,22 @@ export class ApiError extends Error {
   }
 }
 
-async function get<T>(path: string, search?: URLSearchParams): Promise<T> {
+async function get<T>(
+  path: string,
+  search?: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<T> {
   const url = path + (search && [...search].length ? `?${search.toString()}` : "");
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  // Forward React Query's per-query AbortSignal so a superseded request (the
+  // query key changed) or an unmounted observer (navigated away) actually
+  // closes the HTTP connection. The server then cancels the in-flight DuckDB
+  // query (returning 499) and frees the pool connection — without this, slow
+  // queries like /comparison/topn pile up on the 2-conn pool and starve every
+  // other request (e.g. the Select page freezes during rapid dataset edits).
+  const res = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal: signal ?? null,
+  });
   if (res.status === 410) {
     // /api/version itself cannot legitimately return 410 (it has no artifact
     // version gate). If it does, refuse to recurse — we'd reload forever.
@@ -74,56 +87,71 @@ function vpath(suffix: string): string {
 
 export const api = {
   version: (): Promise<Schemas["VersionInfo"]> => get<Schemas["VersionInfo"]>("/api/version"),
-  datasets: (): Promise<Schemas["DatasetsResponse"]> =>
-    get<Schemas["DatasetsResponse"]>(vpath("/datasets")),
-  regulators: (q: { search?: string; limit?: number }): Promise<Schemas["RegulatorsResponse"]> => {
+  datasets: (signal?: AbortSignal): Promise<Schemas["DatasetsResponse"]> =>
+    get<Schemas["DatasetsResponse"]>(vpath("/datasets"), undefined, signal),
+  regulators: (
+    q: { search?: string; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<Schemas["RegulatorsResponse"]> => {
     const s = new URLSearchParams();
     if (q.search) s.set("search", q.search);
     if (q.limit) s.set("limit", String(q.limit));
-    return get<Schemas["RegulatorsResponse"]>(vpath("/regulators"), s);
+    return get<Schemas["RegulatorsResponse"]>(vpath("/regulators"), s, signal);
   },
-  resolve: (q: {
-    common?: string;
-    intersect?: string;
-    regulators?: string[];
-    // SD-1: active dataset filters (FiltersByDB-shape JSON) so the common
-    // set is computed filter-aware, matching the matrix cell. regulator_locus_tag
-    // is stripped server-side.
-    filters?: string;
-  }): Promise<Schemas["ResolveResponse"]> => {
+  resolve: (
+    q: {
+      common?: string;
+      intersect?: string;
+      regulators?: string[];
+      // SD-1: active dataset filters (FiltersByDB-shape JSON) so the common
+      // set is computed filter-aware, matching the matrix cell. regulator_locus_tag
+      // is stripped server-side.
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["ResolveResponse"]> => {
     const s = new URLSearchParams();
     if (q.common) s.set("common", q.common);
     if (q.intersect) s.set("intersect", q.intersect);
     if (q.regulators && q.regulators.length) s.set("regulators", q.regulators.join(","));
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["ResolveResponse"]>(vpath("/regulators/resolve"), s);
+    return get<Schemas["ResolveResponse"]>(vpath("/regulators/resolve"), s, signal);
   },
-  binding: (q: {
-    regulator: string;
-    datasets: string[];
-    filters?: string;
-  }): Promise<Schemas["BindingResponse"]> => {
+  binding: (
+    q: {
+      regulator: string;
+      datasets: string[];
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["BindingResponse"]> => {
     const s = new URLSearchParams({ regulator: q.regulator, datasets: q.datasets.join(",") });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["BindingResponse"]>(vpath("/binding"), s);
+    return get<Schemas["BindingResponse"]>(vpath("/binding"), s, signal);
   },
-  perturbation: (q: {
-    regulator: string;
-    datasets: string[];
-    filters?: string;
-  }): Promise<Schemas["PerturbationResponse"]> => {
+  perturbation: (
+    q: {
+      regulator: string;
+      datasets: string[];
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["PerturbationResponse"]> => {
     const s = new URLSearchParams({ regulator: q.regulator, datasets: q.datasets.join(",") });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["PerturbationResponse"]>(vpath("/perturbation"), s);
+    return get<Schemas["PerturbationResponse"]>(vpath("/perturbation"), s, signal);
   },
-  topn: (q: {
-    binding: string[];
-    perturbation: string[];
-    top_n?: number;
-    effect?: number;
-    pvalue?: number;
-    filters?: string;
-  }): Promise<Schemas["TopNResponse"]> => {
+  topn: (
+    q: {
+      binding: string[];
+      perturbation: string[];
+      top_n?: number;
+      effect?: number;
+      pvalue?: number;
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["TopNResponse"]> => {
     const s = new URLSearchParams({
       binding: q.binding.join(","),
       perturbation: q.perturbation.join(","),
@@ -132,7 +160,7 @@ export const api = {
     if (q.effect !== undefined) s.set("effect", String(q.effect));
     if (q.pvalue !== undefined) s.set("pvalue", String(q.pvalue));
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["TopNResponse"]>(vpath("/comparison/topn"), s);
+    return get<Schemas["TopNResponse"]>(vpath("/comparison/topn"), s, signal);
   },
   // `api.dto` is intentionally unconsumed on the frontend (DTO tab removed
   // in Task B1 — Shiny has no equivalent; see docs/parity/comparison.md §2
@@ -144,27 +172,33 @@ export const api = {
   // The naming asymmetry — `corr` on the binding side, `correlations` (plural)
   // on the perturbation side — matches the Shiny module names captured in
   // docs/parity/{binding,perturbation}.md and is intentional.
-  bindingCorr: (q: {
-    datasets: string[];
-    method: "pearson" | "spearman";
-    col: "effect" | "pvalue";
-    filters?: string;
-  }): Promise<Schemas["CorrResponse"]> => {
+  bindingCorr: (
+    q: {
+      datasets: string[];
+      method: "pearson" | "spearman";
+      col: "effect" | "pvalue";
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["CorrResponse"]> => {
     const s = new URLSearchParams({
       datasets: q.datasets.join(","),
       method: q.method,
       col: q.col,
     });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["CorrResponse"]>(vpath("/binding/corr"), s);
+    return get<Schemas["CorrResponse"]>(vpath("/binding/corr"), s, signal);
   },
-  bindingScatter: (q: {
-    regulator: string;
-    pair: [string, string];
-    method: "pearson" | "spearman";
-    col: "effect" | "pvalue";
-    filters?: string;
-  }): Promise<Schemas["ScatterResponse"]> => {
+  bindingScatter: (
+    q: {
+      regulator: string;
+      pair: [string, string];
+      method: "pearson" | "spearman";
+      col: "effect" | "pvalue";
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["ScatterResponse"]> => {
     const s = new URLSearchParams({
       regulator: q.regulator,
       pair: q.pair.join(","),
@@ -172,29 +206,35 @@ export const api = {
       col: q.col,
     });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["ScatterResponse"]>(vpath("/binding/scatter"), s);
+    return get<Schemas["ScatterResponse"]>(vpath("/binding/scatter"), s, signal);
   },
-  perturbationCorrelations: (q: {
-    datasets: string[];
-    method: "pearson" | "spearman";
-    col: "effect" | "pvalue";
-    filters?: string;
-  }): Promise<Schemas["CorrResponse"]> => {
+  perturbationCorrelations: (
+    q: {
+      datasets: string[];
+      method: "pearson" | "spearman";
+      col: "effect" | "pvalue";
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["CorrResponse"]> => {
     const s = new URLSearchParams({
       datasets: q.datasets.join(","),
       method: q.method,
       col: q.col,
     });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["CorrResponse"]>(vpath("/perturbation/correlations"), s);
+    return get<Schemas["CorrResponse"]>(vpath("/perturbation/correlations"), s, signal);
   },
-  perturbationScatter: (q: {
-    regulator: string;
-    pair: [string, string];
-    method: "pearson" | "spearman";
-    col: "effect" | "pvalue";
-    filters?: string;
-  }): Promise<Schemas["ScatterResponse"]> => {
+  perturbationScatter: (
+    q: {
+      regulator: string;
+      pair: [string, string];
+      method: "pearson" | "spearman";
+      col: "effect" | "pvalue";
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["ScatterResponse"]> => {
     const s = new URLSearchParams({
       regulator: q.regulator,
       pair: q.pair.join(","),
@@ -202,41 +242,64 @@ export const api = {
       col: q.col,
     });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["ScatterResponse"]>(vpath("/perturbation/scatter"), s);
+    return get<Schemas["ScatterResponse"]>(vpath("/perturbation/scatter"), s, signal);
   },
 
   // ----- Select Datasets endpoints (Phase A5) -----------------------------
   // Backend handlers: /api/v/{v}/datasets/{db}/{fields,regulators} and
   // /api/v/{v}/selection/{matrix,breakdown}. Consumed by the Phase-B Select
   // Datasets rebuild (Task B4); not wired into any UI yet.
-  datasetFields: (q: { db: string }): Promise<Schemas["DatasetFieldsResponse"]> =>
-    get<Schemas["DatasetFieldsResponse"]>(vpath(`/datasets/${encodeURIComponent(q.db)}/fields`)),
-  datasetRegulators: (q: { db: string }): Promise<Schemas["DatasetRegulatorsResponse"]> =>
+  datasetFields: (
+    q: { db: string },
+    signal?: AbortSignal,
+  ): Promise<Schemas["DatasetFieldsResponse"]> =>
+    get<Schemas["DatasetFieldsResponse"]>(
+      vpath(`/datasets/${encodeURIComponent(q.db)}/fields`),
+      undefined,
+      signal,
+    ),
+  datasetRegulators: (
+    q: { db: string },
+    signal?: AbortSignal,
+  ): Promise<Schemas["DatasetRegulatorsResponse"]> =>
     get<Schemas["DatasetRegulatorsResponse"]>(
       vpath(`/datasets/${encodeURIComponent(q.db)}/regulators`),
+      undefined,
+      signal,
     ),
   // Per-dataset sample_id → condition-label map used by the binding /
   // perturbation correlation overlay hovertext. See
   // docs/parity/binding.md rows 21, 42.
-  sampleConditions: (q: { db: string }): Promise<Schemas["SampleConditionsResponse"]> =>
+  sampleConditions: (
+    q: { db: string },
+    signal?: AbortSignal,
+  ): Promise<Schemas["SampleConditionsResponse"]> =>
     get<Schemas["SampleConditionsResponse"]>(
       vpath(`/datasets/${encodeURIComponent(q.db)}/sample-conditions`),
+      undefined,
+      signal,
     ),
-  selectionMatrix: (q: {
-    datasets: string[];
-    filters?: string;
-  }): Promise<Schemas["MatrixResponse"]> => {
+  selectionMatrix: (
+    q: {
+      datasets: string[];
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["MatrixResponse"]> => {
     const s = new URLSearchParams({ datasets: q.datasets.join(",") });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["MatrixResponse"]>(vpath("/selection/matrix"), s);
+    return get<Schemas["MatrixResponse"]>(vpath("/selection/matrix"), s, signal);
   },
-  selectionBreakdown: (q: {
-    dataset: string;
-    filters?: string;
-  }): Promise<Schemas["BreakdownResponse"]> => {
+  selectionBreakdown: (
+    q: {
+      dataset: string;
+      filters?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Schemas["BreakdownResponse"]> => {
     const s = new URLSearchParams({ dataset: q.dataset });
     if (q.filters) s.set("filters", q.filters);
-    return get<Schemas["BreakdownResponse"]>(vpath("/selection/breakdown"), s);
+    return get<Schemas["BreakdownResponse"]>(vpath("/selection/breakdown"), s, signal);
   },
 
   // ----- Export endpoint (Phase C6) ---------------------------------------

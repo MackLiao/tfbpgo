@@ -53,7 +53,7 @@ export function Perturbation() {
   // is effectively free after the first render.
   const datasetsQuery = useQuery({
     queryKey: qk.datasets(),
-    queryFn: () => api.datasets(),
+    queryFn: ({ signal }) => api.datasets(signal),
   });
   const datasetDisplay = useMemo(() => {
     const map = new Map<string, string>();
@@ -65,9 +65,9 @@ export function Perturbation() {
 
   const corrQuery = useQuery({
     queryKey: qk.perturbationCorrelations(datasets, method, col, filters),
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const base = { datasets, method, col };
-      return api.perturbationCorrelations(filters ? { ...base, filters } : base);
+      return api.perturbationCorrelations(filters ? { ...base, filters } : base, signal);
     },
     enabled: datasets.length >= 2,
   });
@@ -137,7 +137,7 @@ export function Perturbation() {
   const sampleCondQueries = useQueries({
     queries: participatingDatasets.map((db) => ({
       queryKey: qk.sampleConditions(db),
-      queryFn: () => api.sampleConditions({ db }),
+      queryFn: ({ signal }) => api.sampleConditions({ db }, signal),
     })),
   });
 

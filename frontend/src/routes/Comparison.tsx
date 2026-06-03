@@ -3,11 +3,11 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
+import { ComparisonBoxplotSkeleton } from "@/plots/ComparisonBoxplotSkeleton";
 import {
   ComparisonSidebar,
   type ComparisonSidebarChange,
 } from "@/components/ComparisonSidebar";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Comparison route — faceted boxplot replacement for the old heatmap.
@@ -46,9 +46,9 @@ export function Comparison() {
 
   const topnQuery = useQuery({
     queryKey: qk.topn(binding, perturbation, topN, effect, pvalue, filters),
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const base = { binding, perturbation, top_n: topN, effect, pvalue };
-      return api.topn(filters ? { ...base, filters } : base);
+      return api.topn(filters ? { ...base, filters } : base, signal);
     },
     enabled: binding.length > 0 && perturbation.length > 0,
   });
@@ -91,7 +91,7 @@ export function Comparison() {
           {topnQuery.isPending &&
           binding.length > 0 &&
           perturbation.length > 0 ? (
-            <Skeleton className="h-96 w-full" />
+            <ComparisonBoxplotSkeleton />
           ) : null}
           {topnQuery.data ? (
             <ComparisonBoxplot resp={topnQuery.data} facetBy={facetBy} />

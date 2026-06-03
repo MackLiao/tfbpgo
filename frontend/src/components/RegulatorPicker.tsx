@@ -14,7 +14,7 @@ export function RegulatorPicker({ value, onChange }: RegulatorPickerProps) {
   const dq = useDeferredValue(query);
   const { data } = useQuery({
     queryKey: qk.regulators(dq, 20),
-    queryFn: () => api.regulators(dq ? { search: dq, limit: 20 } : { limit: 20 }),
+    queryFn: ({ signal }) => api.regulators(dq ? { search: dq, limit: 20 } : { limit: 20 }, signal),
     enabled: dq.length >= 1,
   });
 
