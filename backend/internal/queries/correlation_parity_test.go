@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// envDuckThreads lets `DUCKDB_THREADS=2 go test ./internal/queries/` run the
+// numerical-parity suite at the same thread count a resized box uses, so the
+// threads>1 deviation is validated against the recorded single-thread
+// expectations. 0 → db.Open defaults to 1. NOTE: the fixture is small, so
+// DuckDB may not actually parallelize it — the definitive threads=2 parity
+// check is a real-artifact threads=1-vs-2 output diff (see deploy verification).
+func envDuckThreads() int {
+	n, _ := strconv.Atoi(os.Getenv("DUCKDB_THREADS"))
+	return n
+}
 
 const (
 	ccTable    = "callingcards"
@@ -48,7 +60,7 @@ func fixturePoolForTest(t *testing.T) *db.Pool {
 	require.NoError(t, err)
 	require.NoError(t, dst.Close())
 
-	pool, err := db.Open(db.Options{Path: dstPath, TempDir: t.TempDir()})
+	pool, err := db.Open(db.Options{Path: dstPath, TempDir: t.TempDir(), Threads: envDuckThreads()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pool.Close() })
 	return pool

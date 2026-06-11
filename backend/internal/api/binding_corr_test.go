@@ -13,15 +13,40 @@ package api
 // filter strip, and cache-key canonicalization.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
 	"github.com/stretchr/testify/require"
 )
+
+// TestBuildCorrResponse_SemaphoreFullBlocksUntilContextDeadline pins the
+// correlation analogue of comparison's Fix A: the all-pairs correlation DB
+// execution is gated by correlationSemaphore so a heavy correlation (e.g. all
+// perturbation datasets = C(6,2)=15 self-join + corr() branches) can never hold
+// both of the 2 pool connections. When the semaphore is already taken, a new
+// correlation must wait — and honor the request deadline — instead of piling
+// onto the pool. hackett×kemmeren are both perturbation datasets in the fixture;
+// the query never actually runs here because the semaphore blocks first.
+func TestBuildCorrResponse_SemaphoreFullBlocksUntilContextDeadline(t *testing.T) {
+	s := newTestServer(t)
+	correlationSemaphore <- struct{}{}        // occupy the single slot
+	defer func() { <-correlationSemaphore }() // release after the test
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := s.buildCorrResponse(ctx, "perturbation", "pearson", "effect",
+		[]string{"hackett", "kemmeren"}, nil)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond,
+		"should have waited on the semaphore until the deadline, not run immediately")
+}
 
 func corrPath(s *Server) string {
 	return "/api/v/" + s.Manifests.Artifact.ArtifactVersion + "/binding/corr"

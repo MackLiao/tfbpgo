@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -18,6 +19,7 @@ type Options struct {
 	MaxTempSize  string // e.g. "2GB"
 	MemoryLimit  string // e.g. "800MB"
 	MaxOpenConns int
+	Threads      int // DuckDB per-query thread cap; 0 → 1 (§6.3 default)
 }
 
 // Pool wraps a sqlx.DB pinned to one read-only DuckDB file.
@@ -36,10 +38,13 @@ func Open(opts Options) (*Pool, error) {
 	if opts.MaxOpenConns == 0 {
 		opts.MaxOpenConns = 2
 	}
+	if opts.Threads <= 0 {
+		opts.Threads = 1
+	}
 
 	q := url.Values{}
 	q.Set("access_mode", "read_only")
-	q.Set("threads", "1")
+	q.Set("threads", strconv.Itoa(opts.Threads))
 	q.Set("memory_limit", opts.MemoryLimit)
 	q.Set("temp_directory", opts.TempDir)
 	q.Set("max_temp_directory_size", opts.MaxTempSize)

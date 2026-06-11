@@ -24,6 +24,13 @@ type Config struct {
 	MemoryLimit  string `env:"DUCKDB_MEMORY_LIMIT" envDefault:"800MB"`
 	MaxTempSize  string `env:"DUCKDB_MAX_TEMP_SIZE" envDefault:"2GB"`
 	MaxOpenConns int    `env:"DB_MAX_OPEN_CONNS" envDefault:"2"`
+	// Threads is DuckDB's per-query thread cap. Default 1 (§6.3, for the 2GB
+	// t3.small where extra threads inflate peak memory). Raise to 2+ ONLY on a
+	// box with spare cores AND RAM headroom: it lets a single heavy query (e.g.
+	// the all-pairs perturbation correlation) use the idle core(s), but
+	// amplifies memory and can reorder un-ORDERed results — re-run tests/parity
+	// at the chosen value before shipping it.
+	Threads int `env:"DUCKDB_THREADS" envDefault:"1"`
 
 	// MaxInFlight caps concurrent in-flight requests to the DB-backed API
 	// group (load-shedding before the connection pool). Health/metrics/version

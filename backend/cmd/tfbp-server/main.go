@@ -48,6 +48,7 @@ func run() error {
 		MemoryLimit:  cfg.MemoryLimit,
 		MaxTempSize:  cfg.MaxTempSize,
 		MaxOpenConns: cfg.MaxOpenConns,
+		Threads:      cfg.Threads,
 	})
 	if err != nil {
 		return fmt.Errorf("startup_failed (db.Open): %w", err)

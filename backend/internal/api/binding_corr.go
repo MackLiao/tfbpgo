@@ -14,6 +14,16 @@ import (
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
 )
 
+// correlationSemaphore serializes the all-pairs correlation DB execution
+// shared by /binding/corr and /perturbation/correlations (both run through
+// buildCorrResponse). The all-pairs query is one UNION-ALL over C(N,2) self-join
+// + corr() branches — heavy and single-DuckDB-query — so without this a single
+// broad correlation (e.g. all 6 perturbation datasets = 15 branches) would hold
+// a pool connection for its whole duration; two concurrent ones would take both
+// of the 2 pool connections and starve the rest of the site. Size 1 leaves one
+// connection free at all times. Mirrors comparisonSemaphore / exportSemaphore.
+var correlationSemaphore = make(chan struct{}, 1)
+
 // BindingCorr serves /api/v/{v}/binding/corr — per-regulator correlation
 // (Pearson or Spearman, raw values or ranks) between every pair drawn from
 // `sorted(datasets) choose 2`. Datasets must all be data_type=binding.
@@ -198,6 +208,17 @@ func (s *Server) buildCorrResponse(
 
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
 	defer cancel()
+
+	// Serialize the heavy all-pairs correlation DB execution so it can never
+	// hold both pool connections (correlation analogue of comparison Fix A).
+	// Honor the request deadline while waiting rather than piling onto the pool.
+	select {
+	case correlationSemaphore <- struct{}{}:
+		defer func() { <-correlationSemaphore }()
+	case <-dbCtx.Done():
+		return nil, dbCtx.Err()
+	}
+
 	t0 := time.Now()
 	rows := []domain.CorrPairPointWithKey{}
 	err := s.Pool.DB.SelectContext(dbCtx, &rows, sqlStr, args...)
