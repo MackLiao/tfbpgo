@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
 import { ComparisonBoxplotSkeleton } from "@/plots/ComparisonBoxplotSkeleton";
@@ -86,7 +86,7 @@ export function Comparison() {
             </p>
           ) : null}
           {topnQuery.error ? (
-            <p className="text-red-600">{(topnQuery.error as Error).message}</p>
+            <p className="text-red-600">{apiErrorMessage(topnQuery.error)}</p>
           ) : null}
           {topnQuery.isPending &&
           binding.length > 0 &&

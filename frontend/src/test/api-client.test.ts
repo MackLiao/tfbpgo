@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { api, setArtifactVersion } from "@/api/client";
+import { api, setArtifactVersion, ApiError, apiErrorMessage } from "@/api/client";
 
 beforeEach(() => {
   setArtifactVersion("test-v1");
@@ -15,6 +15,29 @@ describe("api.regulators", () => {
       "/api/v/test-v1/regulators?search=yox&limit=10",
       expect.anything(),
     );
+  });
+});
+
+describe("apiErrorMessage", () => {
+  it("surfaces the backend's readable {error} body for an ApiError", () => {
+    const err = new ApiError(400, {
+      error:
+        "too many comparisons: 24 binding×perturbation pairs requested (max 6) — select fewer binding or perturbation datasets",
+    });
+    expect(apiErrorMessage(err)).toBe(
+      "too many comparisons: 24 binding×perturbation pairs requested (max 6) — select fewer binding or perturbation datasets",
+    );
+  });
+
+  it("falls back to HTTP <status> when the body has no error string", () => {
+    expect(apiErrorMessage(new ApiError(503, null))).toBe("HTTP 503");
+    expect(apiErrorMessage(new ApiError(502, "gateway"))).toBe("HTTP 502");
+    expect(apiErrorMessage(new ApiError(400, { error: "" }))).toBe("HTTP 400");
+  });
+
+  it("passes through a plain Error message and stringifies anything else", () => {
+    expect(apiErrorMessage(new Error("boom"))).toBe("boom");
+    expect(apiErrorMessage("weird")).toBe("weird");
   });
 });
 

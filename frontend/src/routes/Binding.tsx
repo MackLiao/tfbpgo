@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ActivePairRegulatorPicker } from "@/components/ActivePairRegulatorPicker";
 import { BindingSidebar } from "@/components/BindingSidebar";
@@ -209,7 +209,7 @@ export function Binding() {
             </p>
           ) : null}
           {corrQuery.error ? (
-            <p className="text-red-600">{(corrQuery.error as Error).message}</p>
+            <p className="text-red-600">{apiErrorMessage(corrQuery.error)}</p>
           ) : null}
           {datasets.length >= 2 && corrQuery.isPending ? <PlotSkeleton /> : null}
           {corrQuery.data ? (

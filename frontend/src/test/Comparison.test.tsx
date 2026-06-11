@@ -76,6 +76,39 @@ describe("Comparison route", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders the backend's readable message (not 'HTTP 400') when the top_n query is rejected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error:
+              "too many comparisons: 24 binding×perturbation pairs requested (max 6) — select fewer binding or perturbation datasets",
+          }),
+          { status: 400 },
+        ),
+      ),
+    );
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={[
+            "/comparison?binding=a,b,c,d&perturbation=e,f,g,h,i,j",
+          ]}
+        >
+          <Comparison />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/too many comparisons.*select fewer/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("HTTP 400")).not.toBeInTheDocument();
+  });
+
   it("toggling facet_by radio writes to the URL", async () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false } },

@@ -22,6 +22,25 @@ export class ApiError extends Error {
   }
 }
 
+// apiErrorMessage extracts a human-readable string from a thrown value for
+// display in the UI. The backend's 4xx validation errors carry an intentional
+// message in `{"error": "<msg>"}` (see backend writeJSONError) — surface THAT
+// rather than the generic "HTTP 400" that ApiError.message defaults to, so the
+// user sees e.g. "too many comparisons: … select fewer datasets" instead of a
+// bare status code. Falls back to the status line when no message body exists,
+// and degrades gracefully for non-ApiError throwables.
+export function apiErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.body && typeof err.body === "object" && "error" in err.body) {
+      const msg = (err.body as { error?: unknown }).error;
+      if (typeof msg === "string" && msg.length > 0) return msg;
+    }
+    return err.message; // "HTTP <status>"
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 async function get<T>(
   path: string,
   search?: URLSearchParams,
