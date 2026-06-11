@@ -22,12 +22,18 @@ docker-run: docker-build
 
 # ----- data_prep (Phase 0) ---------------------------------------------------
 
+# Label baked into artifact_manifest.version — surfaces as /api/version and the
+# /api/v/{v}/ URL segment, and prefixes every cache key. Must be unique per
+# build; defaults to today's UTC date. Override: make data-build ARTIFACT_VERSION=foo
+ARTIFACT_VERSION ?= $(shell date -u +%Y-%m-%d)
+
 data-fixture:
 	cd data_prep && poetry run build-fixture --out ../tests/fixtures/tfbp_test.duckdb
 
 data-build:
 	cd data_prep && poetry run build-duckdb \
 	    --config brentlab_yeast_collection.yaml \
+	    --artifact-version $(ARTIFACT_VERSION) \
 	    --out ../tfbp.duckdb
 
 data-pull:
