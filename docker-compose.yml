@@ -97,7 +97,7 @@ services:
       - traefik.http.middlewares.tfbp-metrics-allow.ipallowlist.sourcerange=${METRICS_ALLOW_CIDR:-127.0.0.1/32}
 
   tfbp-data-init:
-    image: amazon/aws-cli:2
+    image: amazon/aws-cli:2.35.2
     restart: "no"
     # Opt-in service: run explicitly via `docker compose --profile init up
     # tfbp-data-init`. A plain `docker compose up -d` (no profile) brings up

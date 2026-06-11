@@ -76,7 +76,7 @@ services:
       - traefik.http.services.tfbp.loadbalancer.healthcheck.timeout=3s
 
   tfbp-data-init:
-    image: amazon/aws-cli:2
+    image: amazon/aws-cli:2.35.2
     restart: "no"
     profiles: ["init"]
     entrypoint: ["/bin/sh", "-c"]
