@@ -1,0 +1,26 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+# Region — us-east-2 (Ohio) is closest to Missouri; leave as-is unless you have a reason.
+region = "us-east-2"
+
+# GHCR image tag for the Go service. The package must be PUBLIC (Settings ->
+# Packages on the repo) or set to a tag your image-publish workflow has pushed.
+image_tag = "v0.0.1-demo"
+
+# Artifact location — fill ARTIFACT_KEY and ARTIFACT_SHA256 from the output of
+# `deploy/s3-upload.sh` (or deploy/artifact-manifest.<date>.json) AFTER you build+publish.
+artifact_bucket = "brentlab-tfbp-artifacts"
+artifact_key    = "tfbp/2026-06-10/tfbp.duckdb"
+artifact_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# Let's Encrypt notices go here.
+acme_email = "you@example.com"
+
+# repo_ref MUST point at a pushed ref that contains infra/ and deploy/demo/.
+# cloud-init clones it from GitHub — uncommitted local files won't be there.
+repo_ref = "main"
+
+# ACME CA. Leave default (LE production) for the real cert. For a first dry-run
+# that won't burn nip.io's shared rate limit, set:
+#   acme_ca_server = "https://acme-staging-v02.api.letsencrypt.org/directory"
+# acme_ca_server = "https://acme-v02.api.letsencrypt.org/directory"
