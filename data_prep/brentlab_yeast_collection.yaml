@@ -1,27 +1,10 @@
+# NOTE: the reference YAML carries a `BrentLab/yeast_genome_resources` repo with a
+# `genome_resources: region_sets:` block (descriptive promoter-set definitions). It is
+# omitted here because the pinned labretriever (0.5.0) has no schema for that repo-wide
+# property and rejects it at config load. The block is descriptive-only (no `dataset:`
+# entry) and is not consumed by the Go data path, so dropping it does not change the
+# artifact. Re-add it only after bumping labretriever to a version that supports it.
 repositories:
-  BrentLab/yeast_genome_resources:
-    genome_resources:
-      region_sets:
-        Kang:
-          description: >-
-            700 bp upstream of each start codon, truncated if there exists a feature
-            within 700 bp of the ORF.
-        Mindel:
-          description: >-
-            Promoter regions defined from the start codon to at least 700 bp upstream
-            of the TSS defined by Park et al., 2014; Pelechano et al., 2013;
-            Policastro et al., 2020 (provided in the SGD annotations). If no TSS is
-            defined, then the start codon is used.
-        start_codon_500bp:
-          description: >-
-            Promoter regions defined as 500bp upstream of the start codon. There is
-            no truncation or extension. All promoters are exactly 500bp long.
-        intergenic:
-          description:
-            Promoter regions defined as the intergenic region upstream of the 5' end
-            of a given feature. Note that out of 6040 features, 1410 are divergently
-            transcribed
-
   BrentLab/callingcards:
     Regulator locus tag:
       field: regulator_locus_tag
