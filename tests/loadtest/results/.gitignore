@@ -1,0 +1,4 @@
+# Raw k6 stdout (verbose live-progress lines) — reproducible and noisy. The
+# committed deliverables are the *.md summaries (interpretation) and the
+# *_summary.json k6 metric exports (structured numbers).
+*_run.txt
