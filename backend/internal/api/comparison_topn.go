@@ -20,6 +20,17 @@ import (
 // CCTargetBlacklist mirrors the Python constant CC_TARGET_BLACKLIST.
 var CCTargetBlacklist = []string{"YOR201C", "YOR202W", "YOR203W", "YCL018W", "YEL021W"}
 
+// defaultMaxComparisonPairs bounds the (binding × perturbation) pairs one
+// /comparison/topn request may compute when Server.MaxComparisonPairs is unset.
+// With 4 binding × 6 perturbation configured, the unbounded max is 24 pairs in
+// a single UNION query — far past the 30s budget on the 2-conn pool.
+const defaultMaxComparisonPairs = 12
+
+// comparisonSemaphore serializes the comparison/topn DB execution so a heavy
+// multi-pair query can never occupy both of the 2 pool connections at once,
+// leaving one connection for the rest of the site (mirrors exportSemaphore).
+var comparisonSemaphore = make(chan struct{}, 1)
+
 // harbisonDedupCTE builds the special-case binding CTE for harbison. An
 // optional `extraWhere` (already prefixed with " AND " when non-empty) is
 // appended inside the WHERE clause so user-supplied filters apply to the
@@ -95,6 +106,22 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 		_, ok := pertConfigs[d]
 		return ok
 	})
+
+	// Fix B: reject the (binding × perturbation) pair explosion before any DB
+	// work. Each pair is a heavy ranking branch in one UNION query on the
+	// 2-conn pool; too many blow past the 30s budget, return nothing, and (with
+	// the loader's WithoutCancel) keep running even after the client gives up —
+	// starving the whole site. Fail fast with a clear, actionable message.
+	maxPairs := s.MaxComparisonPairs
+	if maxPairs <= 0 {
+		maxPairs = defaultMaxComparisonPairs
+	}
+	if pairs := len(bindingDS) * len(pertDS); pairs > maxPairs {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf(
+			"too many comparisons: %d binding×perturbation pairs requested (max %d) — select fewer binding or perturbation datasets",
+			pairs, maxPairs))
+		return
+	}
 
 	// C-5/C-6 parity: top_n clamps to [1, max] (0 -> 1, not the default), and a
 	// malformed effect/pvalue silently falls back to the default rather than
@@ -182,6 +209,15 @@ func (s *Server) buildTopNResponse(
 	full += "\nORDER BY pair_key, binding_sample_id, regulator_locus_tag, perturbation_sample_id"
 	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
 	defer cancel()
+	// Fix A: serialize comparison DB execution so a heavy multi-pair query can
+	// never occupy both pool connections — one stays free for the rest of the
+	// site. Honor the deadline while waiting rather than queueing on the pool.
+	select {
+	case comparisonSemaphore <- struct{}{}:
+		defer func() { <-comparisonSemaphore }()
+	case <-dbCtx.Done():
+		return nil, dbCtx.Err()
+	}
 	t0 := time.Now()
 	rows := []domain.TopNRow{}
 	if err := s.Pool.DB.SelectContext(dbCtx, &rows, full, args...); err != nil {

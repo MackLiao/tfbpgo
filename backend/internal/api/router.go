@@ -39,6 +39,12 @@ type Server struct {
 	// group. <= 0 falls back to defaultMaxInFlight. Set from config in main.
 	MaxInFlight int
 
+	// MaxComparisonPairs caps the number of (binding × perturbation) dataset
+	// pairs a single /comparison/topn request may compute. <= 0 falls back to
+	// defaultMaxComparisonPairs. Bounds the B×P UNION so one request can't
+	// exceed the query budget and starve the pool. Set from config in main.
+	MaxComparisonPairs int
+
 	// --- A5 Select Datasets handler state ---
 	// Per-(db, field) DuckDB type introspection and numeric min/max
 	// aggregates. Both maps are eagerly allocated by initIntrospect()

@@ -54,6 +54,12 @@ services:
       DUCKDB_MAX_TEMP_SIZE: ${DUCKDB_MAX_TEMP_SIZE:-2GB}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
       MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
+      # Cap binding×perturbation pairs per comparison. Lower than the binary
+      # default (12) because the burstable t3.small runs the single-threaded
+      # B×P UNION ~3-5x slower; 6 pairs keeps a cold comparison inside the 30s
+      # budget. Pair with the comparison semaphore so even a slow one can't
+      # block the site. Raise on a bigger instance.
+      MAX_COMPARISON_PAIRS: ${MAX_COMPARISON_PAIRS:-6}
     volumes:
       - tfbp_data:/data:ro
       - tfbp_tmp:/tmp/duckdb

@@ -29,6 +29,13 @@ type Config struct {
 	// group (load-shedding before the connection pool). Health/metrics/version
 	// live outside this cap so probes always respond.
 	MaxInFlight int `env:"MAX_INFLIGHT_REQUESTS" envDefault:"128"`
+
+	// MaxComparisonPairs caps the (binding × perturbation) pairs one
+	// /comparison/topn request may compute. The default 12 fits a reasonably
+	// resourced instance; lower it (e.g. 6) on a weak/burstable box where the
+	// B×P UNION would exceed the 30s query budget. Env-tunable from the load
+	// test, like the pool knobs above.
+	MaxComparisonPairs int `env:"MAX_COMPARISON_PAIRS" envDefault:"12"`
 }
 
 // Load parses environment variables, then applies CLI flag overrides.

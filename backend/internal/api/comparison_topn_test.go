@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
@@ -340,4 +343,54 @@ func TestComparisonTopN_RenderedTwoTermCasePresent(t *testing.T) {
 		rendered,
 		`CASE WHEN ABS(p."Madj") > ? AND p."pval" < ? THEN 1 ELSE 0 END`,
 	)
+}
+
+// TestComparisonTopN_RejectsTooManyDatasetPairs pins fix B: selecting many
+// datasets produces a B×P pair explosion (up to 24 pairs) that one UNION query
+// on the 2-conn pool cannot finish inside the 30s budget, freezing the page and
+// starving the site. The handler must reject the request fast with a clear
+// message BEFORE running any DB work when pairs exceed the cap.
+func TestComparisonTopN_RejectsTooManyDatasetPairs(t *testing.T) {
+	s := newTestServer(t)
+	s.MaxComparisonPairs = 1 // force a low cap; fixture has 2 binding × 2 pert
+	q := url.Values{
+		"binding":      {"callingcards,harbison"},
+		"perturbation": {"hackett,kemmeren"}, // 2×2 = 4 pairs > 1
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/comparison/topn?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	require.Contains(t, rr.Body.String(), "pairs")
+}
+
+// TestComparisonTopN_AllowsWithinCap guards that a normal small comparison
+// (1 pair) is not rejected by the cap.
+func TestComparisonTopN_AllowsWithinCap(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{"binding": {"callingcards"}, "perturbation": {"hackett"}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET",
+		"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/comparison/topn?"+q.Encode(), nil)
+	s.Routes().ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+}
+
+// TestBuildTopNResponse_SemaphoreFullBlocksUntilContextDeadline pins fix A: the
+// comparison DB execution is gated by a semaphore so it can never hold both of
+// the 2 pool connections. When the semaphore is already taken, a new comparison
+// must wait — and honor the request deadline — instead of piling onto the pool.
+func TestBuildTopNResponse_SemaphoreFullBlocksUntilContextDeadline(t *testing.T) {
+	s := newTestServer(t)
+	comparisonSemaphore <- struct{}{}        // occupy the single slot
+	defer func() { <-comparisonSemaphore }() // release after the test
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := s.buildTopNResponse(ctx, []string{"callingcards"}, []string{"hackett"}, 25, 0.0, 0.05, nil)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond,
+		"should have waited on the semaphore until the deadline, not run immediately")
 }

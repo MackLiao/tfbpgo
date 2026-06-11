@@ -19,6 +19,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	require.Equal(t, "2GB", cfg.MaxTempSize)
 	require.Equal(t, 2, cfg.MaxOpenConns)
 	require.Equal(t, 128, cfg.MaxInFlight)
+	require.Equal(t, 12, cfg.MaxComparisonPairs)
 }
 
 func TestLoadFromEnv_PoolKnobsOverride(t *testing.T) {
@@ -26,11 +27,13 @@ func TestLoadFromEnv_PoolKnobsOverride(t *testing.T) {
 	t.Setenv("DUCKDB_MEMORY_LIMIT", "600MB")
 	t.Setenv("DB_MAX_OPEN_CONNS", "4")
 	t.Setenv("MAX_INFLIGHT_REQUESTS", "256")
+	t.Setenv("MAX_COMPARISON_PAIRS", "6")
 	cfg, err := Load([]string{})
 	require.NoError(t, err)
 	require.Equal(t, "600MB", cfg.MemoryLimit)
 	require.Equal(t, 4, cfg.MaxOpenConns)
 	require.Equal(t, 256, cfg.MaxInFlight)
+	require.Equal(t, 6, cfg.MaxComparisonPairs)
 }
 
 func TestLoadFromEnv_FlagOverridesPort(t *testing.T) {

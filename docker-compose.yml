@@ -57,6 +57,10 @@ services:
       DUCKDB_MAX_TEMP_SIZE: ${DUCKDB_MAX_TEMP_SIZE:-2GB}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
       MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
+      # Cap binding×perturbation pairs per /comparison/topn request so the B×P
+      # UNION can't exceed the 30s budget on the 2-conn pool. Tune from the
+      # cutover load test (the t3.small likely wants ~6; a bigger box more).
+      MAX_COMPARISON_PAIRS: ${MAX_COMPARISON_PAIRS:-12}
     volumes:
       - tfbp_data:/data:ro
       - tfbp_tmp:/tmp/duckdb

@@ -98,14 +98,15 @@ func run() error {
 	}
 
 	srv := &api.Server{
-		ArtifactVersion: report.Manifests.Artifact.ArtifactVersion,
-		Pool:            pool,
-		Cache:           c,
-		Whitelist:       wl,
-		Manifests:       report.Manifests,
-		Metrics:         metrics,
-		StaticFS:        static.FS(),
-		MaxInFlight:     cfg.MaxInFlight,
+		ArtifactVersion:    report.Manifests.Artifact.ArtifactVersion,
+		Pool:               pool,
+		Cache:              c,
+		Whitelist:          wl,
+		Manifests:          report.Manifests,
+		Metrics:            metrics,
+		StaticFS:           static.FS(),
+		MaxInFlight:        cfg.MaxInFlight,
+		MaxComparisonPairs: cfg.MaxComparisonPairs,
 	}
 
 	// Eager-load the per-(db, field) introspection cache before binding the
