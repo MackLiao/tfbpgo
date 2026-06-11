@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -30,8 +31,12 @@ func (s *Server) Readyz(w http.ResponseWriter, r *http.Request) {
 
 	var one int
 	if err := s.Pool.DB.QueryRowxContext(ctx, `SELECT 1 FROM artifact_manifest LIMIT 1`).Scan(&one); err != nil {
+		// /readyz is publicly reachable: log the raw DuckDB error server-side
+		// only, return a generic reason (CWE-209 — driver errors can embed
+		// internal paths/schema detail).
+		slog.ErrorContext(r.Context(), "readyz_canary_failed", "error", err)
 		resp["ready"] = false
-		resp["reason"] = "duckdb canary failed: " + err.Error()
+		resp["reason"] = "database unavailable"
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(resp)
 		return

@@ -354,13 +354,18 @@ func buildSquirrelWhereRaw(fs map[string]domain.FilterSpec) (string, []any, erro
 	}
 	and := sq.And{}
 	for field, spec := range fs {
+		// quotedIdent is the SQL-build-time tripwire: callers must have
+		// checkFilterFields'd every filter field, but if a future handler
+		// forgets, an un-whitelisted identifier panics here instead of
+		// reaching SQL.
+		col := quotedIdent(field)
 		switch spec.Type {
 		case "categorical":
 			var vals []string
 			if err := json.Unmarshal(spec.Value, &vals); err != nil {
 				return "", nil, err
 			}
-			and = append(and, sq.Eq{`"` + field + `"`: vals})
+			and = append(and, sq.Eq{col: vals})
 		case "numeric":
 			var rng [2]float64
 			if err := json.Unmarshal(spec.Value, &rng); err != nil {
@@ -369,9 +374,8 @@ func buildSquirrelWhereRaw(fs map[string]domain.FilterSpec) (string, []any, erro
 			// C-3/SQL-4 parity: TRY_CAST the column to DOUBLE before the range
 			// compare (queries.py:129-134) — the metadata columns are stored as
 			// VARCHAR, so a bare `>=`/`<=` does a lexicographic compare. Squirrel
-			// treats the map key as a raw column expression; the field is already
-			// whitelisted + double-quoted.
-			expr := `TRY_CAST("` + field + `" AS DOUBLE)`
+			// treats the map key as a raw column expression.
+			expr := `TRY_CAST(` + col + ` AS DOUBLE)`
 			and = append(and, sq.GtOrEq{expr: rng[0]})
 			and = append(and, sq.LtOrEq{expr: rng[1]})
 		case "bool":
@@ -379,7 +383,7 @@ func buildSquirrelWhereRaw(fs map[string]domain.FilterSpec) (string, []any, erro
 			if err := json.Unmarshal(spec.Value, &b); err != nil {
 				return "", nil, err
 			}
-			and = append(and, sq.Eq{`"` + field + `"`: b})
+			and = append(and, sq.Eq{col: b})
 		default:
 			return "", nil, fmt.Errorf("filter %q: unknown type %q", field, spec.Type)
 		}

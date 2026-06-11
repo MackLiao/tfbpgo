@@ -60,8 +60,8 @@ describe("React Query AbortSignal cancellation", () => {
       { wrapper: wrapper(qc), initialProps: { k: "a" } },
     );
     await waitFor(() => expect(signals.a).toBeDefined());
-    expect(signals.a.aborted).toBe(false);
+    expect(signals.a!.aborted).toBe(false);
     rerender({ k: "b" });
-    await waitFor(() => expect(signals.a.aborted).toBe(true));
+    await waitFor(() => expect(signals.a!.aborted).toBe(true));
   });
 });

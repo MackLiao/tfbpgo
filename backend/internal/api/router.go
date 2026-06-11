@@ -1,8 +1,11 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"io/fs"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -128,6 +131,15 @@ func (s *Server) Routes() http.Handler {
 	// so React Router can resolve client-side routes (e.g. /binding).
 	if s.StaticFS != nil {
 		fileServer := http.FileServer(http.FS(s.StaticFS))
+		// Read the SPA shell once; the embedded bundle is immutable for the
+		// life of the process. The CSP is derived from its actual inline
+		// scripts (see cspForIndex), so a frontend rebuild can never strand
+		// a stale hash.
+		indexBytes, indexErr := fs.ReadFile(s.StaticFS, "index.html")
+		var indexCSP string
+		if indexErr == nil {
+			indexCSP = cspForIndex(indexBytes)
+		}
 		r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Method != http.MethodGet && req.Method != http.MethodHead {
 				writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -144,16 +156,28 @@ func (s *Server) Routes() http.Handler {
 					return
 				}
 			}
-			if p == "" {
+			// `/` and `/index.html` must NOT take the fileServer branch below:
+			// the SPA shell needs the no-store + CSP headers set only by the
+			// fallback path. (Previously a bare `GET /` was served by the
+			// FileServer with no Cache-Control or security headers at all.)
+			if p == "" || p == "index.html" {
 				p = "index.html"
-			}
-			if info, err := fs.Stat(s.StaticFS, p); err == nil && !info.IsDir() {
+			} else if info, err := fs.Stat(s.StaticFS, p); err == nil && !info.IsDir() {
+				// Vite content-hashes every filename under assets/ (e.g.
+				// plotly-Cluy4Xu1.js), so those bytes can never change for a
+				// given URL — cache forever, mirroring the /api/v/* immutable
+				// strategy. Without this, embed.FS's zero ModTime defeats
+				// ETag/Last-Modified and every visit re-downloads the ~MB
+				// Plotly chunk. Unhashed root files (favicons, index.html via
+				// the fallback below) are excluded.
+				if strings.HasPrefix(p, "assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				fileServer.ServeHTTP(w, req)
 				return
 			}
 			// SPA fallback: serve index.html so React Router owns the path.
-			index, err := fs.ReadFile(s.StaticFS, "index.html")
-			if err != nil {
+			if indexErr != nil {
 				http.NotFound(w, req)
 				return
 			}
@@ -161,9 +185,33 @@ func (s *Server) Routes() http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 			w.Header().Set("X-Frame-Options", "DENY")
-			_, _ = w.Write(index)
+			w.Header().Set("Content-Security-Policy", indexCSP)
+			_, _ = w.Write(indexBytes)
 		}))
 	}
 
 	return r
+}
+
+// inlineScriptRE matches attribute-less <script> blocks in the SPA shell —
+// i.e. inline scripts like the `window.global = window` Plotly shim. Bundle
+// references use <script type="module" ... src=...> and do not match.
+var inlineScriptRE = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+
+// cspForIndex builds the Content-Security-Policy for the SPA shell. Everything
+// is same-origin: the SPA bundles Plotly (verified: no `new Function`/eval, so
+// no 'unsafe-eval') and calls only /api/*. style-src needs 'unsafe-inline' for
+// Plotly/React inline styles; img-src needs data:/blob: for Plotly mode-bar
+// icons and PNG export. Inline scripts are allowed by sha256 hash, computed
+// from the shipped index.html itself so the policy tracks frontend edits.
+func cspForIndex(index []byte) string {
+	scriptSrc := "'self'"
+	for _, m := range inlineScriptRE.FindAllSubmatch(index, -1) {
+		sum := sha256.Sum256(m[1])
+		scriptSrc += " 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	}
+	return "default-src 'self'; script-src " + scriptSrc +
+		"; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
+		"font-src 'self' data:; connect-src 'self'; object-src 'none'; " +
+		"frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 }

@@ -5,11 +5,15 @@ type DTORow struct {
 	PerturbationIDSource string    `json:"perturbationIdSource" db:"perturbation_id_source"`
 	DTOEmpiricalPValue   SafeFloat `json:"dtoEmpiricalPvalue" db:"dto_empirical_pvalue"`
 	DTOFDR               SafeFloat `json:"dtoFdr" db:"dto_fdr"`
-	BindingSetSize       int64     `json:"bindingSetSize" db:"binding_set_size"`
-	PerturbationSetSize  int64     `json:"perturbationSetSize" db:"perturbation_set_size"`
-	BindingSampleID      string    `json:"bindingSampleId" db:"binding_sample_id"`
-	PertSampleID         string    `json:"pertSampleId" db:"pert_sample_id"`
-	Time                 string    `json:"time" db:"time"`
+	// Set sizes are NULL for some dto_expanded rows on the real artifact
+	// (fixture has none — caught only by a live smoke test). Pointers scan
+	// NULL→nil→JSON null, matching the SafeFloat NULL convention; non-null
+	// values marshal byte-identically to the previous int64.
+	BindingSetSize      *int64 `json:"bindingSetSize" db:"binding_set_size"`
+	PerturbationSetSize *int64 `json:"perturbationSetSize" db:"perturbation_set_size"`
+	BindingSampleID     string `json:"bindingSampleId" db:"binding_sample_id"`
+	PertSampleID        string `json:"pertSampleId" db:"pert_sample_id"`
+	Time                string `json:"time" db:"time"`
 }
 
 type DTOResponse struct {

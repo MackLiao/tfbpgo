@@ -141,13 +141,17 @@ func buildSquirrelWhere(fs map[string]domain.FilterSpec) (string, []any, error) 
 	}
 	and := sq.And{}
 	for field, spec := range fs {
+		// quotedIdent is the SQL-build-time tripwire: callers must have
+		// CheckField'd every filter field, but if a future handler forgets,
+		// an un-whitelisted identifier panics here instead of reaching SQL.
+		col := quotedIdent(field)
 		switch spec.Type {
 		case "categorical":
 			var vals []string
 			if err := json.Unmarshal(spec.Value, &vals); err != nil {
 				return "", nil, fmt.Errorf("filter %q: %w", field, err)
 			}
-			and = append(and, sq.Eq{`"` + field + `"`: vals})
+			and = append(and, sq.Eq{col: vals})
 		case "numeric":
 			var rng [2]float64
 			if err := json.Unmarshal(spec.Value, &rng); err != nil {
@@ -155,9 +159,8 @@ func buildSquirrelWhere(fs map[string]domain.FilterSpec) (string, []any, error) 
 			}
 			// SQL-4 parity: TRY_CAST to DOUBLE before the range compare
 			// (Shiny queries.py:111-115) — metadata columns are VARCHAR-stored,
-			// so a bare >=/<= would compare lexicographically. Field already
-			// whitelisted + double-quoted.
-			expr := `TRY_CAST("` + field + `" AS DOUBLE)`
+			// so a bare >=/<= would compare lexicographically.
+			expr := `TRY_CAST(` + col + ` AS DOUBLE)`
 			and = append(and, sq.And{
 				sq.GtOrEq{expr: rng[0]},
 				sq.LtOrEq{expr: rng[1]},
@@ -167,7 +170,7 @@ func buildSquirrelWhere(fs map[string]domain.FilterSpec) (string, []any, error) 
 			if err := json.Unmarshal(spec.Value, &b); err != nil {
 				return "", nil, fmt.Errorf("filter %q: %w", field, err)
 			}
-			and = append(and, sq.Eq{`"` + field + `"`: b})
+			and = append(and, sq.Eq{col: b})
 		default:
 			return "", nil, fmt.Errorf("filter %q: unknown type %q", field, spec.Type)
 		}
