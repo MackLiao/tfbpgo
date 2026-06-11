@@ -11,9 +11,9 @@ variable "project_name" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type. t3.small mirrors the production target so the concurrency numbers are honest."
+  description = "EC2 instance type. t3.large (8GB RAM) — the box RAM AND the container mem_limit must BOTH exceed the ~2.9GB artifact, or DuckDB thrashes re-reading it from EBS under broad queries and the whole box freezes (a 2GB t3.small with a 1.6g container did exactly that). 2 vCPU is fine here; RAM is the binding constraint, not CPU."
   type        = string
-  default     = "t3.small"
+  default     = "t3.large"
 }
 
 variable "root_volume_gb" {

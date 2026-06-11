@@ -49,8 +49,10 @@ services:
       CACHE_SIZE_BYTES: "134217728"
       LOG_LEVEL: info
       PORT: "8080"
-      # Same §6.3 knobs as production so the concurrency numbers transfer.
-      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-800MB}
+      # Sized for the t3.large (8GB) demo box. DUCKDB_MEMORY_LIMIT is DuckDB's
+      # buffer-pool cap; 2GB lets it hold more hot blocks and spill less. (Was
+      # 800MB for the original t3.small.)
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-2GB}
       DUCKDB_MAX_TEMP_SIZE: ${DUCKDB_MAX_TEMP_SIZE:-2GB}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
       MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
@@ -64,8 +66,18 @@ services:
       - tfbp_data:/data:ro
       - tfbp_tmp:/tmp/duckdb
     networks: [web]
-    mem_limit: ${TFBP_MEM_LIMIT:-1.6g}
-    memswap_limit: ${TFBP_MEM_LIMIT:-1.6g}
+    # mem_limit MUST exceed the ~2.9GB artifact — not merely "enough heap".
+    # In cgroup v2 the artifact's file-backed page cache is charged to THIS
+    # container, so a limit below the artifact size makes the kernel evict and
+    # re-read it from EBS on every broad scan (page-cache thrash). With this at
+    # 1.6g on the old t3.small the box froze: ~8GB/5min of EBS reads on a 2.9GB
+    # file, I/O queue backed up, even /healthz + SSM hung while CPU sat at ~50%.
+    # 6g on the 8GB box holds the whole artifact + DuckDB buffer + Go heap with
+    # headroom; the remaining ~2GB is left for the OS + Traefik. Raising the box
+    # RAM alone does NOT fix it unless this limit is raised too.
+    # memswap_limit == mem_limit ⇒ swap off (the box has none anyway).
+    mem_limit: ${TFBP_MEM_LIMIT:-6g}
+    memswap_limit: ${TFBP_MEM_LIMIT:-6g}
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true

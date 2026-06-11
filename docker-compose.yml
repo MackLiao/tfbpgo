@@ -65,8 +65,17 @@ services:
       - tfbp_data:/data:ro
       - tfbp_tmp:/tmp/duckdb
     networks: [web]
+    # ⚠️ CUTOVER SIZING — DO NOT SHIP AS-IS ON A 2GB t3.small WITH THE ~2.9GB
+    # ARTIFACT. mem_limit caps this container's page cache too (cgroup v2 charges
+    # the artifact's file pages here), so a limit below the artifact size makes
+    # DuckDB evict + re-read it from EBS on every broad scan → I/O thrash that
+    # froze the demo box (even /healthz + SSM hung while CPU was ~50%). The
+    # t3.small target inherited from §6.3 is undersized for this artifact: prod
+    # needs the box RAM AND this mem_limit BOTH > artifact + working set (e.g.
+    # t3.large/8GB with mem_limit 6g, mirroring deploy/demo/), OR a smaller
+    # artifact. Retune from the cutover load test before flipping DNS.
     # Lower TFBP_MEM_LIMIT (e.g. 1.0g) for the legacy co-tenancy overlap; revert
-    # to 1.6g once shinyapp is retired. memswap_limit == mem_limit ⇒ swap off.
+    # once shinyapp is retired. memswap_limit == mem_limit ⇒ swap off.
     mem_limit: ${TFBP_MEM_LIMIT:-1.6g}
     memswap_limit: ${TFBP_MEM_LIMIT:-1.6g}
     # Container hardening: the Go binary needs no Linux capabilities, never
