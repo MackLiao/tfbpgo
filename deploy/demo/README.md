@@ -85,18 +85,19 @@ its IAM role reads `s3://brentlab-tfbp-artifacts/tfbp/*`.
 
 ## Step 1 — Make sure the Go image is in GHCR (public)
 
-Either cut a tag so `.github/workflows/image-publish.yml` builds and pushes it:
+Cut a tag so `.github/workflows/image-publish.yml` builds and pushes it to
+`ghcr.io/mackliao/tfbpgo` (the workflow targets this fork):
 
 ```bash
 git tag -a v0.0.1-demo -m "demo build" && git push origin v0.0.1-demo
-# wait for the green check, then on GitHub: repo → Packages → tfbpshiny-go
+# wait for the green check, then on GitHub: repo → Packages → tfbpgo
 # → Package settings → Change visibility → Public.
 ```
 
-…or build + push locally. Set `image_tag` in tfvars to whatever you pushed.
-The instance has no registry credentials by design, so the package **must be
-public** (alternative: switch `infra/` to a private ECR repo + role pull — ask
-if you want that instead).
+Set `image_tag` in tfvars to whatever you pushed (`image_repo` already defaults
+to `ghcr.io/mackliao/tfbpgo`). The instance has no registry credentials by
+design, so the package **must be public** (alternative: switch `infra/` to a
+private ECR repo + role pull — ask if you want that instead).
 
 ## Step 1.5 — Push this scaffold (required)
 

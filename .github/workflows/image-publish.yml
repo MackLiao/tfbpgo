@@ -20,7 +20,7 @@ jobs:
         run: |
           docker buildx build \
             --build-arg VERSION=${{ github.ref_name }} \
-            -t ghcr.io/brentlab/tfbpshiny-go:${{ github.ref_name }} \
-            -t ghcr.io/brentlab/tfbpshiny-go:latest \
+            -t ghcr.io/mackliao/tfbpgo:${{ github.ref_name }} \
+            -t ghcr.io/mackliao/tfbpgo:latest \
             --push \
             .

@@ -3,9 +3,9 @@
 # Region — us-east-2 (Ohio) is closest to Missouri; leave as-is unless you have a reason.
 region = "us-east-2"
 
-# GHCR image for the Go service. If you publish from your fork's CI, point
-# image_repo at your fork's package (the default brentlab org isn't writable
-# from a fork's GITHUB_TOKEN). The package must be PUBLIC.
+# GHCR image for the Go service. image_repo defaults to this fork's package
+# (ghcr.io/mackliao/tfbpgo, published by .github/workflows/image-publish.yml on
+# a v* tag). The package must be PUBLIC — make it so under repo -> Packages.
 # image_repo = "ghcr.io/mackliao/tfbpgo"
 image_tag = "v0.0.1-demo"
 

@@ -41,9 +41,9 @@ variable "repo_ref" {
 }
 
 variable "image_repo" {
-  description = "GHCR image repo for the Go service, WITHOUT the tag. A fork publishing via its own CI should set this to ghcr.io/<owner>/<repo> (e.g. ghcr.io/mackliao/tfbpgo). The package must be PUBLIC — there are no registry creds on the box by design."
+  description = "GHCR image repo for the Go service, WITHOUT the tag. Defaults to this fork's package (published by image-publish.yml). The package must be PUBLIC — there are no registry creds on the box by design."
   type        = string
-  default     = "ghcr.io/brentlab/tfbpshiny-go"
+  default     = "ghcr.io/mackliao/tfbpgo"
 }
 
 variable "image_tag" {
