@@ -83,7 +83,7 @@ set -a; source .env; set +a
 make data-build                                    # writes ./tfbp.duckdb
 
 # One-time: create the demo bucket (s3-upload.sh does not auto-create it):
-BUCKET=tfbp-demo-artifacts-040367161929
+BUCKET=tfbp-demo-artifacts-225989356297
 aws s3 mb "s3://$BUCKET" --region us-east-2
 
 # Upload (prints ARTIFACT_KEY + ARTIFACT_SHA256 → copy into terraform.tfvars):
