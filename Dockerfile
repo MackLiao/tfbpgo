@@ -56,10 +56,13 @@ ENV DUCKDB_PATH=/data/tfbp.duckdb
 ENV DUCKDB_TEMP_DIR=/tmp/duckdb
 ENV PORT=8080
 EXPOSE 8080
-# Probe /readyz (artifact open + DuckDB canary + cache), not /healthz: a
-# container serving a broken artifact must go unhealthy so `restart:
-# unless-stopped` recycles it instead of half-serving. /readyz responds in
-# <2s even under load (registered outside the throttle group).
-HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
-    CMD wget -qO- --tries=1 --timeout=2 http://127.0.0.1:8080/readyz || exit 1
+# Liveness probe: /healthz (does NOT touch the DB). It deliberately does NOT
+# use /readyz — a load test showed /readyz's DuckDB canary times out when the
+# 2-conn pool is saturated under load, flapping the container "unhealthy" and
+# making Traefik drop the backend (503/404 bursts). A broken artifact is
+# already caught at startup (the binary fail-fasts before binding), so
+# liveness is the right semantic here; readiness-based routing belongs to a
+# multi-replica setup with a /readyz that uses a dedicated connection.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD wget -qO- --tries=1 --timeout=2 http://127.0.0.1:8080/healthz || exit 1
 ENTRYPOINT ["/usr/local/bin/tfbp-server"]

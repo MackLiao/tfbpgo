@@ -64,6 +64,17 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 512
+    # Liveness only (/healthz, no DB). Overrides the image's HEALTHCHECK so a
+    # busy 2-conn pool under load can't flap the container "unhealthy" and make
+    # Traefik's docker provider drop the single backend (caused ~6% 404s in the
+    # k6 run). /readyz is for startup gating + multi-replica routing, not
+    # container liveness.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--tries=1", "--timeout=2", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     labels:
       - traefik.enable=true
       - traefik.docker.network=web
