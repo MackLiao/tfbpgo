@@ -14,6 +14,21 @@
       "Resource": "*"
     },
     {
+      "Sid": "PublishArtifactToS3",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:ListBucket",
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::tfbp-demo-artifacts-*",
+        "arn:aws:s3:::tfbp-demo-artifacts-*/*"
+      ]
+    },
+    {
       "Sid": "ComputeNetworkLifecycle",
       "Effect": "Allow",
       "Action": [

@@ -11,8 +11,9 @@ image_tag = "v0.0.1-demo"
 
 # Artifact location — fill ARTIFACT_KEY and ARTIFACT_SHA256 from the output of
 # `deploy/s3-upload.sh` (or deploy/artifact-manifest.<date>.json) AFTER you build+publish.
-artifact_bucket = "brentlab-tfbp-artifacts"
-artifact_key    = "tfbp/2026-06-10/tfbp.duckdb"
+# This demo bucket is created in your account during the publish step.
+artifact_bucket = "tfbp-demo-artifacts-040367161929"
+artifact_key    = "tfbp/2026-06-11/tfbp.duckdb"
 artifact_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 
 # Let's Encrypt notices go here.

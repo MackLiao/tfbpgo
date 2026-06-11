@@ -52,9 +52,9 @@ variable "image_tag" {
 }
 
 variable "artifact_bucket" {
-  description = "S3 bucket holding the published tfbp.duckdb artifact."
+  description = "S3 bucket holding the published tfbp.duckdb artifact. The demo creates this in your account; the name embeds the account id for global uniqueness."
   type        = string
-  default     = "brentlab-tfbp-artifacts"
+  default     = "tfbp-demo-artifacts-040367161929"
 }
 
 variable "artifact_key" {
