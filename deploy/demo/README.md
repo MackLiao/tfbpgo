@@ -79,15 +79,20 @@ cd data_prep && poetry install -E full && cd ..   # one-time (skip if .venv exis
 # build_duckdb reads HF_TOKEN from the ENVIRONMENT, not from .env — export it:
 set -a; source .env; set +a
 
-# Build the artifact, then build+upload to S3 (data-publish re-runs data-build):
-ARTIFACT_BUCKET=brentlab-tfbp-artifacts make data-publish
-#  → builds ./tfbp.duckdb (~5–10 min) then prints ARTIFACT_KEY
-#    (e.g. tfbp/2026-06-10/tfbp.duckdb) and ARTIFACT_SHA256.
-#    Copy both into infra/terraform.tfvars in step 2.
+# Build the artifact (~5–10 min):
+make data-build                                    # writes ./tfbp.duckdb
+
+# One-time: create the demo bucket (s3-upload.sh does not auto-create it):
+BUCKET=tfbp-demo-artifacts-040367161929
+aws s3 mb "s3://$BUCKET" --region us-east-2
+
+# Upload (prints ARTIFACT_KEY + ARTIFACT_SHA256 → copy into terraform.tfvars):
+ARTIFACT_BUCKET=$BUCKET bash deploy/s3-upload.sh
 ```
 
-The publish path uses your laptop's AWS creds. The *instance* never gets keys —
-its IAM role reads `s3://brentlab-tfbp-artifacts/tfbp/*`.
+The publish path uses your laptop's AWS creds (needs the S3 actions in
+`infra/deploy-iam-policy.example.json`). The *instance* never gets keys — its
+IAM role reads `s3://<artifact_bucket>/tfbp/*` only.
 
 ## Step 1 — Make sure the Go image is in GHCR (public)
 
