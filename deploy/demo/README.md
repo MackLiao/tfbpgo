@@ -70,13 +70,19 @@ Two guards keep the bill down:
 ## Step 0 — Build + publish the real artifact to S3
 
 The instance downloads `tfbp.duckdb` from S3 at boot; build and upload it first.
+Run these from the **repo root** — the `data-*` targets live in the root
+Makefile and `cd` into `data_prep/` themselves.
 
 ```bash
-cd data_prep && poetry install -E full
-make data-build                       # reads HF_TOKEN; ~5–10 min; writes ../tfbp.duckdb
-cd ..
-ARTIFACT_BUCKET=brentlab-tfbp-artifacts deploy/s3-upload.sh
-#  → prints ARTIFACT_KEY (e.g. tfbp/2026-06-10/tfbp.duckdb) and ARTIFACT_SHA256.
+cd data_prep && poetry install -E full && cd ..   # one-time (skip if .venv exists)
+
+# build_duckdb reads HF_TOKEN from the ENVIRONMENT, not from .env — export it:
+set -a; source .env; set +a
+
+# Build the artifact, then build+upload to S3 (data-publish re-runs data-build):
+ARTIFACT_BUCKET=brentlab-tfbp-artifacts make data-publish
+#  → builds ./tfbp.duckdb (~5–10 min) then prints ARTIFACT_KEY
+#    (e.g. tfbp/2026-06-10/tfbp.duckdb) and ARTIFACT_SHA256.
 #    Copy both into infra/terraform.tfvars in step 2.
 ```
 
