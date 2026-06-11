@@ -15,6 +15,7 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=web
+      - --accesslog=true
       - --entrypoints.web.address=:80
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
@@ -70,10 +71,14 @@ services:
       - traefik.http.routers.tfbp.entrypoints=websecure
       - traefik.http.routers.tfbp.tls.certresolver=le
       - traefik.http.services.tfbp.loadbalancer.server.port=8080
-      # Drain on unready (e.g. mid artifact load) instead of serving 5xx.
-      - traefik.http.services.tfbp.loadbalancer.healthcheck.path=/readyz
-      - traefik.http.services.tfbp.loadbalancer.healthcheck.interval=10s
-      - traefik.http.services.tfbp.loadbalancer.healthcheck.timeout=3s
+      # NO active healthcheck here. With a SINGLE replica, an active /readyz
+      # probe that false-positives under load (the 2-conn DuckDB pool starves
+      # the canary SELECT past the timeout) makes Traefik de-route the only
+      # backend → 503s a burst of live traffic with no failover benefit. The
+      # k6 warm run proved this: the app returned 200 to 98.9% of requests it
+      # received, but Traefik 503'd ~800 it de-routed during probe flaps.
+      # Re-add a healthcheck only with >1 replica AND a /readyz that uses a
+      # dedicated DB connection so it can't starve.
 
   tfbp-data-init:
     image: amazon/aws-cli:2.35.2
