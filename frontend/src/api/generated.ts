@@ -988,7 +988,7 @@ export interface paths {
                     binding?: string;
                     /** @description Comma-separated perturbation dataset db_names. */
                     perturbation?: string;
-                    /** @description Top N rows per (binding, perturbation) pair. Clamped to [1, 10000]; defaults to 25. */
+                    /** @description Top N rows per (binding, perturbation) pair. Clamped to [1, 1000] (server TopNMax); defaults to 25. */
                     top_n?: number;
                     /** @description Effect-size threshold for the responsive predicate. Default `0.0`. */
                     effect?: number;
@@ -1327,13 +1327,13 @@ export interface components {
             bindingIdSource: string;
             perturbationIdSource: string;
             /** Format: double */
-            dtoEmpiricalPvalue: number;
+            dtoEmpiricalPvalue: number | null;
             /** Format: double */
-            dtoFdr: number;
+            dtoFdr: number | null;
             /** Format: int64 */
-            bindingSetSize: number;
+            bindingSetSize: number | null;
             /** Format: int64 */
-            perturbationSetSize: number;
+            perturbationSetSize: number | null;
             bindingSampleId: string;
             pertSampleId: string;
             time: string;

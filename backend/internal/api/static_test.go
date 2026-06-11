@@ -2,6 +2,7 @@ package api
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,4 +118,40 @@ func TestStatic_SecurityHeadersOnSPAShell(t *testing.T) {
 	require.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
 	require.Equal(t, "strict-origin-when-cross-origin", resp.Header.Get("Referrer-Policy"))
 	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
+
+	// CSP: same-origin everything, no 'unsafe-eval'; the index.html inline
+	// script (the `window.global` Plotly shim) must be allowed via a sha256
+	// hash computed from the shipped shell (see cspForIndex).
+	csp := resp.Header.Get("Content-Security-Policy")
+	require.Contains(t, csp, "default-src 'self'")
+	require.Contains(t, csp, "script-src 'self' 'sha256-")
+	require.Contains(t, csp, "frame-ancestors 'none'")
+	require.NotContains(t, csp, "unsafe-eval")
+}
+
+func TestStatic_ImmutableCacheOnHashedAssets(t *testing.T) {
+	t.Parallel()
+	s := newTestServer(t)
+	s.StaticFS = static.FS()
+	ts := httptest.NewServer(s.Routes())
+	t.Cleanup(ts.Close)
+
+	// Pick a real content-hashed file from the embedded bundle rather than
+	// hardcoding a hash that changes on every frontend rebuild.
+	entries, err := fs.ReadDir(static.FS(), "assets")
+	require.NoError(t, err)
+	require.NotEmpty(t, entries, "embedded bundle must ship hashed assets/")
+
+	resp, err := http.Get(ts.URL + "/assets/" + entries[0].Name())
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "public, max-age=31536000, immutable", resp.Header.Get("Cache-Control"))
+
+	// index.html itself must never be immutable (it names the hashed chunks).
+	resp2, err := http.Get(ts.URL + "/")
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	require.Equal(t, "no-store", resp2.Header.Get("Cache-Control"))
 }
