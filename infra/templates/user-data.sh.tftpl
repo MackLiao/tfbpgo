@@ -1,0 +1,61 @@
+#!/bin/bash
+# Bootstrap an Amazon Linux 2023 host into the tfbp demo stack.
+# Logs to /var/log/cloud-init-output.log (view via SSM).
+set -euxo pipefail
+
+# --- Docker + compose plugin -------------------------------------------------
+dnf -y install docker git
+mkdir -p /usr/libexec/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64" \
+  -o /usr/libexec/docker/cli-plugins/docker-compose
+chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+systemctl enable --now docker
+
+# --- Host invariants the mem_limit math assumes ------------------------------
+swapoff -a || true                       # AL2023 has no swap by default; enforce it
+docker network create web || true        # shared network the demo compose attaches to
+
+# --- Fetch the demo compose from the repo ------------------------------------
+rm -rf /opt/tfbp
+git clone --branch "${repo_ref}" --depth 1 "${repo_url}" /opt/tfbp
+cd /opt/tfbp/deploy/demo
+
+# --- Render .env (no secrets: instance profile handles S3) -------------------
+cat > .env <<EOF
+TAG=${image_tag}
+DEMO_HOST=${nip_host}
+ACME_EMAIL=${acme_email}
+ACME_CASERVER=${acme_ca_server}
+AWS_REGION=${region}
+ARTIFACT_BUCKET=${artifact_bucket}
+ARTIFACT_KEY=${artifact_key}
+ARTIFACT_SHA256=${artifact_sha256}
+EOF
+chmod 600 .env
+
+# --- Pull image + download/verify the artifact (neither needs the EIP) -------
+docker compose -f docker-compose.demo.yml pull
+docker compose -f docker-compose.demo.yml --profile init up tfbp-data-init
+
+# --- Wait until this box actually answers at the Elastic IP -------------------
+# Let's Encrypt's HTTP-01 challenge hits ${nip_host}, which resolves to the EIP.
+# The EIP association can land a few seconds AFTER boot, so starting Traefik
+# before then makes the first ACME attempt fail — and each failure spends a
+# shared nip.io rate-limit slot. Poll IMDSv2 until our public IP is the EIP.
+TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 300" || true)
+for i in $(seq 30); do
+  pub=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+    http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+  if [ "$pub" = "${expected_ip}" ]; then
+    echo "EIP ${expected_ip} is active on this host"
+    break
+  fi
+  echo "waiting for EIP ${expected_ip} (current public IP: $pub)..."
+  sleep 10
+done
+
+# --- Bring up Traefik + tfbp -------------------------------------------------
+docker compose -f docker-compose.demo.yml up -d
+
+echo "tfbp demo bootstrap complete: https://${nip_host}"

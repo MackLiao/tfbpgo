@@ -1,0 +1,112 @@
+# Self-contained DEMO stack: Traefik (Let's Encrypt + nip.io) + the Go service.
+# Brought up by infra/ cloud-init on a throwaway EC2 instance. Unlike the
+# production docker-compose.yml (which attaches to an EXISTING external Traefik
+# and also runs the legacy Shiny app), this file ships its own Traefik and runs
+# ONLY tfbp — the point is to load-test the new implementation in isolation.
+#
+# All values come from the .env that cloud-init renders. No secrets: the S3
+# artifact download uses the EC2 instance profile via IMDS.
+
+services:
+  traefik:
+    image: traefik:3.3
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=web
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      # ACME directory. Defaults to LE production; set ACME_CASERVER to the
+      # staging URL for a dry-run that doesn't spend nip.io's rate-limit slots.
+      - --certificatesresolvers.le.acme.caserver=${ACME_CASERVER:-https://acme-v02.api.letsencrypt.org/directory}
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks: [web]
+    security_opt:
+      - no-new-privileges:true
+
+  tfbp:
+    image: ghcr.io/brentlab/tfbpshiny-go:${TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DUCKDB_PATH: /data/tfbp.duckdb
+      DUCKDB_TEMP_DIR: /tmp/duckdb
+      CACHE_SIZE_BYTES: "134217728"
+      LOG_LEVEL: info
+      PORT: "8080"
+      # Same §6.3 knobs as production so the concurrency numbers transfer.
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-800MB}
+      DUCKDB_MAX_TEMP_SIZE: ${DUCKDB_MAX_TEMP_SIZE:-2GB}
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
+      MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
+    volumes:
+      - tfbp_data:/data:ro
+      - tfbp_tmp:/tmp/duckdb
+    networks: [web]
+    mem_limit: ${TFBP_MEM_LIMIT:-1.6g}
+    memswap_limit: ${TFBP_MEM_LIMIT:-1.6g}
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.tfbp.rule=Host(`${DEMO_HOST}`)
+      - traefik.http.routers.tfbp.entrypoints=websecure
+      - traefik.http.routers.tfbp.tls.certresolver=le
+      - traefik.http.services.tfbp.loadbalancer.server.port=8080
+      # Drain on unready (e.g. mid artifact load) instead of serving 5xx.
+      - traefik.http.services.tfbp.loadbalancer.healthcheck.path=/readyz
+      - traefik.http.services.tfbp.loadbalancer.healthcheck.interval=10s
+      - traefik.http.services.tfbp.loadbalancer.healthcheck.timeout=3s
+
+  tfbp-data-init:
+    image: amazon/aws-cli:2
+    restart: "no"
+    profiles: ["init"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        trap 'rm -f /data/tfbp.duckdb.new' EXIT
+        ok=""
+        for i in 1 2 3; do
+          if aws s3 cp "s3://$${ARTIFACT_BUCKET}/$${ARTIFACT_KEY}" /data/tfbp.duckdb.new; then
+            ok=1; break
+          fi
+          echo "download attempt $$i failed; retrying in $$((i*10))s" >&2
+          sleep $$((i*10))
+        done
+        [ -n "$$ok" ] || { echo "FATAL: download failed after 3 attempts" >&2; exit 1; }
+        echo "$${ARTIFACT_SHA256}  /data/tfbp.duckdb.new" | sha256sum -c -
+        mv /data/tfbp.duckdb.new /data/tfbp.duckdb
+        echo "artifact installed: $$(wc -c < /data/tfbp.duckdb) bytes"
+    environment:
+      # Credentials come from the EC2 instance profile via IMDS — no keys here.
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      ARTIFACT_BUCKET: ${ARTIFACT_BUCKET}
+      ARTIFACT_KEY: ${ARTIFACT_KEY}
+      ARTIFACT_SHA256: ${ARTIFACT_SHA256}
+    volumes:
+      - tfbp_data:/data
+
+volumes:
+  tfbp_data:
+  tfbp_tmp:
+  letsencrypt:
+
+networks:
+  web:
+    external: true

@@ -43,3 +43,12 @@ tests/loadtest/k6/scenarios/*-summary.json
 # chaos sampler CSV output (operator-run artifacts, written to /tmp or beside the script)
 tests/loadtest/k6/chaos/sampler.csv
 tests/loadtest/k6/chaos/*.csv
+
+# Terraform (infra/ demo stack)
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
