@@ -65,6 +65,13 @@ services:
     # to 1.6g once shinyapp is retired. memswap_limit == mem_limit ⇒ swap off.
     mem_limit: ${TFBP_MEM_LIMIT:-1.6g}
     memswap_limit: ${TFBP_MEM_LIMIT:-1.6g}
+    # Container hardening: the Go binary needs no Linux capabilities, never
+    # escalates privileges, and bounds goroutines via MAX_INFLIGHT_REQUESTS —
+    # pids_limit is a backstop against runaway forks/threads.
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
     labels:
       - traefik.enable=true
       - traefik.docker.network=web
@@ -72,6 +79,22 @@ services:
       - traefik.http.routers.tfbp.entrypoints=web-secure
       - traefik.http.routers.tfbp.tls.certresolver=letsencrypt
       - traefik.http.services.tfbp.loadbalancer.server.port=8080
+      # Route through /readyz (artifact + canary + cache), not just liveness:
+      # Traefik stops sending traffic the moment the service reports unready
+      # (e.g. mid artifact-refresh restart) instead of serving 5xx.
+      - traefik.http.services.tfbp.loadbalancer.healthcheck.path=/readyz
+      - traefik.http.services.tfbp.loadbalancer.healthcheck.interval=10s
+      - traefik.http.services.tfbp.loadbalancer.healthcheck.timeout=3s
+      # /metrics leaks operational internals (cache ratios, latencies, artifact
+      # version) — restrict it to the operator/monitoring CIDR. The CloudWatch
+      # agent scrapes the container directly on the docker network, bypassing
+      # Traefik, so this only blocks public internet scrapes.
+      - traefik.http.routers.tfbp-metrics.rule=Host(`tfbindingandperturbation.com`) && Path(`/metrics`)
+      - traefik.http.routers.tfbp-metrics.entrypoints=web-secure
+      - traefik.http.routers.tfbp-metrics.tls.certresolver=letsencrypt
+      - traefik.http.routers.tfbp-metrics.service=tfbp
+      - traefik.http.routers.tfbp-metrics.middlewares=tfbp-metrics-allow
+      - traefik.http.middlewares.tfbp-metrics-allow.ipallowlist.sourcerange=${METRICS_ALLOW_CIDR:-127.0.0.1/32}
 
   tfbp-data-init:
     image: amazon/aws-cli:2
@@ -85,7 +108,20 @@ services:
     command:
       - |
         set -euo pipefail
-        aws s3 cp "s3://${ARTIFACT_BUCKET}/${ARTIFACT_KEY}" /data/tfbp.duckdb.new
+        # Always clear the staging file on exit: a failed download or SHA
+        # mismatch must not leave a multi-GB .new orphan on the volume
+        # (repeated failures would exhaust the 30GB disk). After a successful
+        # mv the file is gone and rm -f is a no-op.
+        trap 'rm -f /data/tfbp.duckdb.new' EXIT
+        ok=""
+        for i in 1 2 3; do
+          if aws s3 cp "s3://${ARTIFACT_BUCKET}/${ARTIFACT_KEY}" /data/tfbp.duckdb.new; then
+            ok=1; break
+          fi
+          echo "download attempt $$i failed; retrying in $$((i*10))s" >&2
+          sleep $$((i*10))
+        done
+        [ -n "$$ok" ] || { echo "FATAL: download failed after 3 attempts" >&2; exit 1; }
         echo "${ARTIFACT_SHA256}  /data/tfbp.duckdb.new" | sha256sum -c -
         mv /data/tfbp.duckdb.new /data/tfbp.duckdb
         echo "artifact installed: $$(wc -c < /data/tfbp.duckdb) bytes"
@@ -116,6 +152,8 @@ services:
     # See deploy/README.md "Legacy grace-period co-tenancy".
     mem_limit: 512m
     memswap_limit: 512m
+    security_opt:
+      - no-new-privileges:true
     environment:
       HF_TOKEN: ${HF_TOKEN}
     volumes:

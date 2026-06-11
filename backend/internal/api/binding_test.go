@@ -4,10 +4,12 @@ package api
 // production measurement columns (callingcards_enrichment, etc.) exist.
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,4 +86,25 @@ func TestBinding_4xxResponsesAreJSON(t *testing.T) {
 	require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 	require.Equal(t, "no-store", rr.Header().Get("Cache-Control"))
 	require.Contains(t, rr.Body.String(), `"error"`)
+}
+
+// TestSquirrelWhereBuilders_PanicOnUnsafeField pins the SQL-build-time
+// tripwire added to buildSquirrelWhere / buildSquirrelWhereRaw: handlers
+// validate every filter field via CheckField/checkFilterFields before
+// building WHERE clauses, but if a future caller forgets, quotedIdent must
+// panic at interpolation time rather than let an un-whitelisted identifier
+// reach SQL. Every other identifier site already has this property; these
+// two builders were the gap.
+func TestSquirrelWhereBuilders_PanicOnUnsafeField(t *testing.T) {
+	for _, spec := range []domain.FilterSpec{
+		{Type: "categorical", Value: json.RawMessage(`["a"]`)},
+		{Type: "numeric", Value: json.RawMessage(`[0, 1]`)},
+		{Type: "bool", Value: json.RawMessage(`true`)},
+	} {
+		fs := map[string]domain.FilterSpec{`x" OR 1=1 --`: spec}
+		require.Panics(t, func() { _, _, _ = buildSquirrelWhere(fs) },
+			"buildSquirrelWhere must panic on unsafe field (type %s)", spec.Type)
+		require.Panics(t, func() { _, _, _ = buildSquirrelWhereRaw(fs) },
+			"buildSquirrelWhereRaw must panic on unsafe field (type %s)", spec.Type)
+	}
 }

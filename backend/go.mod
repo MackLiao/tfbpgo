@@ -2,6 +2,11 @@ module github.com/BrentLab/tfbpshiny-go/backend
 
 go 1.25.7
 
+// Pin the toolchain to the patched stdlib (1.25.8–1.25.10 security fixes:
+// crypto/tls KeyUpdate DoS GO-2026-4870, net/textproto, crypto/x509). Keep in
+// sync with the go-builder image tag in the Dockerfile.
+toolchain go1.25.10
+
 require (
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/caarlos0/env/v11 v11.2.2
