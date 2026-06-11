@@ -17,9 +17,15 @@ variable "instance_type" {
 }
 
 variable "root_volume_gb" {
-  description = "Root volume size. The ~3GB artifact plus a transient .new copy during refresh plus DuckDB spill need headroom."
+  description = "Root volume size (GiB). 20 is plenty for the demo: ~3GB artifact + images + up to 2GB DuckDB spill, with headroom. Production wants 30 for the 2x-artifact refresh window, but the demo never refreshes."
   type        = number
-  default     = 30
+  default     = 20
+}
+
+variable "idle_stop_hours" {
+  description = "Cost guard: auto-stop the instance after this many consecutive hours of <2% CPU, so a forgotten demo stops billing compute. A k6 load test pegs CPU, so it won't trip mid-demo. Set 0 to disable. Restart with `aws ec2 start-instances` (the EIP + artifact persist; containers auto-restart)."
+  type        = number
+  default     = 6
 }
 
 variable "repo_url" {

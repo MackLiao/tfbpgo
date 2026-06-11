@@ -21,3 +21,8 @@ output "tail_bootstrap_log" {
   description = "Watch cloud-init finish, then smoke /readyz."
   value       = "aws ssm start-session --target ${aws_instance.demo.id} --region ${var.region} --document-name AWS-StartInteractiveCommand --parameters command='sudo tail -f /var/log/cloud-init-output.log'"
 }
+
+output "start_if_stopped" {
+  description = "Restart the box if the idle-stop cost guard stopped it (same URL, containers auto-restart)."
+  value       = "aws ec2 start-instances --instance-ids ${aws_instance.demo.id} --region ${var.region}"
+}

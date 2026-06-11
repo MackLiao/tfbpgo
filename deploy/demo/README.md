@@ -24,6 +24,46 @@ The link looks like `https://tfbp-demo.<elastic-ip>.nip.io`.
 - **Docker + Python/poetry** to build the artifact, and `HF_TOKEN` in the
   repo-root `.env` (you confirmed it's there).
 - The Go image published to **GHCR as a public package** (see step 1).
+- The deploy identity needs enough IAM permissions to create the stack — see
+  **Credentials & IAM** below. Terraform reads your ambient AWS creds
+  (`AWS_PROFILE` / `~/.aws/credentials` / SSO); you never paste keys anywhere.
+
+## Credentials & IAM
+
+`terraform` authenticates as whatever identity your shell already has — there's
+no token to hand off. Confirm with `aws sts get-caller-identity`. To use a
+different identity, `export AWS_PROFILE=<name>` before running terraform.
+
+That identity needs create/destroy rights on EC2 + EIP + a security group + a
+CloudWatch alarm + the instance IAM role/profile (including `iam:PassRole`).
+`infra/deploy-iam-policy.example.json` is a ready-to-attach least-privilege
+policy (replace the account id). Quickest path for a throwaway demo is to run
+the apply from an admin/PowerUser session and attach that policy for the IAM
+bits; the **runtime** security is unaffected either way — the instance's own
+role (`infra/iam.tf`) stays scoped to `s3:GetObject` on the artifact only.
+
+## Cost
+
+| Item | ~Cost (us-east-2) |
+|------|-------------------|
+| t3.small, running 24/7 | ~$15/mo ($0.0208/hr) |
+| gp3 root, 20 GB | ~$1.60/mo |
+| Elastic IP (in-use) | ~$3.60/mo |
+| Data transfer (light demo + a few k6 runs) | within the 100 GB/mo free egress |
+
+The instance type is deliberately **t3.small to match production**, so the
+concurrency numbers transfer — don't shrink it or the proof is meaningless.
+Two guards keep the bill down:
+
+- **Auto-stop when idle** (`idle_stop_hours`, default 6): a CloudWatch alarm
+  stops the box after 6h of <2% CPU, so a forgotten demo stops billing compute.
+  Browsing or a k6 run keeps it up. Restart with the `start_if_stopped` output
+  command — same URL, the artifact and containers come right back.
+- **`terraform destroy`** when the PI is done — removes everything (the S3
+  artifact, shared with prod, is untouched).
+
+> Cheaper option, not enabled: `t4g.small` (Graviton) is ~20% less, but needs
+> an arm64 image build (current image is amd64-only). Ask if you want that.
 
 ---
 
