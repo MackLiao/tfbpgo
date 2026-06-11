@@ -209,8 +209,29 @@ DATASET_MEASUREMENT_COLUMNS: dict[str, tuple[str, str]] = {
     "harbison": ("effect", "pvalue"),
     "rossi": ("enrichment", "poisson_pval"),
     "chec_m2025": ("enrichment", "poisson_pval"),
+    # binding — promoter-set variants (2026-06-11 parity re-audit). Each is the
+    # same assay re-quantified over a different promoter-region definition, so
+    # it shares its parent's measurement columns. The `_peaks` variants are the
+    # original-authors' peak-calling output and carry only a `peak_score`
+    # binding score (no p-value column). Mirrors reference BINDING_CONFIGS
+    # (comparison/queries.py) + DATASET_COLUMNS (binding/queries.py).
+    "callingcards_mindel": ("callingcards_enrichment", "poisson_pval"),
+    "callingcards_500bp": ("callingcards_enrichment", "poisson_pval"),
+    "callingcards_intergenic": ("callingcards_enrichment", "poisson_pval"),
+    "rossi_mindel": ("enrichment", "poisson_pval"),
+    "rossi_500bp": ("enrichment", "poisson_pval"),
+    "rossi_intergenic": ("enrichment", "poisson_pval"),
+    "rossi_peaks": ("peak_score", ""),
+    "chec_m2025_mindel": ("enrichment", "poisson_pval"),
+    "chec_m2025_500bp": ("enrichment", "poisson_pval"),
+    "chec_m2025_intergenic": ("enrichment", "poisson_pval"),
+    "chec_m2025_peaks": ("peak_score", ""),
     # perturbation
-    "degron": ("log2FoldChange", "pvalue"),
+    # degron's responsiveness p-value is the DESeq2-adjusted `padj` column, NOT
+    # the raw `pvalue` (reference perturbation/queries.py:DATASET_COLUMNS +
+    # DEFAULT_RESPONSIVENESS_PRESETS "padj < 0.1"). The previous "pvalue" value
+    # silently computed the degron responsive-ratio against the wrong column.
+    "degron": ("log2FoldChange", "padj"),
     "hughes_overexpression": ("mean_norm_log2fc", ""),
     "hughes_knockout": ("mean_norm_log2fc", ""),
     "kemmeren": ("Madj", "pval"),
