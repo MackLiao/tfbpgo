@@ -3,7 +3,7 @@
 resource "aws_security_group" "demo" {
   name        = "${var.project_name}-sg"
   description = "tfbp demo: public 80/443 in, all out, no SSH"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = aws_vpc.demo.id
 
   ingress {
     description = "HTTP (ACME HTTP-01 challenge + redirect to HTTPS)"

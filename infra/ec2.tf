@@ -8,8 +8,9 @@ resource "aws_eip" "demo" {
 resource "aws_instance" "demo" {
   ami                    = data.aws_ssm_parameter.al2023.value
   instance_type          = var.instance_type
-  subnet_id              = data.aws_subnets.default.ids[0]
+  subnet_id              = aws_subnet.demo.id
   vpc_security_group_ids = [aws_security_group.demo.id]
+  depends_on             = [aws_route_table_association.demo]
   iam_instance_profile   = aws_iam_instance_profile.demo.name
 
   # IMDSv2 required. hop_limit=2 is load-bearing: the aws-cli init container

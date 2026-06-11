@@ -5,16 +5,9 @@ data "aws_ssm_parameter" "al2023" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
-# Default VPC + its subnets — enough for a single public demo instance.
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
+# Pick the first available AZ for the demo subnet.
+data "aws_availability_zones" "available" {
+  state = "available"
 }
 
 locals {
