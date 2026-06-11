@@ -8,24 +8,6 @@
 WITH binding AS (
     {{binding_cte_body}}
 ),
-binding_ranked AS (
-    SELECT
-        binding_sample_id,
-        regulator_locus_tag,
-        target_locus_tag,
-        {{rank_col}},
-        RANK() OVER (
-            PARTITION BY binding_sample_id
-            ORDER BY {{rank_col}} {{rank_dir}}
-        ) AS rnk
-    FROM binding
-    WHERE regulator_locus_tag != target_locus_tag
-),
-top_n_binding AS (
-    SELECT binding_sample_id, regulator_locus_tag, target_locus_tag
-    FROM binding_ranked
-    WHERE rnk <= ?
-),
 perturbation AS (
     SELECT
         CAST(p.sample_id AS VARCHAR) AS perturbation_sample_id,
@@ -35,6 +17,39 @@ perturbation AS (
     FROM {{perturbation_view}} p
     {{pert_join}}
     {{pert_filter_where}}
+),
+-- Intersect binding × perturbation targets BEFORE ranking so the top-N slots
+-- are filled only by targets that exist in BOTH datasets — a binding target
+-- absent from the perturbation data can no longer consume a top-N slot and
+-- skew the responsive ratio. Mirrors reference comparison/queries.py
+-- (intersecting_targets CTE, 2026 comparison rewrite).
+intersecting_targets AS (
+    SELECT DISTINCT b.regulator_locus_tag, b.target_locus_tag
+    FROM binding b
+    INNER JOIN perturbation pert
+        ON  b.regulator_locus_tag = pert.regulator_locus_tag
+        AND b.target_locus_tag    = pert.target_locus_tag
+),
+binding_ranked AS (
+    SELECT
+        b.binding_sample_id,
+        b.regulator_locus_tag,
+        b.target_locus_tag,
+        b.{{rank_col}},
+        RANK() OVER (
+            PARTITION BY b.binding_sample_id
+            ORDER BY b.{{rank_col}} {{rank_dir}}
+        ) AS rnk
+    FROM binding b
+    INNER JOIN intersecting_targets it
+        ON  b.regulator_locus_tag = it.regulator_locus_tag
+        AND b.target_locus_tag    = it.target_locus_tag
+    WHERE b.regulator_locus_tag != b.target_locus_tag
+),
+top_n_binding AS (
+    SELECT binding_sample_id, regulator_locus_tag, target_locus_tag
+    FROM binding_ranked
+    WHERE rnk <= ?
 )
 SELECT
     '{{pair_key}}'                                  AS pair_key,

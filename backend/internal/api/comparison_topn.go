@@ -56,11 +56,66 @@ type bindingConfig struct {
 	HarbisonDedup bool
 }
 
+// bindingConfigs is the verbatim Go mirror of reference BINDING_CONFIGS
+// (comparison/queries.py). The promoter-set variants (2026-06-11 parity
+// re-audit) re-use their parent's rank column/direction; the `_peaks` variants
+// rank by the original-authors' `peak_score` (higher = stronger, so DESC).
+// Without these entries keepConfigured() silently drops variant pairs.
 var bindingConfigs = map[string]bindingConfig{
-	"callingcards": {SampleCol: "sample_id", RankCol: "poisson_pval", RankAsc: true, TargetBlackOK: true},
-	"harbison":     {SampleCol: "sample_id", RankCol: "pvalue", RankAsc: true, HarbisonDedup: true},
-	"chec_m2025":   {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
-	"rossi":        {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"callingcards":            {SampleCol: "sample_id", RankCol: "poisson_pval", RankAsc: true, TargetBlackOK: true},
+	"callingcards_mindel":     {SampleCol: "sample_id", RankCol: "poisson_pval", RankAsc: true, TargetBlackOK: true},
+	"callingcards_500bp":      {SampleCol: "sample_id", RankCol: "poisson_pval", RankAsc: true, TargetBlackOK: true},
+	"callingcards_intergenic": {SampleCol: "sample_id", RankCol: "poisson_pval", RankAsc: true, TargetBlackOK: true},
+	"harbison":                {SampleCol: "sample_id", RankCol: "pvalue", RankAsc: true, HarbisonDedup: true},
+	"chec_m2025":              {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"chec_m2025_mindel":       {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"chec_m2025_500bp":        {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"chec_m2025_intergenic":   {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"chec_m2025_peaks":        {SampleCol: "sample_id", RankCol: "peak_score", RankAsc: false},
+	"rossi":                   {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"rossi_mindel":            {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"rossi_500bp":             {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"rossi_intergenic":        {SampleCol: "sample_id", RankCol: "enrichment", RankAsc: false},
+	"rossi_peaks":             {SampleCol: "sample_id", RankCol: "peak_score", RankAsc: false},
+}
+
+// responsivenessPresets mirrors reference DEFAULT_RESPONSIVENESS_PRESETS
+// (vdb_init.py). Each preset maps a perturbation db_name to its
+// (effectThreshold, pvalueThreshold); "*" is the fallback for datasets not
+// listed. "Relaxed" is the reference default and equals the Go service's
+// historical hard-coded (0.0, 0.05), so an unset ?preset= is unchanged.
+var responsivenessPresets = map[string]map[string][2]float64{
+	"Stringent": {
+		"*":                     {1.0, 0.05},
+		"degron":                {0.38, 0.1},
+		"hackett":               {0.0, 1.0},
+		"kemmeren":              {0.77, 0.05},
+		"hu_reimand":            {0.0, 0.05},
+		"hughes_overexpression": {1.0, 1.0},
+		"hughes_knockout":       {1.0, 1.0},
+	},
+	"Relaxed": {
+		"*":       {0.0, 0.05},
+		"hackett": {0.0, 1.0},
+	},
+}
+
+// resolveResponsivenessThresholds returns the (effect, pvalue) thresholds for a
+// perturbation dataset. With a known preset, the per-dataset author thresholds
+// win (falling back to the preset's "*"). With no/unknown preset, the request's
+// numeric effect/pvalue are used uniformly (back-compat / Relaxed-equivalent).
+func resolveResponsivenessThresholds(preset, pDB string, defEffect, defPval float64) (float64, float64) {
+	m, ok := responsivenessPresets[preset]
+	if !ok {
+		return defEffect, defPval
+	}
+	if t, ok := m[pDB]; ok {
+		return t[0], t[1]
+	}
+	if t, ok := m["*"]; ok {
+		return t[0], t[1]
+	}
+	return defEffect, defPval
 }
 
 type pertConfig struct{ HackettTimeFilter bool }
@@ -129,6 +184,14 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 	topN := clampTopN(q.Get("top_n"), 25)
 	effectThr := parseFloatOr(q.Get("effect"), 0.0)
 	pvalThr := parseFloatOr(q.Get("pvalue"), 0.05)
+	// CMP-4/CMP-5: an explicit responsiveness preset (Relaxed/Stringent) selects
+	// per-dataset author thresholds. An unknown/empty value falls through to the
+	// numeric effect/pvalue above (matching the historical, Relaxed-equivalent
+	// behavior), so this is backward compatible.
+	preset := q.Get("preset")
+	if _, ok := responsivenessPresets[preset]; !ok {
+		preset = ""
+	}
 
 	rawFilters := q.Get("filters")
 	if err := validateLength("filters", rawFilters, MaxFiltersBytes); err != nil {
@@ -159,11 +222,12 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 		"top_n":        topN,
 		"effect":       effectThr,
 		"pvalue":       pvalThr,
+		"preset":       preset,
 		"filters":      canonFilters,
 	})
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
-		return s.buildTopNResponse(loadCtx, bindingDS, pertDS, topN, effectThr, pvalThr, filters)
+		return s.buildTopNResponse(loadCtx, bindingDS, pertDS, topN, effectThr, pvalThr, preset, filters)
 	})
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)
@@ -173,7 +237,7 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 func (s *Server) buildTopNResponse(
 	ctx context.Context,
 	bindingDS, pertDS []string,
-	topN int, effectThr, pvalThr float64,
+	topN int, effectThr, pvalThr float64, preset string,
 	filters domain.FiltersByDB,
 ) ([]byte, error) {
 	tmpl := queries.Get("comparison/topn.sql")
@@ -190,7 +254,7 @@ func (s *Server) buildTopNResponse(
 			if !ok {
 				return nil, fmt.Errorf("no perturbation config for %q", p)
 			}
-			pairSQL, pairArgs, err := s.buildOnePair(tmpl, b, p, bcfg, pcfg, topN, effectThr, pvalThr, filters)
+			pairSQL, pairArgs, err := s.buildOnePair(tmpl, b, p, bcfg, pcfg, topN, effectThr, pvalThr, preset, filters)
 			if err != nil {
 				return nil, err
 			}
@@ -237,7 +301,7 @@ func (s *Server) buildTopNResponse(
 func (s *Server) buildOnePair(
 	tmpl, bDB, pDB string,
 	bcfg bindingConfig, pcfg pertConfig,
-	topN int, effectThr, pvalThr float64,
+	topN int, effectThr, pvalThr float64, preset string,
 	filters domain.FiltersByDB,
 ) (string, []any, error) {
 	args := []any{}
@@ -285,15 +349,19 @@ func (s *Server) buildOnePair(
 		rankDir = "DESC"
 	}
 
-	// SQL placeholder order in topn.sql:
+	// SQL placeholder order in topn.sql (the perturbation CTE now precedes
+	// top_n_binding because of the intersect-before-rank reorder):
 	//   1. binding-CTE args (already appended above)
-	//   2. ? for `WHERE rnk <= ?` (top_n_binding CTE)
-	//   3. ? placeholders inside {{responsive_expr}}
-	//   4. ? placeholders in {{pert_filter_where}}
-	args = append(args, topN)
+	//   2. ? placeholders inside {{responsive_expr}}
+	//   3. ? placeholders in {{pert_filter_where}}
+	//   4. ? for `WHERE rnk <= ?` (top_n_binding CTE) — appended last, below.
 
-	// responsive expression — depends on perturbation dataset's effect/pvalue cols
-	respExpr := buildResponsiveExpr(s, pDB, effectThr, pvalThr, &args)
+	// responsive expression — thresholds resolve per perturbation dataset: a
+	// known ?preset= (Relaxed/Stringent) selects the per-dataset author
+	// thresholds (CMP-4/CMP-5); with no preset the request's numeric
+	// effect/pvalue apply uniformly (historical, == Relaxed).
+	eff, pval := resolveResponsivenessThresholds(preset, pDB, effectThr, pvalThr)
+	respExpr := buildResponsiveExpr(s, pDB, eff, pval, &args)
 
 	// pert filter where.
 	//
@@ -320,6 +388,10 @@ func (s *Server) buildOnePair(
 	if len(pArgs) > 0 {
 		args = append(args, pArgs...)
 	}
+
+	// top_n cutoff is the LAST placeholder: top_n_binding now sits below the
+	// perturbation CTE in topn.sql (intersect-before-rank reorder).
+	args = append(args, topN)
 
 	pertJoin := ""
 	if pcfg.HackettTimeFilter {

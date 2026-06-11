@@ -32,7 +32,7 @@ func newServerWithFixtureWhitelist(t *testing.T) *Server {
 			{DBName: "rossi", DataType: "binding", EffectCol: "enrichment", PValueCol: "poisson_pval"},
 			{DBName: "chec_m2025", DataType: "binding", EffectCol: "enrichment", PValueCol: "poisson_pval"},
 			// perturbation
-			{DBName: "degron", DataType: "perturbation", EffectCol: "log2FoldChange", PValueCol: "pvalue"},
+			{DBName: "degron", DataType: "perturbation", EffectCol: "log2FoldChange", PValueCol: "padj"},
 			{DBName: "hughes_overexpression", DataType: "perturbation", EffectCol: "mean_norm_log2fc", PValueCol: ""},
 			{DBName: "hughes_knockout", DataType: "perturbation", EffectCol: "mean_norm_log2fc", PValueCol: ""},
 			{DBName: "kemmeren", DataType: "perturbation", EffectCol: "Madj", PValueCol: "pval"},
@@ -99,7 +99,7 @@ func TestComparisonTopN_PlaceholderCountInvariant_RegressionPair(t *testing.T) {
 		pcfg := pertConfigs[p.pert]
 		rendered, args, err := srv.buildOnePair(
 			tmpl, p.binding, p.pert, bcfg, pcfg,
-			25, 0.0, 0.05, domain.FiltersByDB{},
+			25, 0.0, 0.05, "", domain.FiltersByDB{},
 		)
 		require.NoError(t, err, "pair %s/%s", p.binding, p.pert)
 		got := strings.Count(stripSQLComments(rendered), "?")
@@ -124,7 +124,7 @@ func TestComparisonTopN_HarbisonDropsFilters(t *testing.T) {
 	pcfg := pertConfigs["kemmeren"]
 
 	plain, plainArgs, err := srv.buildOnePair(
-		tmpl, "harbison", "kemmeren", bcfg, pcfg, 25, 0.0, 0.05, nil,
+		tmpl, "harbison", "kemmeren", bcfg, pcfg, 25, 0.0, 0.05, "", nil,
 	)
 	require.NoError(t, err)
 
@@ -134,7 +134,7 @@ func TestComparisonTopN_HarbisonDropsFilters(t *testing.T) {
 		},
 	}
 	withFilter, withArgs, err := srv.buildOnePair(
-		tmpl, "harbison", "kemmeren", bcfg, pcfg, 25, 0.0, 0.05, filters,
+		tmpl, "harbison", "kemmeren", bcfg, pcfg, 25, 0.0, 0.05, "", filters,
 	)
 	require.NoError(t, err)
 
@@ -236,7 +236,7 @@ func TestComparisonTopN_HackettFilterParity(t *testing.T) {
 	}
 	rendered, _, err := srv.buildOnePair(
 		tmpl, "callingcards", "hackett", bcfg, pcfg,
-		25, 0.0, 0.05, filters,
+		25, 0.0, 0.05, "", filters,
 	)
 	require.NoError(t, err)
 	// The hackett-side filter MUST be absent from the rendered SQL after
@@ -276,7 +276,7 @@ func TestComparisonTopN_PlaceholderCountInvariant_AllPairs(t *testing.T) {
 			pcfg := pertConfigs[p]
 			rendered, args, err := srv.buildOnePair(
 				tmpl, b, p, bcfg, pcfg,
-				25, 0.0, 0.05, domain.FiltersByDB{},
+				25, 0.0, 0.05, "", domain.FiltersByDB{},
 			)
 			require.NoError(t, err, "pair %s/%s", b, p)
 			got := strings.Count(stripSQLComments(rendered), "?")
@@ -336,13 +336,83 @@ func TestComparisonTopN_RenderedTwoTermCasePresent(t *testing.T) {
 	pcfg := pertConfigs["kemmeren"]
 	rendered, _, err := srv.buildOnePair(
 		tmpl, "callingcards", "kemmeren", bcfg, pcfg,
-		25, 0.0, 0.05, domain.FiltersByDB{},
+		25, 0.0, 0.05, "", domain.FiltersByDB{},
 	)
 	require.NoError(t, err)
 	require.Contains(t,
 		rendered,
 		`CASE WHEN ABS(p."Madj") > ? AND p."pval" < ? THEN 1 ELSE 0 END`,
 	)
+}
+
+// CMP-4/CMP-5: resolveResponsivenessThresholds maps a (preset, perturbation)
+// to the reference DEFAULT_RESPONSIVENESS_PRESETS author thresholds, with the
+// "*" fallback for unlisted datasets and passthrough of the request defaults
+// when the preset is empty/unknown.
+func TestResolveResponsivenessThresholds(t *testing.T) {
+	cases := []struct {
+		preset, pDB       string
+		defEff, defPval   float64
+		wantEff, wantPval float64
+	}{
+		{"Stringent", "kemmeren", 0.0, 0.05, 0.77, 0.05},
+		{"Stringent", "degron", 0.0, 0.05, 0.38, 0.1},
+		{"Stringent", "no_such", 0.0, 0.05, 1.0, 0.05}, // "*" fallback
+		{"Relaxed", "hackett", 0.0, 0.05, 0.0, 1.0},
+		{"Relaxed", "kemmeren", 0.0, 0.05, 0.0, 0.05}, // "*" fallback
+		{"", "kemmeren", 0.3, 0.07, 0.3, 0.07},        // no preset → passthrough
+		{"Bogus", "kemmeren", 0.3, 0.07, 0.3, 0.07},   // unknown → passthrough
+	}
+	for _, c := range cases {
+		eff, pval := resolveResponsivenessThresholds(c.preset, c.pDB, c.defEff, c.defPval)
+		require.InDeltaf(t, c.wantEff, eff, 1e-12, "preset=%q pDB=%q effect", c.preset, c.pDB)
+		require.InDeltaf(t, c.wantPval, pval, 1e-12, "preset=%q pDB=%q pvalue", c.preset, c.pDB)
+	}
+}
+
+// CMP-4/CMP-5: with ?preset=Stringent the per-dataset author thresholds are
+// bound into the rendered SQL instead of the request's numeric effect/pvalue.
+// kemmeren's Stringent effect threshold (0.77) must appear in the args while
+// the unpresetted call binds the default (0.0).
+func TestComparisonTopN_PresetBindsAuthorThresholds(t *testing.T) {
+	tmpl := queries.Get("comparison/topn.sql")
+	srv := newServerWithFixtureWhitelist(t)
+	bcfg := bindingConfigs["callingcards"]
+	pcfg := pertConfigs["kemmeren"]
+
+	_, defArgs, err := srv.buildOnePair(
+		tmpl, "callingcards", "kemmeren", bcfg, pcfg,
+		25, 0.0, 0.05, "", domain.FiltersByDB{},
+	)
+	require.NoError(t, err)
+	require.Contains(t, defArgs, 0.0, "default preset binds effect=0.0")
+	require.NotContains(t, defArgs, 0.77)
+
+	_, strArgs, err := srv.buildOnePair(
+		tmpl, "callingcards", "kemmeren", bcfg, pcfg,
+		25, 0.0, 0.05, "Stringent", domain.FiltersByDB{},
+	)
+	require.NoError(t, err)
+	require.Contains(t, strArgs, 0.77, "Stringent binds kemmeren effect=0.77")
+}
+
+// CMP-2: the 11 promoter-set variant binding datasets are configured for
+// comparison topn (so keepConfigured no longer silently drops them). The
+// `_peaks` variants rank by peak_score DESC.
+func TestComparisonTopN_VariantBindingConfigsPresent(t *testing.T) {
+	for _, db := range []string{
+		"callingcards_mindel", "callingcards_500bp", "callingcards_intergenic",
+		"rossi_mindel", "rossi_500bp", "rossi_intergenic", "rossi_peaks",
+		"chec_m2025_mindel", "chec_m2025_500bp", "chec_m2025_intergenic", "chec_m2025_peaks",
+	} {
+		cfg, ok := bindingConfigs[db]
+		require.Truef(t, ok, "missing bindingConfig for variant %q", db)
+		require.Equal(t, "sample_id", cfg.SampleCol)
+	}
+	require.Equal(t, "peak_score", bindingConfigs["rossi_peaks"].RankCol)
+	require.False(t, bindingConfigs["rossi_peaks"].RankAsc)
+	require.Equal(t, "peak_score", bindingConfigs["chec_m2025_peaks"].RankCol)
+	require.True(t, bindingConfigs["callingcards_mindel"].TargetBlackOK)
 }
 
 // TestComparisonTopN_RejectsTooManyDatasetPairs pins fix B: selecting many
@@ -389,7 +459,7 @@ func TestBuildTopNResponse_SemaphoreFullBlocksUntilContextDeadline(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := s.buildTopNResponse(ctx, []string{"callingcards"}, []string{"hackett"}, 25, 0.0, 0.05, nil)
+	_, err := s.buildTopNResponse(ctx, []string{"callingcards"}, []string{"hackett"}, 25, 0.0, 0.05, "", nil)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond,
 		"should have waited on the semaphore until the deadline, not run immediately")
