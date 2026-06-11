@@ -40,8 +40,14 @@ variable "repo_ref" {
   default     = "main"
 }
 
+variable "image_repo" {
+  description = "GHCR image repo for the Go service, WITHOUT the tag. A fork publishing via its own CI should set this to ghcr.io/<owner>/<repo> (e.g. ghcr.io/mackliao/tfbpgo). The package must be PUBLIC — there are no registry creds on the box by design."
+  type        = string
+  default     = "ghcr.io/brentlab/tfbpshiny-go"
+}
+
 variable "image_tag" {
-  description = "GHCR image tag for the Go service (ghcr.io/brentlab/tfbpshiny-go:<tag>). The package must be PUBLIC or the instance pull will fail (no registry creds on the box by design)."
+  description = "Image tag for the Go service (paired with image_repo). Must be a tag your image-publish workflow has pushed."
   type        = string
 }
 

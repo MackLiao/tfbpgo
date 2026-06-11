@@ -30,6 +30,7 @@ resource "aws_instance" "demo" {
   user_data = templatefile("${path.module}/templates/user-data.sh.tftpl", {
     nip_host        = local.nip_host
     expected_ip     = aws_eip.demo.public_ip
+    image_repo      = var.image_repo
     image_tag       = var.image_tag
     artifact_bucket = var.artifact_bucket
     artifact_key    = var.artifact_key

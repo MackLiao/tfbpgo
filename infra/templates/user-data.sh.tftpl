@@ -22,6 +22,7 @@ cd /opt/tfbp/deploy/demo
 
 # --- Render .env (no secrets: instance profile handles S3) -------------------
 cat > .env <<EOF
+TFBP_IMAGE=${image_repo}
 TAG=${image_tag}
 DEMO_HOST=${nip_host}
 ACME_EMAIL=${acme_email}

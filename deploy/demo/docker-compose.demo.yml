@@ -37,7 +37,10 @@ services:
       - no-new-privileges:true
 
   tfbp:
-    image: ghcr.io/brentlab/tfbpshiny-go:${TAG:-latest}
+    # Image repo is configurable so a fork can pull its own GHCR package
+    # (the default org may not be writable from your CI). TFBP_IMAGE + TAG
+    # are written into .env by cloud-init from the image_repo / image_tag vars.
+    image: ${TFBP_IMAGE:-ghcr.io/brentlab/tfbpshiny-go}:${TAG:-latest}
     restart: unless-stopped
     environment:
       DUCKDB_PATH: /data/tfbp.duckdb
