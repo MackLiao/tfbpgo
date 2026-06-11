@@ -29,9 +29,9 @@ variable "idle_stop_hours" {
 }
 
 variable "repo_url" {
-  description = "Git repo cloned onto the instance to fetch the demo compose file."
+  description = "Git repo cloud-init clones to fetch deploy/demo/. Must be public (no creds on the box) and contain this scaffold on `repo_ref`."
   type        = string
-  default     = "https://github.com/BrentLab/tfbpshiny-go.git"
+  default     = "https://github.com/MackLiao/tfbpgo.git"
 }
 
 variable "repo_ref" {
