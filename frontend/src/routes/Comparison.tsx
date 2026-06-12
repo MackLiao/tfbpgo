@@ -89,9 +89,9 @@ export function Comparison() {
         onChange={handleSidebarChange}
       />
       <div className="space-y-4">
-        {/* C-8: page heading, matching Binding/Perturbation (comparison/ui.py:19). */}
+        {/* C-8 / HOME-1: page heading matches Shiny nav panel label (app.py:75-79). */}
         <h1 className="text-2xl font-semibold">
-          Binding vs. Perturbation Comparison
+          Binding/Perturbation Comparisons
         </h1>
         <ErrorBoundary>
           {!binding.length || !perturbation.length ? (

@@ -26,4 +26,23 @@ describe("Nav", () => {
     const select = screen.getByRole("link", { name: "Dataset selection" });
     expect(select.getAttribute("href") ?? "").toContain("binding=callingcards");
   });
+
+  // HOME-1: nav label for the Comparison route was renamed to match Shiny's
+  // nav_panel label (reference app.py:75-79). Route/path (/comparison) is
+  // unchanged; only the visible text changes.
+  it('shows "Binding/Perturbation Comparisons" as the comparison nav label', () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Nav />
+      </MemoryRouter>,
+    );
+    const link = screen.getByRole("link", { name: "Binding/Perturbation Comparisons" });
+    expect(link).toBeInTheDocument();
+    // Confirm the href still points at /comparison.
+    expect(link.getAttribute("href")).toContain("/comparison");
+    // Old label must no longer appear as a standalone nav link.
+    expect(
+      screen.queryByRole("link", { name: "Comparison" }),
+    ).not.toBeInTheDocument();
+  });
 });

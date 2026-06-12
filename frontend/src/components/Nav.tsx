@@ -8,7 +8,7 @@ const links = [
   { to: "/select", label: "Dataset selection", end: false },
   { to: "/binding", label: "Binding", end: false },
   { to: "/perturbation", label: "Perturbation", end: false },
-  { to: "/comparison", label: "Comparison", end: false },
+  { to: "/comparison", label: "Binding/Perturbation Comparisons", end: false },
 ];
 
 const GITHUB_URL = "https://github.com/BrentLab/tfbpshiny-go";

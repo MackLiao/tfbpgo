@@ -11,3 +11,32 @@ body,
 #root {
   height: 100%;
 }
+
+/* HOME-2: loading / pending CSS ported from reference tfbpshiny/app.css:310-344 */
+
+@keyframes cd-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.cd-cell-loading,
+.cp-table-loading,
+.cm-table-loading {
+  animation: cd-pulse 1.4s ease-in-out infinite;
+  color: #a0aec0;
+  font-size: 0.875rem;
+}
+
+/* HOME-3: amber "uncommitted / loading" banner, e.g. initial datasets load */
+.pending-banner {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  color: #664d03;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.25rem;
+}
