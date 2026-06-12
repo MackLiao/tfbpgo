@@ -43,8 +43,15 @@ export function PerturbationSidebar({
 
       <fieldset>
         <legend className="mb-1 font-medium text-slate-700">Column</legend>
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2">
+        {/* Inline radios that WRAP between options (gap-y) instead of breaking a
+            single label mid-word; each label stays on one line (whitespace-nowrap)
+            and -log10 renders with a proper subscript. Tooltips mirror the
+            reference per-choice ui.tooltip text (perturbation/ui.py:27-39). */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <label
+            className="flex items-center gap-2 whitespace-nowrap"
+            title="Raw effect size (e.g. log2 fold-change)."
+          >
             <input
               type="radio"
               name="perturbation-col"
@@ -54,7 +61,10 @@ export function PerturbationSidebar({
             />
             <span>Effect</span>
           </label>
-          <label className="flex items-center gap-2">
+          <label
+            className="flex items-center gap-2 whitespace-nowrap"
+            title="Raw p-value. Smaller is more significant."
+          >
             <input
               type="radio"
               name="perturbation-col"
@@ -64,7 +74,10 @@ export function PerturbationSidebar({
             />
             <span>P-value</span>
           </label>
-          <label className="flex items-center gap-2">
+          <label
+            className="flex items-center gap-2 whitespace-nowrap"
+            title="Negative log10 of the p-value. Values below 1e-10 are capped at 10."
+          >
             <input
               type="radio"
               name="perturbation-col"
@@ -72,7 +85,12 @@ export function PerturbationSidebar({
               checked={col === "log10pval"}
               onChange={() => onColChange("log10pval")}
             />
-            <span>-log10(p-value)</span>
+            {/* Keep the ASCII hyphen (not a Unicode minus) and a real <sub> so
+                the label's accessible name stays "-log10(p-value)" — the
+                getByLabelText(/-log10\(p-value\)/) test selector depends on it. */}
+            <span>
+              -log<sub>10</sub>(p-value)
+            </span>
           </label>
         </div>
       </fieldset>

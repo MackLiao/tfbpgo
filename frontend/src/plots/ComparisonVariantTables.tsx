@@ -190,6 +190,10 @@ export function PromoterDefinitionsTable({
   );
 
   return (
+    // Wrapping card grid (CMP UX): one card per perturbation. Cards keep their
+    // natural content width (shrink-0) so no column is ever clipped, and wrap
+    // onto new rows when they run out of horizontal room — the page scrolls
+    // vertically only, never sideways.
     <div className="mt-2 flex flex-wrap gap-6" data-testid="cp-tables">
       {perturbationDatasets.map((p, i) => {
         const q = queries[i];
@@ -220,9 +224,14 @@ export function PromoterDefinitionsTable({
             <table className="w-full border-collapse text-sm" data-testid={`cp-table-${p}`}>
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-2.5 py-1.5 text-left">Binding Dataset</th>
+                  <th className="whitespace-nowrap px-2.5 py-1.5 text-left">
+                    Binding Dataset
+                  </th>
                   {selectedPromoterSets.map((ps) => (
-                    <th key={ps} className="px-2.5 py-1.5 text-right">
+                    <th
+                      key={ps}
+                      className="whitespace-nowrap px-2.5 py-1.5 text-right"
+                    >
                       {ps}
                     </th>
                   ))}
@@ -382,6 +391,7 @@ export function AnalysisMethodsTable({
           <h3 className="mb-2 text-sm font-semibold text-slate-700">
             {METHOD_BASE_LABEL_MAP[primary] ?? primary}
           </h3>
+          {/* Wrapping card grid — see the cp-tables note above. */}
           <div className="flex flex-wrap gap-6">
             {perturbationDatasets.map((p) => {
               const pertLabel = perturbationLabel(p);
@@ -432,8 +442,10 @@ export function AnalysisMethodsTable({
                   >
                     <thead className="bg-slate-50">
                       <tr>
-                        <th className="px-2.5 py-1.5 text-left">Scoring Variant</th>
-                        <th className="px-2.5 py-1.5 text-right">
+                        <th className="whitespace-nowrap px-2.5 py-1.5 text-left">
+                          Scoring Variant
+                        </th>
+                        <th className="whitespace-nowrap px-2.5 py-1.5 text-right">
                           Median % Responsive
                         </th>
                       </tr>
@@ -498,8 +510,11 @@ function TableCard({
   testid?: string;
 }) {
   return (
+    // shrink-0 (not flex-1): inside the wrapping grid each card keeps its
+    // natural content width instead of being squeezed equal-width and clipping
+    // its right-hand columns; cards wrap to a new row rather than shrinking.
     <div
-      className="flex-1 overflow-hidden rounded border border-slate-200"
+      className="shrink-0 overflow-hidden rounded border border-slate-200"
       style={{ minWidth: 280 }}
       data-testid={testid}
     >

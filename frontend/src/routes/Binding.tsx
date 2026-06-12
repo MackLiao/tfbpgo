@@ -329,11 +329,29 @@ export function Binding() {
       />
       <div className="space-y-4">
         <h1 className="text-2xl font-semibold">Binding Correlation</h1>
-        <p className="text-sm text-slate-600">
-          The Correlation Matrix tab shows the median correlation for each
-          dataset pair. Click cells to select pairs, then click Execute Analysis
-          to view their distributions and gene-level scatter plots.
-        </p>
+        {/* "How it works" explanation — verbatim parity with the reference
+            sidebar-text block (reference/tfbpshiny/modules/binding/ui.py:60-78):
+            one intro paragraph + one paragraph per tab. */}
+        <div className="space-y-1 text-sm text-slate-600">
+          <p>
+            Select binding datasets and options in the sidebar, then click
+            Execute Analysis to compute pairwise correlations across shared
+            regulators.
+          </p>
+          <p>
+            The Correlation Matrix tab shows median correlation for each dataset
+            pair. Click a cell to select that pair.
+          </p>
+          <p>
+            The Pair Distribution tab shows the per-regulator correlation
+            distribution for the selected pair. Click a point to select a
+            regulator.
+          </p>
+          <p>
+            The Gene Scatter tab shows per-target binding scores for the selected
+            regulator. Use the dropdown to change the active regulator.
+          </p>
+        </div>
         <ErrorBoundary>
           {datasets.length < 2 ? (
             <p className="text-sm text-slate-600">
