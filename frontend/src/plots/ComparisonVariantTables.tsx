@@ -1,6 +1,11 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { api, type ResponsivenessPreset, type Schemas } from "@/api/client";
+import {
+  api,
+  apiErrorMessage,
+  type ResponsivenessPreset,
+  type Schemas,
+} from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { cellPercent } from "@/plots/TopNMatrix";
 import {
@@ -176,6 +181,19 @@ export function PromoterDefinitionsTable({
             </TableCard>
           );
         }
+        if (q?.isError) {
+          // A failed slice (e.g. the backend's 12-pair cap → 400) must surface
+          // the backend's readable message — NOT a silent all-"—" table that
+          // looks like "computed, no responsive targets". See apiErrorMessage.
+          return (
+            <TableCard key={p} header={pertLabel} testid={`cp-card-${p}`}>
+              <ErrorRow
+                testid={`cp-error-${p}`}
+                message={apiErrorMessage(q.error)}
+              />
+            </TableCard>
+          );
+        }
         const resp = q?.data;
         return (
           <TableCard key={p} header={pertLabel} testid={`cp-card-${p}`}>
@@ -327,6 +345,15 @@ export function AnalysisMethodsTable({
     );
     return idx >= 0 ? Boolean(queries[idx]?.isPending) : false;
   };
+  // A failed slice (e.g. the backend's 12-pair cap → 400) returns its thrown
+  // error so the card can surface the backend's readable message instead of a
+  // silent all-"—" table. Returns undefined when the slice has not errored.
+  const errorFor = (primary: string, p: string): unknown => {
+    const idx = flat.findIndex(
+      (f) => f.primary === primary && f.perturbation === p,
+    );
+    return idx >= 0 && queries[idx]?.isError ? queries[idx]?.error : undefined;
+  };
 
   return (
     <div className="mt-2 space-y-6" data-testid="cm-groups">
@@ -342,6 +369,21 @@ export function AnalysisMethodsTable({
                 return (
                   <TableCard key={p} header={pertLabel}>
                     <LoadingRow testid={`cm-loading-${primary}-${p}`} />
+                  </TableCard>
+                );
+              }
+              const err = errorFor(primary, p);
+              if (err !== undefined) {
+                return (
+                  <TableCard
+                    key={p}
+                    header={pertLabel}
+                    testid={`cm-card-${primary}-${p}`}
+                  >
+                    <ErrorRow
+                      testid={`cm-error-${primary}-${p}`}
+                      message={apiErrorMessage(err)}
+                    />
                   </TableCard>
                 );
               }
@@ -453,6 +495,22 @@ function LoadingRow({ testid }: { testid?: string }) {
   return (
     <div className="px-2.5 py-3 text-sm text-slate-500" data-testid={testid}>
       Computing…
+    </div>
+  );
+}
+
+// Surfaces a failed per-perturbation slice's backend message (e.g. the 12-pair
+// cap 400) in place of the table, so the user never sees a silent all-"—" card
+// that is indistinguishable from "computed, no responsive targets". Mirrors the
+// route-level `text-red-600` error display (Comparison.tsx:246).
+function ErrorRow({ testid, message }: { testid?: string; message: string }) {
+  return (
+    <div
+      className="px-2.5 py-3 text-sm text-red-600"
+      data-testid={testid}
+      role="alert"
+    >
+      {message}
     </div>
   );
 }

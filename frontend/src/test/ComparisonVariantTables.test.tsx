@@ -6,6 +6,10 @@ import {
   AnalysisMethodsTable,
 } from "@/plots/ComparisonVariantTables";
 import { setArtifactVersion } from "@/api/client";
+import {
+  PROMOTER_SET_ORDER,
+  PROMOTER_VARIANT_PAIRS,
+} from "@/lib/comparison-palette";
 
 // The variant tabs fire ONE /comparison/topn request per perturbation dataset,
 // each over [all binding variant dbs] × [a single perturbation]. We mock fetch
@@ -56,6 +60,19 @@ function variantFetch(ratios: Record<string, number> = RATIOS) {
     }
     return Promise.resolve(new Response(JSON.stringify({ rows }), { status: 200 }));
   });
+}
+
+// fetch mock that fails every /comparison/topn slice with the backend's
+// 12-pair-cap 400 shape ({"error": "<msg>"}), so we can assert the card surfaces
+// the readable message instead of a silent all-"—" table.
+const CAP_ERROR_MSG =
+  "too many comparisons: 16 binding × perturbation pairs exceeds the limit of 12; select fewer datasets";
+function capErrorFetch() {
+  return vi.fn(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ error: CAP_ERROR_MSG }), { status: 400 }),
+    ),
+  );
 }
 
 function renderWithClient(node: React.ReactElement) {
@@ -158,6 +175,25 @@ describe("PromoterDefinitionsTable", () => {
     );
     expect(screen.getByTestId("cp-loading-hackett")).toBeInTheDocument();
   });
+
+  it("surfaces the backend error message when a per-perturbation slice fails", async () => {
+    vi.stubGlobal("fetch", capErrorFetch());
+    renderWithClient(
+      <PromoterDefinitionsTable
+        bindingPrimaries={["rossi"]}
+        perturbationDatasets={["hackett"]}
+        topN={25}
+        preset="Relaxed"
+        filters=""
+      />,
+    );
+    // The error row is visible (not a silent all-"—" table) and carries the
+    // backend's readable message via apiErrorMessage.
+    const errRow = await screen.findByTestId("cp-error-hackett");
+    expect(errRow.textContent).toBe(CAP_ERROR_MSG);
+    // And the data table is NOT rendered for that card.
+    expect(screen.queryByTestId("cp-table-hackett")).toBeNull();
+  });
 });
 
 describe("AnalysisMethodsTable", () => {
@@ -231,5 +267,52 @@ describe("AnalysisMethodsTable", () => {
       />,
     );
     expect(screen.getByTestId("comparison-variant-empty")).toBeInTheDocument();
+  });
+
+  it("surfaces the backend error message when a per-perturbation slice fails", async () => {
+    vi.stubGlobal("fetch", capErrorFetch());
+    renderWithClient(
+      <AnalysisMethodsTable
+        bindingPrimaries={["rossi"]}
+        perturbationDatasets={["hackett"]}
+        topN={25}
+        preset="Relaxed"
+        filters=""
+      />,
+    );
+    const errRow = await screen.findByTestId("cm-error-rossi-hackett");
+    expect(errRow.textContent).toBe(CAP_ERROR_MSG);
+    // The scoring-variant table is NOT rendered for the failed card.
+    expect(screen.queryByTestId("cm-table-rossi-hackett")).toBeNull();
+  });
+});
+
+// ===========================================================================
+// 12-pair cap relationship (M6b)
+// ===========================================================================
+//
+// The Compare Promoter Definitions tab fires ONE /comparison/topn request per
+// perturbation dataset, each over `expandPromoterBindings(variantPrimaries)` ×
+// [a SINGLE perturbation]. The widest possible binding axis is
+//   len(PROMOTER_SET_ORDER) * (# variant-bearing primaries)
+// and `variantPrimaries` is `bindingPrimaries.filter(b => b in
+// PROMOTER_VARIANT_PAIRS)`, so the # of variant-bearing primaries is bounded by
+// Object.keys(PROMOTER_VARIANT_PAIRS).length. With 1 perturbation per request,
+// that product IS the per-request pair count.
+//
+// The backend caps a /comparison/topn request at defaultMaxComparisonPairs = 12
+// (inclusive). This test pins the relationship to the ACTUAL exported constants
+// so a future 5th promoter set or 4th variant-bearing primary fails HERE
+// instead of silently 400-ing at runtime.
+describe("promoter fan-out stays within the backend 12-pair cap", () => {
+  // Keep in lockstep with backend defaultMaxComparisonPairs
+  // (backend/internal/api/comparison_topn.go:27, inclusive).
+  const MAX_COMPARISON_PAIRS = 12;
+
+  it("len(PROMOTER_SET_ORDER) * (# variant-bearing primaries) <= 12", () => {
+    const promoterSets = PROMOTER_SET_ORDER.length;
+    const variantBearingPrimaries = Object.keys(PROMOTER_VARIANT_PAIRS).length;
+    const widestRequest = promoterSets * variantBearingPrimaries;
+    expect(widestRequest).toBeLessThanOrEqual(MAX_COMPARISON_PAIRS);
   });
 });
