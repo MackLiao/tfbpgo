@@ -53,7 +53,7 @@ by direct read of current reference + Go source (not just an agent claim).
 | BIND-6 | binding default | **H** | ✅ | default correlation method changed `pearson` → `spearman` |
 | PERT-1 | perturbation | **H** | ✅ | same `log10pval` / 4-tuple / spearman-default changes as binding |
 | DEF-1 | defaults | **H** | ✅ | `harbison` removed from `DEFAULT_ACTIVE_DATASETS` |
-| DEF-2 | defaults | **M** | ✅ | `hackett.time` default filter changed numeric `[45,45]` → categorical `[45]` |
+| DEF-2 | defaults | **M** | ✅ | `hackett.time` default filter changed numeric `[45,45]` → categorical `[45]` — **DEFERRED** (still numeric; frontend categorical-spec interaction) |
 | SD-2 | feature removal | **H** | ✅ | reference deleted the export feature; Go still ships it → **decision required** |
 | SD-3 | select contract | **M** | ⚠️ | dataset names rendered as DOI links (Go has no DOI in `/datasets`) |
 | HOME-1 | chrome | **H** | ✅ | nav label + comparison page `<h1>` changed to "Binding/Perturbation Comparisons" |
@@ -257,11 +257,16 @@ config tweaks:
 > effect/pearson per its reference) [Task 3]; comparison Relaxed/Stringent preset radio [Task 4];
 > binding correlation-matrix pair-selection tab (3 tabs, pending/committed, medians client-derived)
 > [Task 5]; chrome — nav label "Binding/Perturbation Comparisons", loading CSS, datasets banner
-> [Task 7]. **REMAINING:** comparison 3-tab restructure (Compare Datasets matrix / Promoter
-> Definitions / Analysis Methods) + promoter/method display maps (CMP-6) [Task 6 — the largest build].
-> **DEFERRED:** DEF-2 hackett filter numeric→categorical (frontend categorical-spec interaction);
-> the `is_primary=False` Go-fixture case + a binding-only-target topn fixture (both want a widened fixture).
-> Whole branch green: data_prep 76, backend all-ok+vet+gofmt, frontend 95/95+tsc, parity 18/18.
+> [Task 7]; comparison 3-tab restructure — Compare Datasets responsive-ratio matrix + drill-down,
+> Compare Promoter Definitions + Compare Analysis Methods variant tables (per-perturbation topn
+> batching under the 12-pair cap), promoter/method display maps + label unification (CMP-6) [Task 6].
+> **ALL 7 TASKS DONE** (21 commits); final integration review READY-WITH-FOLLOWUPS, no
+> code/contract/parity defects. **DEFERRED (only known gaps):** DEF-2 hackett filter
+> numeric→categorical (frontend categorical-spec interaction); widened fixture for the
+> `is_primary=False` + binding-only-target topn cases; an `isError` state on the comparison variant
+> tables. Whole branch green: data_prep 76, backend all-ok+vet+gofmt, frontend 120+tsc, parity ok.
+> **Cutover gates:** rebuild the artifact at `schema_version=6` (binary rejects v5; HF-cached now);
+> the deploy build (`make build`/Dockerfile) regenerates the embedded frontend bundle.
 
 > **Phase A-core needs no schema bump.** Adding variant *rows*, fixing degron's column *value*,
 > and changing default *values* don't alter the `dataset_manifest` *table schema*. Only the
