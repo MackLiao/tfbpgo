@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { Perturbation } from "@/routes/Perturbation";
@@ -159,7 +159,7 @@ describe("Perturbation route URL keys", () => {
     expect(effect.checked).toBe(true);
   });
 
-  it("renders the correlation boxplot trace + selected-regulator overlay when corr data is present", async () => {
+  it("renders the boxplot (2 traces) on the Pair Distribution tab only after a pair is committed via ?pairs=", async () => {
     vi.stubGlobal(
       "fetch",
       fakeFetch((url) => {
@@ -175,6 +175,7 @@ describe("Perturbation route URL keys", () => {
           return {
             method: "pearson",
             col: "effect",
+            regulatorDisplay: {},
             pairs: [
               {
                 dbA: "hackett",
@@ -212,9 +213,10 @@ describe("Perturbation route URL keys", () => {
 
     render(
       <QueryClientProvider client={makeClient()}>
+        {/* Deep-link a committed pair AND land on the distribution tab. */}
         <MemoryRouter
           initialEntries={[
-            "/perturbation?perturbation=hackett,kemmeren&regulator=YBR289W",
+            "/perturbation?perturbation=hackett,kemmeren&regulator=YBR289W&pairs=hackett__kemmeren&tab=distribution",
           ]}
         >
           <Perturbation />
@@ -223,12 +225,239 @@ describe("Perturbation route URL keys", () => {
     );
 
     // Wait for the boxplot's PlotLazy to mount with 2 traces:
-    //   one go.Box for the pair + one go.Scatter overlay for the selected regulator.
+    //   one go.Box for the committed pair + one go.Scatter overlay for the
+    //   selected regulator.
     await waitFor(() => {
       const plot = screen.queryByTestId("plotly");
       expect(plot).not.toBeNull();
       expect(plot!.getAttribute("data-trace-count")).toBe("2");
       expect(plot!.getAttribute("data-has-onclick")).toBe("yes");
     });
+  });
+});
+
+describe("Perturbation correlation-matrix pair selection (PERT-2)", () => {
+  beforeEach(() => {
+    setArtifactVersion("test");
+  });
+
+  // Three-dataset corr fixture so the upper-triangle matrix has multiple
+  // interactive cells (and at least one empty lower-triangle cell). Each pair's
+  // single point's correlation is the median displayed in its cell.
+  function threeDatasetFetch(): (url: string) => unknown {
+    return (url) => {
+      if (url.endsWith("/datasets")) {
+        return {
+          datasets: [
+            { dbName: "aaa", displayName: "AAA" },
+            { dbName: "bbb", displayName: "BBB" },
+            { dbName: "ccc", displayName: "CCC" },
+          ],
+        };
+      }
+      if (url.includes("/perturbation/correlations")) {
+        return {
+          method: "pearson",
+          col: "effect",
+          regulatorDisplay: {},
+          pairs: [
+            mkPair("aaa", "bbb", [0.1, 0.3]), // median 0.2
+            mkPair("aaa", "ccc", [0.5]), //       median 0.5
+            mkPair("bbb", "ccc", [0.4, 0.6, 0.8]), // median 0.6
+          ],
+        };
+      }
+      if (url.includes("/sample-conditions"))
+        return { dbName: "x", conditionCols: [], labels: {} };
+      if (url.includes("/perturbation/scatter"))
+        return {
+          regulator: "YAL001C",
+          dbA: "aaa",
+          dbB: "bbb",
+          colA: "a",
+          colB: "b",
+          method: "pearson",
+          r: 0.2,
+          points: [],
+        };
+      return {};
+    };
+  }
+
+  function mkPair(dbA: string, dbB: string, corrs: number[]) {
+    return {
+      dbA,
+      dbB,
+      colA: `${dbA}_col`,
+      colB: `${dbB}_col`,
+      points: corrs.map((c, i) => ({
+        dbA,
+        dbAId: `${dbA}_${i}`,
+        dbB,
+        dbBId: `${dbB}_${i}`,
+        regulatorLocusTag: i === 0 ? "YAL001C" : "YBR289W",
+        correlation: c,
+      })),
+    };
+  }
+
+  it("renders interactive cells with the per-pair median correlation and a non-interactive lower-triangle cell", async () => {
+    vi.stubGlobal("fetch", fakeFetch(threeDatasetFetch()));
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={["/perturbation?perturbation=aaa,bbb,ccc"]}>
+          <Perturbation />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Upper-triangle cells show the median; assert one of each median value.
+    await waitFor(() => {
+      expect(screen.getByTestId("corr-cell-aaa-bbb")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("corr-cell-aaa-bbb").textContent).toContain("0.200");
+    expect(screen.getByTestId("corr-cell-aaa-ccc").textContent).toContain("0.500");
+    expect(screen.getByTestId("corr-cell-bbb-ccc").textContent).toContain("0.600");
+
+    // Interactive cells carry a button; the lower-triangle/diagonal placeholder
+    // in row bbb (corr-cell-bbb-bbb) has none.
+    expect(
+      screen.getByTestId("corr-cell-aaa-bbb").getAttribute("data-interactive"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("corr-cell-bbb-bbb").getAttribute("data-interactive"),
+    ).toBe("false");
+    expect(
+      within(screen.getByTestId("corr-cell-bbb-bbb")).queryByRole("button"),
+    ).toBeNull();
+  });
+
+  it("clicking a cell toggles its pending highlight without committing (boxplot stays empty)", async () => {
+    vi.stubGlobal("fetch", fakeFetch(threeDatasetFetch()));
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={["/perturbation?perturbation=aaa,bbb,ccc"]}>
+          <Perturbation />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("corr-cell-aaa-bbb")).toBeInTheDocument();
+    });
+
+    const cell = screen.getByTestId("corr-cell-aaa-bbb");
+    // Not selected initially.
+    expect(cell.getAttribute("data-selected")).toBeNull();
+
+    fireEvent.click(within(cell).getByRole("button"));
+    // Pending highlight on; still nothing committed → "Selection changed" hint.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("corr-cell-aaa-bbb").getAttribute("data-selected"),
+      ).toBe("true");
+    });
+    expect(screen.getByText(/Selection changed/i)).toBeInTheDocument();
+
+    // Click again to toggle off.
+    fireEvent.click(within(screen.getByTestId("corr-cell-aaa-bbb")).getByRole("button"));
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("corr-cell-aaa-bbb").getAttribute("data-selected"),
+      ).toBeNull();
+    });
+  });
+
+  it("Execute Analysis commits the pending pair to ?pairs= and the distribution tab then renders the boxplot", async () => {
+    vi.stubGlobal("fetch", fakeFetch(threeDatasetFetch()));
+
+    function LocationProbe() {
+      const loc = useLocation();
+      return <div data-testid="loc-search">{loc.search}</div>;
+    }
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={["/perturbation?perturbation=aaa,bbb,ccc"]}>
+          <Routes>
+            <Route path="/perturbation" element={<><Perturbation /><LocationProbe /></>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("corr-cell-aaa-bbb")).toBeInTheDocument();
+    });
+
+    // Select the (aaa,bbb) pair, then Execute Analysis.
+    fireEvent.click(within(screen.getByTestId("corr-cell-aaa-bbb")).getByRole("button"));
+    fireEvent.click(screen.getByRole("button", { name: /Execute Analysis/i }));
+
+    // ?pairs=aaa__bbb is written to the URL.
+    await waitFor(() => {
+      expect(screen.getByTestId("loc-search").textContent).toMatch(
+        /pairs=aaa__bbb/,
+      );
+    });
+
+    // Move to the Pair Distribution tab — the boxplot now mounts for the
+    // committed pair (1 box trace + 1 overlay because YAL001C is auto-selected).
+    fireEvent.click(screen.getByRole("tab", { name: /Pair Distribution/i }));
+    await waitFor(() => {
+      const plot = screen.queryByTestId("plotly");
+      expect(plot).not.toBeNull();
+      expect(Number(plot!.getAttribute("data-trace-count"))).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("Pair Distribution and Gene Scatter tabs show an empty-state hint when nothing is committed", async () => {
+    vi.stubGlobal("fetch", fakeFetch(threeDatasetFetch()));
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={["/perturbation?perturbation=aaa,bbb,ccc&tab=distribution"]}>
+          <Perturbation />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // The active tabpanel (Pair Distribution) shows the empty-state hint. Scope
+    // to the tabpanel so the intro paragraph (which shares similar wording)
+    // does not collide.
+    await waitFor(() => {
+      const panel = screen.getByRole("tabpanel");
+      expect(
+        within(panel).getByText(
+          /Select cells in the Correlation Matrix and click Execute Analysis to view their distributions/i,
+        ),
+      ).toBeInTheDocument();
+    });
+    // No plot rendered while nothing is committed.
+    expect(screen.queryByTestId("plotly")).toBeNull();
+  });
+
+  it("falls back to the Correlation Matrix tab when ?tab= is an unknown value", async () => {
+    vi.stubGlobal("fetch", fakeFetch(threeDatasetFetch()));
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        {/* Garbage tab value must not leave every panel hidden. */}
+        <MemoryRouter initialEntries={["/perturbation?perturbation=aaa,bbb,ccc&tab=foo"]}>
+          <Perturbation />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // The matrix panel is active (its table renders) and its trigger is the
+    // selected tab — confirming the unknown value clamped to "matrix".
+    await waitFor(() => {
+      expect(screen.getByTestId("corr-matrix")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("tab", { name: /Correlation Matrix/i }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 });

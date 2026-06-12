@@ -9,45 +9,33 @@ import { PlotSkeleton } from "@/components/PlotSkeleton";
 
 // Per-pair scatter row for the Perturbation module.
 //
-// Mirrors reference/tfbpshiny/modules/perturbation/server/workspace.py:402-427,
-// 471-581: one scatter per sorted(datasets) choose 2 pair. We fan out
-// independent TanStack Query calls so each pair resolves on its own — same
-// effect as Shiny's per-pair @render.ui slots.
+// Mirrors reference/tfbpshiny/modules/perturbation/server/workspace.py
+// (scatter_container + per-pair render): one scatter per COMMITTED pair. In the
+// reference the scatter is gated on committed_pairs() — with nothing committed
+// the grid stays empty rather than defaulting to every active pair. We pass the
+// committed pairs in directly and fan out independent TanStack Query calls so
+// each pair resolves on its own — same effect as Shiny's per-pair @render.ui slots.
 
 export interface PerturbationScatterRowProps {
   regulator: string;
-  datasets: string[];
+  // Committed dataset pairs, each as a canonical [dbA, dbB] tuple (sorted).
+  // Replaces the old "all sorted(datasets) choose 2" expansion: only pairs the
+  // user committed via Execute Analysis are plotted.
+  pairs: Array<[string, string]>;
   method: CorrMethod;
   col: MeasurementCol;
   filters: string;
   datasetDisplay: (dbName: string) => string;
 }
 
-// itertools.combinations(sorted(datasets), 2) — keep ordering stable so cache
-// keys are deterministic across param-order permutations.
-export function sortedCombinations(datasets: string[]): Array<[string, string]> {
-  const sorted = [...datasets].sort();
-  const out: Array<[string, string]> = [];
-  for (let i = 0; i < sorted.length; i++) {
-    for (let j = i + 1; j < sorted.length; j++) {
-      const a = sorted[i] as string;
-      const b = sorted[j] as string;
-      out.push([a, b]);
-    }
-  }
-  return out;
-}
-
 export function PerturbationScatterRow({
   regulator,
-  datasets,
+  pairs,
   method,
   col,
   filters,
   datasetDisplay,
 }: PerturbationScatterRowProps) {
-  const pairs = sortedCombinations(datasets);
-
   const queries = useQueries({
     queries: pairs.map(([dbA, dbB]) => ({
       queryKey: qk.perturbationScatter(regulator, [dbA, dbB], method, col, filters),
@@ -60,7 +48,7 @@ export function PerturbationScatterRow({
         };
         return api.perturbationScatter(filters ? { ...base, filters } : base, signal);
       },
-      enabled: Boolean(regulator) && datasets.length >= 2,
+      enabled: Boolean(regulator) && pairs.length > 0,
     })),
   });
 

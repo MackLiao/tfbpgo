@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import type { Schemas } from "@/api/client";
 import { htmlEscape } from "@/lib/html-escape";
 import { PlotLazy } from "./PlotLazy";
+import { pairKey } from "./CorrelationMatrix";
 
 // Pairwise correlation distribution box plot for the Perturbation module.
 //
@@ -30,6 +31,10 @@ export interface PerturbationCorrBoxplotProps {
   // BindingCorrBoxplot — see that file's comment for the hover format.
   sampleConditionsByDB?: Record<string, Record<string, string>>;
   onRegulatorClick: (locusTag: string) => void;
+  // Committed pair selection as canonical `dbA__dbB` keys. Only pairs whose
+  // key is in this set are rendered (workspace.py committed_pairs gating).
+  // When omitted, all pairs render (back-compat for any non-gated caller).
+  committedPairKeys?: Set<string>;
 }
 
 interface PointAccumulator {
@@ -55,6 +60,7 @@ export function PerturbationCorrBoxplot({
   regulatorDisplayMap,
   sampleConditionsByDB,
   onRegulatorClick,
+  committedPairKeys,
 }: PerturbationCorrBoxplotProps) {
   const displayDb = datasetDisplay ?? ((db: string) => db);
   const regDisplay = (locus: string): string =>
@@ -65,7 +71,12 @@ export function PerturbationCorrBoxplot({
   const yAxisTitle = `${methodLabel} r`;
 
   const { boxTraces, overlayTrace, hasPairs } = useMemo(() => {
-    const pairs = resp.pairs ?? [];
+    // Render only committed pairs (workspace.py committed_pairs gating). An
+    // undefined set means "no gating" for back-compat, but the Perturbation
+    // route always supplies one.
+    const pairs = (resp.pairs ?? []).filter((p) =>
+      committedPairKeys ? committedPairKeys.has(pairKey(p.dbA, p.dbB)) : true,
+    );
     if (pairs.length === 0) {
       return {
         boxTraces: [] as Array<Record<string, unknown>>,
@@ -158,6 +169,7 @@ export function PerturbationCorrBoxplot({
     displayDb,
     regulatorDisplayMap,
     sampleConditionsByDB,
+    committedPairKeys,
   ]);
 
   // Empty state: render a placeholder annotation centered in the figure,

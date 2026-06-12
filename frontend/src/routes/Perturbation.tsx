@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, apiErrorMessage } from "@/api/client";
@@ -6,28 +6,42 @@ import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ActivePairRegulatorPicker } from "@/components/ActivePairRegulatorPicker";
 import { PerturbationSidebar } from "@/components/PerturbationSidebar";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { CorrelationMatrix, pairKey } from "@/plots/CorrelationMatrix";
 import { PerturbationCorrBoxplot } from "@/plots/PerturbationCorrBoxplot";
 import { PerturbationScatterRow } from "@/plots/PerturbationScatterRow";
 import { PlotSkeleton } from "@/components/PlotSkeleton";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
-// Perturbation route — pairwise correlation boxplot + per-pair scatter grid.
+// Perturbation route — restructured (PERT-2) into three tabs gated on an
+// explicit pair selection, mirroring the reference Perturbation rewrite:
+//   reference/tfbpshiny/modules/perturbation/ui.py (3-tab navset) and
+//   reference/tfbpshiny/modules/perturbation/server/workspace.py (pending vs
+//   committed pair selection). Structurally identical to the Binding route
+//   (see Binding.tsx) — only the data path (/perturbation/correlations +
+//   /perturbation/scatter) and the first-load defaults differ.
 //
-// Parity reference:
-// reference/tfbpshiny/modules/perturbation/server/workspace.py (lines
-// 199-581). Shape mirrors the Binding route 1:1 (only the data path differs):
-//   1. Sidebar with Column (effect/pvalue) + Correlation (pearson/spearman)
-//      radios + RegulatorPicker. Sidebar values are URL-backed (?col=, ?corr=,
-//      ?regulator=) so the page is fully deep-linkable.
-//   2. Top: pairwise correlation boxplot. Each pair gets one go.Box trace;
-//      points are jittered; the currently-selected regulator is highlighted
-//      as a large black dot overlay. Clicking any dot writes the locus tag
-//      back to ?regulator=, replacing Shiny's post_script JS bridge.
-//   3. Between the boxplot and the scatter row: a "regulator not found in:
-//      ..." notice listing datasets whose pairs had no row for the selected
-//      regulator (workspace.py:429-469).
-//   4. Bottom: one Plotly scatter per active dataset pair, fixed 400x400 in
-//      a flex-wrap row.
+// Tabs:
+//   1. Correlation Matrix — upper-triangle matrix of active perturbation
+//      datasets; each interactive cell shows the pair's MEDIAN per-regulator
+//      correlation (derived client-side from /perturbation/correlations).
+//      Clicking a cell toggles its PENDING selection (visual highlight only).
+//      "Execute Analysis" commits pending → committed; only committed pairs
+//      drive the data renders.
+//   2. Pair Distribution — the boxplot, restricted to COMMITTED pairs.
+//   3. Gene Scatter — the per-pair scatter grid for COMMITTED pairs + the
+//      regulator selector.
+//
+// State-encoding choice (per task guidance "URL is canonical state"):
+//   - COMMITTED pairs → URL (?pairs=dbA__dbB,dbC__dbD). Committed pairs drive
+//     the box/scatter data fetches + cache keys and should be deep-linkable.
+//   - PENDING pairs → ephemeral component state. The reference's pending_pairs
+//     is a transient reactive.value that only drives the matrix highlight; it
+//     must toggle instantly without re-fetching, so it is local React state.
+//     Execute Analysis copies pending → the URL ?pairs= param (committed).
+//
+// First-load default: NO pairs committed — the distribution and scatter stay
+// empty until the user clicks a matrix cell and runs Execute Analysis.
 
 // Perturbation first-load defaults are effect / pearson — UNLIKE the binding
 // module, which the 2026-06-11 parity pass switched to log10pval / spearman.
@@ -45,6 +59,22 @@ function parseMethod(raw: string | null): CorrMethod {
   return raw === "pearson" || raw === "spearman" ? raw : DEFAULT_METHOD;
 }
 
+// Parse the committed pairs from ?pairs= into canonical `dbA__dbB` keys, keeping
+// only those whose BOTH datasets are still in the active selection (a stale
+// bookmark referencing a now-deselected dataset must not drive a fetch).
+function parseCommittedKeys(raw: string | null, activeDatasets: string[]): Set<string> {
+  const active = new Set(activeDatasets);
+  const keys = new Set<string>();
+  for (const token of (raw ?? "").split(",").filter(Boolean)) {
+    const parts = token.split("__");
+    if (parts.length !== 2) continue;
+    const [a, b] = parts as [string, string];
+    if (!active.has(a) || !active.has(b)) continue;
+    keys.add(pairKey(a, b));
+  }
+  return keys;
+}
+
 export function Perturbation() {
   const [params, setParams] = useSearchParams();
   const reg = params.get("regulator");
@@ -54,6 +84,31 @@ export function Perturbation() {
   const filters = params.get("filters") ?? "";
   const col = parseCol(params.get("col"));
   const method = parseMethod(params.get("corr"));
+
+  // Committed pairs (canonical keys) from the URL — drives the box + scatter.
+  const committedKeys = useMemo(
+    () => parseCommittedKeys(params.get("pairs"), datasets),
+    // datasets is derived from params each render; depend on the raw strings so
+    // the memo recomputes when either the pairs param or the dataset set moves.
+    [params, datasets.join(",")],
+  );
+
+  // Active tab — kept in the URL (?tab=) so a deep link can land on any tab.
+  // Anything unrecognized falls back to the matrix tab so a stale/garbage value
+  // never leaves every TabsContent hidden.
+  const rawTab = params.get("tab");
+  const tab =
+    rawTab === "distribution" || rawTab === "scatter" ? rawTab : "matrix";
+  const setTab = (next: string): void => {
+    const np = new URLSearchParams(params);
+    np.set("tab", next);
+    setParams(np, { replace: true });
+  };
+
+  // Pending (highlight-only) selection — ephemeral component state. Seeded from
+  // the committed URL set so a deep link shows its committed pairs already
+  // highlighted; thereafter the user can toggle freely before re-committing.
+  const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set(committedKeys));
 
   // Build the db_name → display_name lookup once per render. The /datasets
   // call is already cached for the lifetime of the artifact version, so this
@@ -79,6 +134,24 @@ export function Perturbation() {
     enabled: datasets.length >= 2,
   });
 
+  // Prune pending keys that reference pairs no longer present in the loaded
+  // corr response (a dataset was deselected, or its pair produced no rows).
+  useEffect(() => {
+    if (!corrQuery.data) return;
+    const valid = new Set(
+      (corrQuery.data.pairs ?? []).map((p) => pairKey(p.dbA, p.dbB)),
+    );
+    setPendingKeys((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const k of prev) {
+        if (valid.has(k)) next.add(k);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [corrQuery.data]);
+
   const setRegulator = (tag: string): void => {
     const next = new URLSearchParams(params);
     next.set("regulator", tag);
@@ -95,8 +168,44 @@ export function Perturbation() {
     setParams(np);
   };
 
+  // Toggle a pair's pending membership (instant highlight, no fetch).
+  const togglePending = (key: string): void => {
+    setPendingKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  // Execute Analysis: commit pending → the URL ?pairs= param. This is the only
+  // action that changes which pairs the box/scatter render.
+  const executeAnalysis = (): void => {
+    const np = new URLSearchParams(params);
+    const joined = [...pendingKeys].sort().join(",");
+    if (joined) np.set("pairs", joined);
+    else np.delete("pairs");
+    setParams(np);
+  };
+
+  // True when the pending selection differs from what is currently committed —
+  // drives the "you have unapplied changes" hint + Execute enablement.
+  const hasUnapplied = useMemo(() => {
+    if (pendingKeys.size !== committedKeys.size) return true;
+    for (const k of pendingKeys) if (!committedKeys.has(k)) return true;
+    return false;
+  }, [pendingKeys, committedKeys]);
+
+  // Committed pairs as [dbA, dbB] tuples (canonical, sorted) for the scatter row.
+  const committedPairTuples = useMemo<Array<[string, string]>>(() => {
+    return [...committedKeys].map((k) => {
+      const [a, b] = k.split("__") as [string, string];
+      return [a, b];
+    });
+  }, [committedKeys]);
+
   // P-2/P-3: the regulators present in the loaded correlation pairs, sorted by
-  // display label (symbol) — the picker's choice list.
+  // display label (symbol) case-insensitively — the picker's choice list.
   const sortedRegulators = useMemo(() => {
     const display = corrQuery.data?.regulatorDisplay ?? {};
     const seen = new Set<string>();
@@ -114,12 +223,11 @@ export function Perturbation() {
     return tags;
   }, [corrQuery.data]);
 
-  // P-2/P-3: default-regulator auto-select + stale-selection reconcile (Shiny's
-  // workspace.py:374-388 `default = current if current in choices else
-  // next(iter(choices))`). When ?regulator= is unset or no longer in the loaded
-  // set, select the first sorted regulator so the scatter + overlay render
-  // immediately. `replace: true` keeps it out of history; the in-set guard
-  // prevents clobbering a manual pick and avoids an update loop.
+  // P-2/P-3: default-regulator auto-select + stale-selection reconcile. When
+  // ?regulator= is unset or no longer in the loaded set, select the first
+  // sorted regulator so the scatter + overlay render immediately. `replace:
+  // true` keeps it out of history; the in-set guard prevents clobbering a
+  // manual pick and avoids an update loop.
   useEffect(() => {
     const first = sortedRegulators[0];
     if (first === undefined) return;
@@ -129,8 +237,8 @@ export function Perturbation() {
     setParams(next, { replace: true });
   }, [sortedRegulators, reg, params, setParams]);
 
-  // Per-dataset sample-conditions fetch — see Binding.tsx for the
-  // pattern. Feeds the selected-regulator overlay hovertext.
+  // Per-dataset sample-conditions fetch — see Binding.tsx for the pattern.
+  // Feeds the selected-regulator overlay hovertext in PerturbationCorrBoxplot.
   const participatingDatasets = useMemo<string[]>(() => {
     if (!corrQuery.data) return [];
     const s = new Set<string>();
@@ -157,15 +265,18 @@ export function Perturbation() {
     return out;
   }, [participatingDatasets, sampleCondQueries]);
 
-  // Compute the set of datasets that had no row for the selected regulator
-  // (mirrors workspace.py:429-469). A dataset is "missing" only if EVERY
-  // pair it participates in lacks the regulator — matches Shiny's
+  // Compute the set of datasets that had no row for the selected regulator,
+  // scoped to the COMMITTED pairs. A dataset is "missing" only if EVERY
+  // committed pair it participates in lacks the regulator — matches Shiny's
   // `failed - succeeded` set algebra.
   const missingDatasetNames = useMemo<string[]>(() => {
     if (!reg || !corrQuery.data) return [];
+    const committedPairs = (corrQuery.data.pairs ?? []).filter((p) =>
+      committedKeys.has(pairKey(p.dbA, p.dbB)),
+    );
     const succeeded = new Set<string>();
     const participating = new Set<string>();
-    for (const pair of corrQuery.data.pairs) {
+    for (const pair of committedPairs) {
       participating.add(pair.dbA);
       participating.add(pair.dbB);
       const hit = pair.points.some((p) => p.regulatorLocusTag === reg);
@@ -180,7 +291,9 @@ export function Perturbation() {
     }
     missing.sort();
     return missing;
-  }, [reg, corrQuery.data, datasetDisplay]);
+  }, [reg, corrQuery.data, committedKeys, datasetDisplay]);
+
+  const hasCommitted = committedKeys.size > 0;
 
   return (
     <section className="grid grid-cols-1 gap-4 lg:grid-cols-[300px_1fr]">
@@ -204,6 +317,11 @@ export function Perturbation() {
       />
       <div className="space-y-4">
         <h1 className="text-2xl font-semibold">Perturbation Correlation</h1>
+        <p className="text-sm text-slate-600">
+          The Correlation Matrix tab shows the median correlation for each
+          dataset pair. Click cells to select pairs, then click Execute Analysis
+          to view their distributions and gene-level scatter plots.
+        </p>
         <ErrorBoundary>
           {datasets.length < 2 ? (
             <p className="text-sm text-slate-600">
@@ -213,35 +331,109 @@ export function Perturbation() {
           {corrQuery.error ? (
             <p className="text-red-600">{apiErrorMessage(corrQuery.error)}</p>
           ) : null}
-          {datasets.length >= 2 && corrQuery.isPending ? <PlotSkeleton /> : null}
-          {corrQuery.data ? (
-            <PerturbationCorrBoxplot
-              resp={corrQuery.data}
-              selectedRegulator={reg}
-              datasetDisplay={datasetDisplay}
-              sampleConditionsByDB={sampleConditionsByDB}
-              onRegulatorClick={setRegulator}
-              regulatorDisplayMap={corrQuery.data.regulatorDisplay}
-            />
-          ) : null}
-          {reg && missingDatasetNames.length > 0 ? (
-            <p className="text-sm text-slate-500">
-              {reg} was not found in: {missingDatasetNames.join(", ")}. Pairs
-              involving these datasets are omitted.
-            </p>
-          ) : null}
-          {reg && datasets.length >= 2 ? (
-            <>
-              <hr className="border-slate-200" />
-              <PerturbationScatterRow
-                regulator={reg}
-                datasets={datasets}
-                method={method}
-                col={col}
-                filters={filters}
-                datasetDisplay={datasetDisplay}
-              />
-            </>
+
+          {datasets.length >= 2 ? (
+            <Tabs value={tab} onValueChange={setTab}>
+              <TabsList>
+                <TabsTrigger value="matrix">Correlation Matrix</TabsTrigger>
+                <TabsTrigger value="distribution">Pair Distribution</TabsTrigger>
+                <TabsTrigger value="scatter">Gene Scatter</TabsTrigger>
+              </TabsList>
+
+              {/* --- Correlation Matrix tab --- */}
+              <TabsContent value="matrix">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={executeAnalysis}
+                      disabled={!hasUnapplied}
+                      className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Execute Analysis
+                    </button>
+                    {hasUnapplied ? (
+                      <span className="text-sm text-amber-700">
+                        Selection changed. Click Execute Analysis to apply.
+                      </span>
+                    ) : hasCommitted ? (
+                      <span className="text-sm text-slate-500">
+                        {committedKeys.size} pair
+                        {committedKeys.size === 1 ? "" : "s"} committed.
+                      </span>
+                    ) : (
+                      <span className="text-sm text-slate-500">
+                        Click a cell to select a pair.
+                      </span>
+                    )}
+                  </div>
+                  {corrQuery.isPending ? (
+                    <PlotSkeleton />
+                  ) : corrQuery.data ? (
+                    <CorrelationMatrix
+                      resp={corrQuery.data}
+                      datasets={datasets}
+                      datasetDisplay={datasetDisplay}
+                      pendingKeys={pendingKeys}
+                      onToggle={togglePending}
+                    />
+                  ) : null}
+                </div>
+              </TabsContent>
+
+              {/* --- Pair Distribution tab --- */}
+              <TabsContent value="distribution">
+                {!hasCommitted ? (
+                  <p className="text-sm text-slate-600">
+                    Select cells in the Correlation Matrix and click Execute
+                    Analysis to view their distributions.
+                  </p>
+                ) : corrQuery.isPending ? (
+                  <PlotSkeleton />
+                ) : corrQuery.data ? (
+                  <PerturbationCorrBoxplot
+                    resp={corrQuery.data}
+                    selectedRegulator={reg}
+                    datasetDisplay={datasetDisplay}
+                    sampleConditionsByDB={sampleConditionsByDB}
+                    onRegulatorClick={setRegulator}
+                    regulatorDisplayMap={corrQuery.data.regulatorDisplay}
+                    committedPairKeys={committedKeys}
+                  />
+                ) : null}
+              </TabsContent>
+
+              {/* --- Gene Scatter tab --- */}
+              <TabsContent value="scatter">
+                {!hasCommitted ? (
+                  <p className="text-sm text-slate-600">
+                    Select cells in the Correlation Matrix and click Execute
+                    Analysis to view gene-level scatter plots.
+                  </p>
+                ) : !reg ? (
+                  <p className="text-sm text-slate-600">
+                    Select a regulator to view gene-level scatter plots.
+                  </p>
+                ) : (
+                  <>
+                    {missingDatasetNames.length > 0 ? (
+                      <p className="text-sm text-slate-500">
+                        {reg} was not found in: {missingDatasetNames.join(", ")}.
+                        Pairs involving these datasets are omitted.
+                      </p>
+                    ) : null}
+                    <PerturbationScatterRow
+                      regulator={reg}
+                      pairs={committedPairTuples}
+                      method={method}
+                      col={col}
+                      filters={filters}
+                      datasetDisplay={datasetDisplay}
+                    />
+                  </>
+                )}
+              </TabsContent>
+            </Tabs>
           ) : null}
         </ErrorBoundary>
       </div>
