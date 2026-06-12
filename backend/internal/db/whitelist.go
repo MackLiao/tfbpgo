@@ -77,6 +77,18 @@ func NewWhitelist(m *Manifests) (*Whitelist, error) {
 		if d.PValueCol != "" && !SafeIdentRE.MatchString(d.PValueCol) {
 			return nil, fmt.Errorf("manifest contains unsafe pvalue_col for %q: %q", d.DBName, d.PValueCol)
 		}
+		// log10p_col / neglog10p_col land in schema_version=6 and are
+		// interpolated into SQL by api.resolveMeasurementCol →
+		// renderCorrPairSQL / renderScatterSQL → quotedIdent. Re-verify
+		// both here so the fail-fast-at-startup contract holds: a
+		// hand-edited manifest with an injection payload in either column
+		// is rejected at boot, not on the first col=log10pval request.
+		if d.Log10PCol != "" && !SafeIdentRE.MatchString(d.Log10PCol) {
+			return nil, fmt.Errorf("manifest contains unsafe log10p_col for %q: %q", d.DBName, d.Log10PCol)
+		}
+		if d.NegLog10PCol != "" && !SafeIdentRE.MatchString(d.NegLog10PCol) {
+			return nil, fmt.Errorf("manifest contains unsafe neglog10p_col for %q: %q", d.DBName, d.NegLog10PCol)
+		}
 		// sample_id_field is interpolated into SQL by the
 		// /sample-conditions handler (sample_conditions.go) as the SELECT
 		// list's join key. Re-verify the manifest value at startup so a

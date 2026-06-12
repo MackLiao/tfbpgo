@@ -122,6 +122,113 @@ func TestNewWhitelist_AllowsEmptyPValueCol(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestNewWhitelist_RejectsUnsafeLog10PCol locks the v6 gate: log10p_col is
+// interpolated into SQL by api.resolveMeasurementCol → renderCorrPairSQL /
+// renderScatterSQL → quotedIdent, so a malicious value in a hand-edited
+// manifest must be rejected at startup, not on the first col=log10pval
+// request.
+func TestNewWhitelist_RejectsUnsafeLog10PCol(t *testing.T) {
+	_, err := NewWhitelist(&Manifests{
+		Datasets: []DatasetRow{
+			{DBName: "rossi", Log10PCol: "x; DROP TABLE y"},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsafe log10p_col")
+}
+
+// TestNewWhitelist_RejectsUnsafeNegLog10PCol — same v6 gate for
+// neglog10p_col, which feeds the same SQL-interpolation path.
+func TestNewWhitelist_RejectsUnsafeNegLog10PCol(t *testing.T) {
+	_, err := NewWhitelist(&Manifests{
+		Datasets: []DatasetRow{
+			{DBName: "rossi", NegLog10PCol: "x; DROP TABLE y"},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsafe neglog10p_col")
+}
+
+// TestNewWhitelist_AllowsWellFormedLog10PCols — the base rossi / chec_m2025
+// binding datasets carry real log10 / -log10 p-value column names. A
+// well-formed pair (and the empty pair used by every other dataset) must
+// pass the v6 gate.
+func TestNewWhitelist_AllowsWellFormedLog10PCols(t *testing.T) {
+	_, err := NewWhitelist(&Manifests{
+		Datasets: []DatasetRow{
+			{DBName: "rossi", Log10PCol: "log10_pval", NegLog10PCol: "neg_log10_pval"},
+			{DBName: "hackett", Log10PCol: "", NegLog10PCol: ""},
+		},
+	})
+	require.NoError(t, err)
+}
+
+// TestNewWhitelist_DatasetIdentColumnsAllReVerified is a security-suite
+// checklist: it ENUMERATES every identifier-shaped dataset_manifest column
+// that lands in interpolated SQL and asserts each one independently rejects
+// an unsafe value. If a future schema bump adds another interpolated column
+// without a SafeIdentRE guard in NewWhitelist, the maintainer must extend
+// this table — the failing-to-extend case is what catches the missing
+// guard in review. condition_cols / upstream_cols are CSV-encoded, so the
+// unsafe payload is supplied as a single token.
+func TestNewWhitelist_DatasetIdentColumnsAllReVerified(t *testing.T) {
+	const payload = "x; DROP TABLE y"
+	cases := []struct {
+		// column is the dataset_manifest column under test; mutate sets
+		// the unsafe payload on a fresh DatasetRow.
+		column string
+		mutate func(*DatasetRow)
+		// substr is a fragment of the expected error so the assertion is
+		// pinned to the right guard, not just "some error".
+		substr string
+	}{
+		{
+			column: "effect_col",
+			mutate: func(d *DatasetRow) { d.EffectCol = payload },
+			substr: "unsafe effect_col",
+		},
+		{
+			column: "pvalue_col",
+			mutate: func(d *DatasetRow) { d.PValueCol = payload },
+			substr: "unsafe pvalue_col",
+		},
+		{
+			column: "sample_id_field",
+			mutate: func(d *DatasetRow) { d.SampleIDField = payload },
+			substr: "unsafe sample_id_field",
+		},
+		{
+			column: "log10p_col",
+			mutate: func(d *DatasetRow) { d.Log10PCol = payload },
+			substr: "unsafe log10p_col",
+		},
+		{
+			column: "neglog10p_col",
+			mutate: func(d *DatasetRow) { d.NegLog10PCol = payload },
+			substr: "unsafe neglog10p_col",
+		},
+		{
+			column: "condition_cols",
+			mutate: func(d *DatasetRow) { d.ConditionCols = payload },
+			substr: "unsafe condition_cols",
+		},
+		{
+			column: "upstream_cols",
+			mutate: func(d *DatasetRow) { d.UpstreamCols = payload },
+			substr: "unsafe upstream_cols",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.column, func(t *testing.T) {
+			d := DatasetRow{DBName: "dataset_under_test"}
+			tc.mutate(&d)
+			_, err := NewWhitelist(&Manifests{Datasets: []DatasetRow{d}})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.substr)
+		})
+	}
+}
+
 // TestNewWhitelist_RejectsUnsafeConditionCols locks the v4 manifest gate
 // for `dataset_manifest.condition_cols`. Entries are CSV-encoded and
 // interpolated into SQL by handlers that emit the sample-condition
