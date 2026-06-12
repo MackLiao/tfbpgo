@@ -483,6 +483,17 @@ func (s *Server) buildScatterResponse(
 			Observe(elapsed.Seconds())
 	}
 
+	// log10pval display transform (BIND-3/PERT-1): for col=log10pval the scatter
+	// shows -log10(p), with each side transformed per its own dataset's source
+	// column. Applied ONLY for Pearson — Spearman scatter values are RANK()
+	// integers, to which the transform does not apply (reference branches on the
+	// same condition: workspace.py:1175-1185). Done BEFORE pearsonR so the
+	// returned `r` matches the reference, which computes r on the transformed
+	// series (workspace.py:1190). Correlation inputs in /corr stay UNtransformed.
+	if col == "log10pval" && method != "spearman" {
+		transformScatterPoints(points, log10pSourceFor(rowA), log10pSourceFor(rowB))
+	}
+
 	resp := domain.ScatterResponse{
 		Regulator: regulator,
 		DBA:       dbA,

@@ -23,8 +23,9 @@ var validCorrMethods = map[string]struct{}{
 }
 
 var validCorrCols = map[string]struct{}{
-	"effect": {},
-	"pvalue": {},
+	"effect":    {},
+	"pvalue":    {},
+	"log10pval": {},
 }
 
 func validateCorrMethod(method string) error {
@@ -39,21 +40,33 @@ func validateCorrMethod(method string) error {
 
 func validateCorrCol(col string) error {
 	if col == "" {
-		return fmt.Errorf("col required (effect|pvalue)")
+		return fmt.Errorf("col required (effect|pvalue|log10pval)")
 	}
 	if _, ok := validCorrCols[col]; !ok {
-		return fmt.Errorf("col: unknown value %q (want effect|pvalue)", col)
+		return fmt.Errorf("col: unknown value %q (want effect|pvalue|log10pval)", col)
 	}
 	return nil
 }
 
-// resolveMeasurementCol picks the dataset's effect_col or pvalue_col
-// from the manifest. Mirrors Shiny's get_measurement_column behavior:
-// when the caller asks for `col=pvalue` but the dataset has no
-// pvalue_col (e.g. hackett), fall back to the effect_col. The Python
-// app uses .get(col_kind, effect_col) for the same reason — many
-// downstream charts treat the fallback as "no p-value available, show
-// effect-only" rather than a hard error.
+// resolveMeasurementCol picks the dataset's effect_col, pvalue_col, or the
+// most-direct -log10(p) source column from the manifest. Mirrors Shiny's
+// get_measurement_column (reference/tfbpshiny/modules/binding/queries.py:26-56):
+//
+//	effect    -> effect_col
+//	pvalue    -> pvalue_col or effect_col
+//	log10pval -> neglog10p_col or log10p_col or pvalue_col or effect_col
+//
+// When the caller asks for `col=pvalue` but the dataset has no pvalue_col
+// (e.g. hackett), fall back to the effect_col. The Python app uses the same
+// or-chain for the same reason — many downstream charts treat the fallback as
+// "no p-value available, show effect-only" rather than a hard error.
+//
+// For log10pval the CORRELATION uses this resolved column DIRECTLY (Pearson
+// corr is sign-flip invariant, so corr on log_poisson_pval == corr on
+// -log_poisson_pval; Spearman is monotone-invariant, so ranking by
+// log_poisson_pval == ranking by poisson_pval). The -log10 display transform
+// is applied only to the SCATTER points (applyLog10PTransform) — never to the
+// correlation inputs. See reference workspace.py:1169-1190.
 func resolveMeasurementCol(row db.DatasetRow, col string) (string, error) {
 	switch col {
 	case "effect":
@@ -62,6 +75,24 @@ func resolveMeasurementCol(row db.DatasetRow, col string) (string, error) {
 		}
 		return row.EffectCol, nil
 	case "pvalue":
+		if row.PValueCol != "" {
+			return row.PValueCol, nil
+		}
+		if row.EffectCol == "" {
+			return "", fmt.Errorf("no effect_col fallback in manifest for dataset %q", row.DBName)
+		}
+		return row.EffectCol, nil
+	case "log10pval":
+		// neglog10p_col > log10p_col > pvalue_col > effect_col (first non-empty).
+		// No dataset currently ships a neglog10p_col, but the chain is kept in
+		// lockstep with the reference so a future artifact that pre-computes one
+		// resolves without a code change.
+		if row.NegLog10PCol != "" {
+			return row.NegLog10PCol, nil
+		}
+		if row.Log10PCol != "" {
+			return row.Log10PCol, nil
+		}
 		if row.PValueCol != "" {
 			return row.PValueCol, nil
 		}
@@ -83,7 +114,18 @@ func resolveMeasurementCol(row db.DatasetRow, col string) (string, error) {
 //
 // Anything matching /pval/i is treated as a p-value. The column names that
 // actually flow through this path are all in dataset_manifest.{effect_col,
-// pvalue_col} and already SafeIdentRE-validated; no SQL-injection vector.
+// pvalue_col,log10p_col,neglog10p_col} and already SafeIdentRE-validated; no
+// SQL-injection vector.
+//
+// log10pval edge cases (Spearman direction parity, ranks are monotone-invariant):
+//   - log10p_col   = log_poisson_pval = log10(p) — name contains "pval" → ASC.
+//     log10(p) is monotone-increasing in p, so smaller log10(p) = smaller p =
+//     more significant = higher rank — correct (== ranking by poisson_pval ASC).
+//   - neglog10p_col = -log10(p) — name does NOT contain "pval" → treated as an
+//     "effect" col → ABS(val) DESC. -log10(p) is monotone-DEcreasing in p, so
+//     larger -log10(p) = smaller p = more significant = higher rank — also
+//     correct. No dataset currently ships a neglog10p_col, but the heuristic is
+//     directionally right for both source types if one appears.
 func isPValueCol(col string) bool {
 	return strings.Contains(strings.ToLower(col), "pval")
 }
@@ -98,6 +140,97 @@ func orderExpr(side, col string) string {
 		return fmt.Sprintf("val_%s ASC", side)
 	}
 	return fmt.Sprintf("ABS(val_%s) DESC", side)
+}
+
+// log10pFloor is the lower clamp applied to a raw p-value before -log10 — a
+// p of 0 would otherwise map to +Inf. -log10(1e-10) = 10 is the resulting
+// upper cap on the transformed value. Mirrors LOG10P_FLOOR in
+// reference/tfbpshiny/modules/binding/queries.py:23.
+const log10pFloor = 1e-10
+
+// log10pCap is the upper cap on the displayed -log10(p) value, = -log10(floor).
+const log10pCap = 10.0
+
+// log10pSource classifies how a dataset's resolved log10pval column relates to
+// the -log10(p) value the scatter wants to display. Mirrors get_log10p_source
+// in reference/tfbpshiny/modules/binding/queries.py:59-89.
+type log10pSource int
+
+const (
+	// srcNone: no p-value variant exists; -log10(p) is unavailable → no transform.
+	srcNone log10pSource = iota
+	// srcNegLog10P: column is already -log10(p) → apply the upper cap only.
+	srcNegLog10P
+	// srcLog10P: column is log10(p) → negate, then cap.
+	srcLog10P
+	// srcPval: column is the raw p-value → -log10(clip(p, floor)) (capped at 10).
+	srcPval
+)
+
+// log10pSourceFor returns the transform source for one dataset, from its
+// manifest columns — neglog10p > log10p > pvalue > none. Independent per side:
+// db_a and db_b may resolve differently. Mirrors get_log10p_source
+// (reference/.../binding/queries.py:59-89), which keys on the same precedence.
+func log10pSourceFor(row db.DatasetRow) log10pSource {
+	switch {
+	case row.NegLog10PCol != "":
+		return srcNegLog10P
+	case row.Log10PCol != "":
+		return srcLog10P
+	case row.PValueCol != "":
+		return srcPval
+	default:
+		return srcNone
+	}
+}
+
+// applyLog10PTransform maps one scanned scatter value to its -log10(p) display
+// value for the given source. Mirrors _apply_log10p_transform
+// (reference/tfbpshiny/modules/binding/server/workspace.py:504-535):
+//
+//	neglog10p: value already = -log10(p)  -> min(value, cap)
+//	log10p:    value = log10(p)           -> min(-value, cap)
+//	pval:      value = raw p              -> -log10(max(p, floor))  (== capped at cap)
+//	none:      no transform (value passes through unchanged)
+//
+// NaN/±Inf pass through to preserve the B-1 "plot gap, not a 500" contract:
+// a non-finite input stays non-finite (serialized as JSON null by SafeFloat)
+// rather than being silently coerced. Note np.clip on NaN returns NaN, and
+// -log10(NaN)=NaN / -log10(+Inf)=-Inf, matching pandas/numpy here.
+func applyLog10PTransform(v float64, src log10pSource) float64 {
+	switch src {
+	case srcNegLog10P:
+		return math.Min(v, log10pCap)
+	case srcLog10P:
+		return math.Min(-v, log10pCap)
+	case srcPval:
+		p := v
+		if p < log10pFloor {
+			// clip(lower=floor): only finite values below the floor are raised.
+			// NaN comparisons are false, so NaN is left untouched (passes through).
+			p = log10pFloor
+		}
+		return -math.Log10(p)
+	default: // srcNone
+		return v
+	}
+}
+
+// transformScatterPoints applies the -log10(p) display transform IN PLACE to
+// every point's ValA/ValB, using each SIDE's independent source. Caller must
+// only invoke this for col=log10pval AND method != spearman — Spearman scatter
+// values are RANK() integers, to which the transform does not apply (the
+// reference branches on the same condition: workspace.py:1175-1185).
+//
+// This is applied server-side (not client-side) so the frontend just plots the
+// returned numbers and the scatter's `r` — which the reference computes on the
+// transformed series (workspace.py:1190 `r = val_a.corr(val_b)` after the
+// transform) — is parity-correct when pearsonR runs over these points.
+func transformScatterPoints(points []domain.ScatterPoint, srcA, srcB log10pSource) {
+	for i := range points {
+		points[i].ValA = domain.SafeFloat(applyLog10PTransform(float64(points[i].ValA), srcA))
+		points[i].ValB = domain.SafeFloat(applyLog10PTransform(float64(points[i].ValB), srcB))
+	}
 }
 
 // pairSpec carries the rendered SQL identifiers for one (dbA, dbB) pair.
