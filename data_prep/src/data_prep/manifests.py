@@ -502,6 +502,49 @@ def write_dataset_manifest(
     )
 
 
+def assert_measurement_columns_exist(conn: duckdb.DuckDBPyConnection) -> None:
+    """Fail the build if any measurement column in dataset_manifest is absent
+    from its materialized data table.
+
+    The effect_col / pvalue_col / log10p_col / neglog10p_col values are
+    interpolated VERBATIM into runtime SQL — comparison_topn.buildResponsiveExpr
+    (``ABS(p.<effect_col>) > ? AND p.<pvalue_col> < ?``) and the log10pval
+    scatter transform — and the Go service only RE-checks their *name* against a
+    regex at startup, never their existence. A manifest/table drift (e.g. degron
+    declaring ``padj`` when the upstream view exposes a differently-named
+    adjusted p-value, or a ``_peaks`` variant whose materialized table lacks
+    ``peak_score``) would otherwise ship silently-wrong responsive ratios, or
+    500 at query time on a missing column. Catch it here, at build time.
+
+    Datasets whose data table is not (yet) materialized are skipped —
+    ``columns_of()`` returns ``[]`` for an absent table — so this is a no-op for
+    partial-table bootstraps and only bites once a table exists with the wrong
+    columns. Every real build materializes the data tables before _run_manifests
+    invokes this, so the production roster is fully checked.
+    """
+    rows = conn.execute(
+        "SELECT db_name, effect_col, pvalue_col, log10p_col, neglog10p_col "
+        "FROM dataset_manifest ORDER BY db_name"
+    ).fetchall()
+    for db_name, effect_col, pvalue_col, log10p_col, neglog10p_col in rows:
+        data_cols = set(columns_of(conn, db_name))
+        if not data_cols:
+            continue  # table not materialized in this build; nothing to verify
+        for label, mcol in (
+            ("effect_col", effect_col),
+            ("pvalue_col", pvalue_col),
+            ("log10p_col", log10p_col),
+            ("neglog10p_col", neglog10p_col),
+        ):
+            if mcol and mcol not in data_cols:
+                raise ValueError(
+                    f"dataset {db_name!r}: {label}={mcol!r} (dataset_manifest) "
+                    f"does not exist on the materialized {db_name!r} table "
+                    f"(columns: {sorted(data_cols)}). Fix DATASET_MEASUREMENT_COLUMNS "
+                    "or the upstream view before building."
+                )
+
+
 # Mirrors HIDDEN_FILTER_FIELDS from
 # reference/tfbpshiny/utils/vdb_init.py:20-36. Update both together if
 # this set changes; the runtime Go service consults field_manifest, not

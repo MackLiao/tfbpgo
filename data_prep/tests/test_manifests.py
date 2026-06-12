@@ -17,6 +17,7 @@ from data_prep.manifests import (
     PRIMARY_DATASETS,
     SCHEMA_VERSION,
     assert_default_filters_in_field_manifest,
+    assert_measurement_columns_exist,
     harvest_column_metadata,
     write_artifact_manifest,
     write_dataset_manifest,
@@ -571,6 +572,67 @@ def test_dataset_manifest_raises_when_db_name_missing_from_measurement_map(
     }
     with pytest.raises(ValueError, match="DATASET_MEASUREMENT_COLUMNS"):
         write_dataset_manifest(fresh_duckdb, config)
+
+
+# Minimal config for `degron`, which declares pvalue_col='padj' in
+# DATASET_MEASUREMENT_COLUMNS — the H2 failure mode (the `padj` adjusted p-value
+# is interpolated verbatim into runtime SQL but its existence is never validated
+# by the Go startup, only its name).
+_DEGRON_YAML = textwrap.dedent(
+    """\
+    repositories:
+      BrentLab/degron:
+        dataset:
+          degron:
+            tags:
+              data_type: perturbation
+              assay: degron
+              display_name: "Degron"
+            db_name: degron
+            sample_id:
+              field: sample_id
+    """
+)
+
+
+def test_assert_measurement_columns_exist_catches_missing_declared_column(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """A measurement column declared in the manifest but ABSENT from the
+    materialized data table must fail the build (the degron `padj` failure mode:
+    a missing column would otherwise 500 at query time, a renamed one would ship
+    silently-wrong responsive ratios)."""
+    config = yaml.safe_load(_DEGRON_YAML)
+    write_dataset_manifest(fresh_duckdb, config)
+    fresh_duckdb.execute(
+        "CREATE TABLE degron (sample_id VARCHAR, regulator_locus_tag VARCHAR, "
+        "target_locus_tag VARCHAR, log2FoldChange DOUBLE)"  # NO padj column
+    )
+    with pytest.raises(ValueError, match="padj"):
+        assert_measurement_columns_exist(fresh_duckdb)
+
+
+def test_assert_measurement_columns_exist_passes_when_columns_present(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    config = yaml.safe_load(_DEGRON_YAML)
+    write_dataset_manifest(fresh_duckdb, config)
+    fresh_duckdb.execute(
+        "CREATE TABLE degron (sample_id VARCHAR, regulator_locus_tag VARCHAR, "
+        "target_locus_tag VARCHAR, log2FoldChange DOUBLE, padj DOUBLE)"
+    )
+    assert_measurement_columns_exist(fresh_duckdb)  # must not raise
+
+
+def test_assert_measurement_columns_exist_skips_unmaterialized_table(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """A manifest row whose data table isn't materialized in this build is
+    skipped (partial-table bootstrap) — no false failure."""
+    config = yaml.safe_load(_DEGRON_YAML)
+    write_dataset_manifest(fresh_duckdb, config)
+    # No degron data table created.
+    assert_measurement_columns_exist(fresh_duckdb)  # must not raise
 
 
 def test_dataset_manifest_raises_when_sample_id_field_missing(

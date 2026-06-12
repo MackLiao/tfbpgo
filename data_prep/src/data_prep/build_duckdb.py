@@ -22,6 +22,7 @@ import yaml
 
 from data_prep.manifests import (
     assert_default_filters_in_field_manifest,
+    assert_measurement_columns_exist,
     harvest_column_metadata,
     write_artifact_manifest,
     write_dataset_manifest,
@@ -53,6 +54,13 @@ def _run_manifests(
 ) -> None:
     config = yaml.safe_load(yaml_config_path.read_text())
     write_dataset_manifest(conn, config)
+    # H2: fail closed if any declared measurement column (effect/pvalue/log10p/
+    # neglog10p) is absent from its materialized data table. Runs here, after
+    # materialization, so a manifest/table drift (e.g. degron's `padj`, or a
+    # `_peaks` variant missing `peak_score`) fails `make data-build` loudly
+    # instead of shipping silently-wrong ratios or 500-ing at query time. The
+    # Go runtime interpolates these verbatim and only regex-checks the name.
+    assert_measurement_columns_exist(conn)
 
     db_names = [
         r[0]
