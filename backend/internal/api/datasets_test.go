@@ -75,6 +75,17 @@ func TestDatasets_V4Metadata(t *testing.T) {
 	// v5: datasets endpoint surfaces upstreamCols (cascade) + description (DM-2).
 	require.Equal(t, "Synthetic calling-cards fixture dataset.", cc.Description)
 	require.Equal(t, []string{}, cc.UpstreamCols)
+
+	// v6: every fixture dataset is a base dataset → isPrimary=true.
+	require.True(t, cc.IsPrimary)
+	require.True(t, hk.IsPrimary)
+
+	// v6: harbison is no longer pre-selected (dropped from
+	// DEFAULT_ACTIVE_DATASETS), but it is still a primary (base) dataset.
+	hb, ok := byName["harbison"]
+	require.True(t, ok)
+	require.False(t, hb.DefaultActive)
+	require.True(t, hb.IsPrimary)
 }
 
 // TestDatasets_V4_DefaultFiltersWireShape pins the exact JSON shape

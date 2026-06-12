@@ -869,6 +869,7 @@ components:
         - defaultActive
         - defaultFilters
         - conditionCols
+        - isPrimary
       properties:
         dbName:
           type: string
@@ -913,6 +914,13 @@ components:
             `dataset_manifest.condition_cols`.
           items:
             type: string
+        isPrimary:
+          type: boolean
+          description: |
+            v6: whether this is a base dataset shown in the dataset selector.
+            The 11 promoter-set variants are `isPrimary: false` —
+            comparison-only and hidden from the selector. Mirrors Shiny's
+            `PRIMARY_DATASETS` (`reference/tfbpshiny/utils/vdb_init.py`).
 
     DatasetsResponse:
       type: object

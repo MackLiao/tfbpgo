@@ -28,6 +28,12 @@ type DatasetEntry struct {
 	// sidebar toggle tooltip (DM-2); the frontend MUST HTML-escape it.
 	UpstreamCols []string `json:"upstreamCols"`
 	Description  string   `json:"description"`
+	// v6: only primary datasets are shown in the dataset selector; the
+	// promoter-set variants are comparison-only (IsPrimary=false) and the
+	// frontend hides them from the selector. Mirrors the reference
+	// PRIMARY_DATASETS gating. (log10p columns stay server-side and are NOT
+	// part of the wire contract.)
+	IsPrimary bool `json:"isPrimary"`
 }
 
 type DatasetsResponse struct {

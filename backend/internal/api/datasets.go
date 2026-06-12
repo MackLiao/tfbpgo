@@ -54,6 +54,7 @@ func (s *Server) buildDatasetsResponse() ([]byte, error) {
 			ConditionCols:  cc,
 			UpstreamCols:   uc,
 			Description:    d.Description,
+			IsPrimary:      d.IsPrimary,
 		})
 	}
 	return jsonMarshal(out)

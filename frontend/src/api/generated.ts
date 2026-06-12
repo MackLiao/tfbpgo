@@ -1230,6 +1230,13 @@ export interface components {
              *     `dataset_manifest.condition_cols`.
              */
             conditionCols: string[];
+            /**
+             * @description v6: whether this is a base dataset shown in the dataset selector.
+             *     The 11 promoter-set variants are `isPrimary: false` —
+             *     comparison-only and hidden from the selector. Mirrors Shiny's
+             *     `PRIMARY_DATASETS` (`reference/tfbpshiny/utils/vdb_init.py`).
+             */
+            isPrimary: boolean;
         };
         DatasetsResponse: {
             datasets: components["schemas"]["DatasetEntry"][];

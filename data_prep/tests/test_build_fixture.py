@@ -83,7 +83,7 @@ def test_fixture_dataset_manifest_v3_columns(built_fixture: Path) -> None:
         sv = conn.execute("SELECT schema_version FROM artifact_manifest").fetchone()[0]
     finally:
         conn.close()
-    assert sv == 5
+    assert sv == 6
     by_name = {db: (eff, pv) for (db, eff, pv) in rows}
     assert by_name["callingcards"] == ("callingcards_enrichment", "poisson_pval")
     assert by_name["hackett"] == ("log2_shrunken_timecourses", "")
@@ -115,8 +115,9 @@ def test_fixture_field_manifest_role_column(built_fixture: Path) -> None:
 
 def test_fixture_dataset_manifest_v4_columns(built_fixture: Path) -> None:
     """v4: dataset_manifest gains default_active / default_filters /
-    condition_cols. All fixture datasets are default_active=TRUE; harbison +
-    hackett have a default_filters spec; condition_cols is derived (DM-1)."""
+    condition_cols. callingcards / hackett / kemmeren are default_active=TRUE;
+    v6 drops harbison from DEFAULT_ACTIVE_DATASETS so harbison is now FALSE.
+    hackett has a default_filters spec; condition_cols is derived (DM-1)."""
     conn = duckdb.connect(str(built_fixture), read_only=True)
     try:
         rows = conn.execute(
@@ -129,6 +130,8 @@ def test_fixture_dataset_manifest_v4_columns(built_fixture: Path) -> None:
     # DM-5 / real-data shape: callingcards has no experimental-condition column
     # in {db}_meta, so condition_cols is derived to empty.
     assert by_name["callingcards"] == (True, "", "")
+    # v6: harbison is no longer pre-selected (dropped from DEFAULT_ACTIVE_DATASETS).
+    assert by_name["harbison"][0] is False
     assert by_name["hackett"] == (
         True,
         '{"time":{"type":"numeric","value":[45,45]}}',
@@ -136,6 +139,26 @@ def test_fixture_dataset_manifest_v4_columns(built_fixture: Path) -> None:
         # are hidden, so they no longer leak into the hover label).
         "time",
     )
+
+
+def test_fixture_dataset_manifest_v6_columns(built_fixture: Path) -> None:
+    """v6: dataset_manifest gains is_primary / log10p_col / neglog10p_col. All
+    four fixture datasets (callingcards, harbison, hackett, kemmeren) are base
+    datasets in PRIMARY_DATASETS, so is_primary=TRUE for all; none carry a
+    log10p_col (only base rossi / chec_m2025 do, which the fixture omits)."""
+    conn = duckdb.connect(str(built_fixture), read_only=True)
+    try:
+        rows = conn.execute(
+            "SELECT db_name, is_primary, log10p_col, neglog10p_col "
+            "FROM dataset_manifest ORDER BY db_name"
+        ).fetchall()
+        sv = conn.execute("SELECT schema_version FROM artifact_manifest").fetchone()[0]
+    finally:
+        conn.close()
+    assert sv == 6
+    by_name = {db: (bool(p), l10, nl10) for (db, p, l10, nl10) in rows}
+    for db in ("callingcards", "harbison", "hackett", "kemmeren"):
+        assert by_name[db] == (True, "", ""), db
 
 
 def test_fixture_field_manifest_v4_columns(built_fixture: Path) -> None:

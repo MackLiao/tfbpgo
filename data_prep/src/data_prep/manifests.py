@@ -37,18 +37,59 @@ class ColumnFieldMeta(NamedTuple):
 #     (best-effort, from labretriever column metadata) rather than always empty
 #     (DM-4).
 #   * field_manifest field SET is sourced from {db}_meta only (P0-3/SD-3/DM-0).
-SCHEMA_VERSION: int = 5
+#
+# v6 (2026-06-11 promoter-sets + comparison parity re-audit):
+#   * dataset_manifest gains `is_primary` (mirrors
+#     reference/tfbpshiny/utils/vdb_init.py:PRIMARY_DATASETS — only base
+#     datasets are shown in the dataset selector; the 11 promoter-set variants
+#     are comparison-only and hidden from the selector).
+#   * dataset_manifest gains `log10p_col` / `neglog10p_col` (mirrors reference
+#     DATASET_COLUMNS: the pre-computed log10 / -log10 p-value columns some
+#     binding datasets carry; both default '' where absent). The FEATURE that
+#     consumes them is a later task — v6 only carries the column names.
+#   * DEFAULT_ACTIVE_DATASETS drops `harbison` (parity with the reference set,
+#     which no longer pre-selects it).
+SCHEMA_VERSION: int = 6
 
 
 # ---------------------------------------------------------------------------
 # v4 additions — per-(db, field) and per-dataset UX metadata.
 # ---------------------------------------------------------------------------
 
+# v6: the canonical (base) db_name for each underlying dataset. When several
+# db_names exist for the same experiment quantified against different promoter
+# sets (e.g. rossi vs rossi_mindel / rossi_500bp / rossi_intergenic /
+# rossi_peaks), only the entry in this set is shown in the dataset selector;
+# the promoter-set variants stay registered in the artifact but are
+# comparison-only and hidden from the selector. Mirrors
+# reference/tfbpshiny/utils/vdb_init.py:PRIMARY_DATASETS exactly.
+#
+# The 11 promoter-set variants (callingcards_{mindel,500bp,intergenic};
+# rossi_{mindel,500bp,intergenic,peaks}; chec_m2025_{mindel,500bp,intergenic,
+# peaks}) are deliberately EXCLUDED so the frontend selector hides them — they
+# are accessible only through the comparison tab, matching the reference
+# PRIMARY_DATASETS gating.
+PRIMARY_DATASETS: frozenset[str] = frozenset(
+    {
+        "callingcards",
+        "harbison",
+        "rossi",
+        "chec_m2025",
+        "hackett",
+        "hu_reimand",
+        "hughes_overexpression",
+        "hughes_knockout",
+        "kemmeren",
+        "degron",
+    }
+)
+
+
 # Datasets whose toggles are on by default on first visit. Mirrors
-# reference/tfbpshiny/utils/vdb_init.py:40-50.
+# reference/tfbpshiny/utils/vdb_init.py:60-69 (v6: `harbison` is no longer
+# pre-selected — the reference set dropped it).
 DEFAULT_ACTIVE_DATASETS: frozenset[str] = frozenset(
     {
-        "harbison",
         "rossi",
         "chec_m2025",
         "callingcards",
@@ -194,49 +235,69 @@ def _lookup_field_level_definitions(db_name: str, field: str) -> str:
     return json.dumps(val, sort_keys=True, separators=(",", ":"))
 
 
-# Per-dataset measurement column map. Each value is (effect_col, pvalue_col).
-# pvalue_col may be '' for datasets that have no associated p-value column
-# (e.g. hackett, hughes_*). These mirror the previously hard-coded Go-side
-# maps bindingMeasurementColumn / pertMeasurementColumn and the per-dataset
-# switch inside comparison_topn.buildResponsiveExpr.
+# Per-dataset measurement column map. Each value is
+# (effect_col, pvalue_col, log10p_col, neglog10p_col), mirroring the reference
+# DATASET_COLUMNS (binding/perturbation queries.py). pvalue_col may be '' for
+# datasets that have no associated p-value column (e.g. hackett, hughes_*).
+# These mirror the previously hard-coded Go-side maps bindingMeasurementColumn
+# / pertMeasurementColumn and the per-dataset switch inside
+# comparison_topn.buildResponsiveExpr.
+#
+# v6: log10p_col is the pre-computed log10 p-value column. Only the BASE rossi
+# and chec_m2025 binding datasets carry one (`log_poisson_pval`); every other
+# dataset — including ALL promoter-set variants and every perturbation dataset
+# — has log10p_col=''. The variants keep '' even though their parent
+# (rossi/chec_m2025) has one: log10p is unused for the variants (they are
+# comparison-only and hidden from the binding tab), so we do NOT assert a
+# `log_poisson_pval` column that we have not confirmed exists on the variant
+# tables. neglog10p_col='' for every dataset (no -log10 column is materialized
+# today; the field is carried for forward compatibility).
 #
 # Datasets present in dataset_manifest but absent from this map will cause
 # write_dataset_manifest to raise ValueError — the artifact MUST carry the
 # effect/pvalue column names so the Go service can serve the dataset.
-DATASET_MEASUREMENT_COLUMNS: dict[str, tuple[str, str]] = {
+DATASET_MEASUREMENT_COLUMNS: dict[str, tuple[str, str, str, str]] = {
     # binding
-    "callingcards": ("callingcards_enrichment", "poisson_pval"),
-    "harbison": ("effect", "pvalue"),
-    "rossi": ("enrichment", "poisson_pval"),
-    "chec_m2025": ("enrichment", "poisson_pval"),
+    "callingcards": ("callingcards_enrichment", "poisson_pval", "", ""),
+    "harbison": ("effect", "pvalue", "", ""),
+    "rossi": ("enrichment", "poisson_pval", "log_poisson_pval", ""),
+    "chec_m2025": ("enrichment", "poisson_pval", "log_poisson_pval", ""),
     # binding — promoter-set variants (2026-06-11 parity re-audit). Each is the
     # same assay re-quantified over a different promoter-region definition, so
-    # it shares its parent's measurement columns. The `_peaks` variants are the
-    # original-authors' peak-calling output and carry only a `peak_score`
-    # binding score (no p-value column). Mirrors reference BINDING_CONFIGS
-    # (comparison/queries.py) + DATASET_COLUMNS (binding/queries.py).
-    "callingcards_mindel": ("callingcards_enrichment", "poisson_pval"),
-    "callingcards_500bp": ("callingcards_enrichment", "poisson_pval"),
-    "callingcards_intergenic": ("callingcards_enrichment", "poisson_pval"),
-    "rossi_mindel": ("enrichment", "poisson_pval"),
-    "rossi_500bp": ("enrichment", "poisson_pval"),
-    "rossi_intergenic": ("enrichment", "poisson_pval"),
-    "rossi_peaks": ("peak_score", ""),
-    "chec_m2025_mindel": ("enrichment", "poisson_pval"),
-    "chec_m2025_500bp": ("enrichment", "poisson_pval"),
-    "chec_m2025_intergenic": ("enrichment", "poisson_pval"),
-    "chec_m2025_peaks": ("peak_score", ""),
+    # it shares its parent's effect/pvalue columns — these follow the variant's
+    # parent in reference BINDING_CONFIGS (comparison/queries.py). The `_peaks`
+    # variants are the original-authors' peak-calling output and carry only a
+    # `peak_score` binding score (no p-value column).
+    #
+    # NOTE: reference DATASET_COLUMNS (binding/queries.py) enumerates ONLY the
+    # four BASE binding datasets, not these variants — so log10p_col='' for
+    # every variant is a deliberate LOCAL decision, not a mirror of a reference
+    # entry: we do not assert a `log_poisson_pval` column we have not confirmed
+    # exists on the variant tables (the variants are comparison-only and hidden
+    # from the binding tab, so log10p is unused for them anyway). See the module
+    # note above.
+    "callingcards_mindel": ("callingcards_enrichment", "poisson_pval", "", ""),
+    "callingcards_500bp": ("callingcards_enrichment", "poisson_pval", "", ""),
+    "callingcards_intergenic": ("callingcards_enrichment", "poisson_pval", "", ""),
+    "rossi_mindel": ("enrichment", "poisson_pval", "", ""),
+    "rossi_500bp": ("enrichment", "poisson_pval", "", ""),
+    "rossi_intergenic": ("enrichment", "poisson_pval", "", ""),
+    "rossi_peaks": ("peak_score", "", "", ""),
+    "chec_m2025_mindel": ("enrichment", "poisson_pval", "", ""),
+    "chec_m2025_500bp": ("enrichment", "poisson_pval", "", ""),
+    "chec_m2025_intergenic": ("enrichment", "poisson_pval", "", ""),
+    "chec_m2025_peaks": ("peak_score", "", "", ""),
     # perturbation
     # degron's responsiveness p-value is the DESeq2-adjusted `padj` column, NOT
     # the raw `pvalue` (reference perturbation/queries.py:DATASET_COLUMNS +
     # DEFAULT_RESPONSIVENESS_PRESETS "padj < 0.1"). The previous "pvalue" value
     # silently computed the degron responsive-ratio against the wrong column.
-    "degron": ("log2FoldChange", "padj"),
-    "hughes_overexpression": ("mean_norm_log2fc", ""),
-    "hughes_knockout": ("mean_norm_log2fc", ""),
-    "kemmeren": ("Madj", "pval"),
-    "hackett": ("log2_shrunken_timecourses", ""),
-    "hu_reimand": ("effect", "pval"),
+    "degron": ("log2FoldChange", "padj", "", ""),
+    "hughes_overexpression": ("mean_norm_log2fc", "", "", ""),
+    "hughes_knockout": ("mean_norm_log2fc", "", "", ""),
+    "kemmeren": ("Madj", "pval", "", ""),
+    "hackett": ("log2_shrunken_timecourses", "", "", ""),
+    "hu_reimand": ("effect", "pval", "", ""),
 }
 
 
@@ -292,7 +353,24 @@ def write_dataset_manifest(
     user-selectable datasets.
     """
     rows: list[
-        tuple[str, str, str, str, str, str, str, str, bool, str, str, str, str]
+        tuple[
+            str,
+            str,
+            str,
+            str,
+            str,
+            str,
+            str,
+            str,
+            bool,
+            str,
+            str,
+            str,
+            str,
+            bool,
+            str,
+            str,
+        ]
     ] = []
     for repo_id, repo_block in (config.get("repositories") or {}).items():
         datasets = (repo_block or {}).get("dataset") or {}
@@ -316,10 +394,17 @@ def write_dataset_manifest(
             if db_name not in DATASET_MEASUREMENT_COLUMNS:
                 raise ValueError(
                     f"dataset {db_name!r} (repo {repo_id}) has no entry in "
-                    "DATASET_MEASUREMENT_COLUMNS; add (effect_col, pvalue_col) "
-                    "to data_prep.manifests before building this artifact"
+                    "DATASET_MEASUREMENT_COLUMNS; add (effect_col, pvalue_col, "
+                    "log10p_col, neglog10p_col) to data_prep.manifests before "
+                    "building this artifact"
                 )
-            effect_col, pvalue_col = DATASET_MEASUREMENT_COLUMNS[db_name]
+            effect_col, pvalue_col, log10p_col, neglog10p_col = (
+                DATASET_MEASUREMENT_COLUMNS[db_name]
+            )
+
+            # v6: only base datasets are shown in the selector; promoter-set
+            # variants are comparison-only (mirrors reference PRIMARY_DATASETS).
+            is_primary = db_name in PRIMARY_DATASETS
 
             # v4: per-dataset UX metadata.
             default_active = db_name in DEFAULT_ACTIVE_DATASETS
@@ -373,6 +458,10 @@ def write_dataset_manifest(
                     condition_cols,
                     upstream_cols,
                     description,
+                    # v6 additions (appended after `description`).
+                    is_primary,
+                    log10p_col,
+                    neglog10p_col,
                 )
             )
 
@@ -397,13 +486,16 @@ def write_dataset_manifest(
             default_filters VARCHAR NOT NULL DEFAULT '',
             condition_cols  VARCHAR NOT NULL DEFAULT '',
             upstream_cols   VARCHAR NOT NULL DEFAULT '',
-            description     VARCHAR NOT NULL DEFAULT ''
+            description     VARCHAR NOT NULL DEFAULT '',
+            is_primary      BOOLEAN NOT NULL DEFAULT FALSE,
+            log10p_col      VARCHAR NOT NULL DEFAULT '',
+            neglog10p_col   VARCHAR NOT NULL DEFAULT ''
         )
         """
     )
     conn.executemany(
         "INSERT INTO dataset_manifest VALUES "
-        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
 

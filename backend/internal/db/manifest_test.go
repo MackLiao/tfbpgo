@@ -16,10 +16,10 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	m, err := LoadManifests(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, "test-fixture", m.Artifact.ArtifactVersion)
-	require.Equal(t, 5, m.Artifact.SchemaVersion)
+	require.Equal(t, 6, m.Artifact.SchemaVersion)
 	require.False(t, m.Artifact.ParityTestsPassed)
 
-	// v5 fixture: callingcards + harbison (binding) and hackett + kemmeren
+	// v6 fixture: callingcards + harbison (binding) and hackett + kemmeren
 	// (perturbation). kemmeren is the second perturbation dataset added so
 	// multi-pair perturbation flows are exercised.
 	require.Len(t, m.Datasets, 4)
@@ -52,9 +52,12 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	require.Equal(t, "condition", dsByName["harbison"].ConditionCols)
 
 	// v4: dataset_manifest carries DefaultActive / DefaultFilters /
-	// ConditionCols. All fixture datasets are default_active=TRUE; harbison +
-	// hackett carry a preset default_filters spec.
+	// ConditionCols. v6 drops harbison from DEFAULT_ACTIVE_DATASETS, so
+	// callingcards/hackett/kemmeren are default_active=TRUE but harbison is
+	// FALSE; hackett carries a preset default_filters spec.
 	require.True(t, dsByName["callingcards"].DefaultActive)
+	require.False(t, dsByName["harbison"].DefaultActive,
+		"v6: harbison dropped from DEFAULT_ACTIVE_DATASETS")
 	require.Equal(t, "", dsByName["callingcards"].DefaultFilters)
 	// DM-5 / real-data shape: callingcards has no experimental-condition column
 	// in {db}_meta, so condition_cols is derived to empty (it used to falsely
@@ -68,6 +71,14 @@ func TestLoadManifests_FromBootstrappedFixture(t *testing.T) {
 	// DM-1: hackett condition_cols is just `time` (mechanism/restriction are
 	// hidden, so they no longer leak into the hover label).
 	require.Equal(t, "time", dsByName["hackett"].ConditionCols)
+
+	// v6: every fixture dataset is a base dataset → IsPrimary=true; none carry
+	// a log10p/neglog10p column (only base rossi/chec_m2025 do, omitted here).
+	for _, ds := range m.Datasets {
+		require.True(t, ds.IsPrimary, "fixture dataset %s should be primary", ds.DBName)
+		require.Equal(t, "", ds.Log10PCol, "fixture dataset %s has no log10p_col", ds.DBName)
+		require.Equal(t, "", ds.NegLog10PCol, "fixture dataset %s has no neglog10p_col", ds.DBName)
+	}
 
 	// SD-3 / P0-3: field_manifest is sourced from {db}_meta ONLY, so it carries
 	// the experimental-condition + other non-hidden metadata columns, NOT the

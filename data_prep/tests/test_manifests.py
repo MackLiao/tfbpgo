@@ -23,8 +23,8 @@ from data_prep.manifests import (
 )
 
 
-def test_schema_version_is_five() -> None:
-    assert SCHEMA_VERSION == 5
+def test_schema_version_is_six() -> None:
+    assert SCHEMA_VERSION == 6
 
 
 def test_artifact_manifest_has_exactly_one_row(
@@ -129,6 +129,16 @@ _SAMPLE_YAML = textwrap.dedent(
             db_name: hackett
             sample_id:
               field: sample_id
+      BrentLab/rossi_2021:
+        dataset:
+          rossi_peaks:
+            tags:
+              data_type: binding
+              assay: ChIP-exo
+              display_name: "Rossi (peaks)"
+            db_name: rossi_peaks
+            sample_id:
+              field: sample_id
       BrentLab/yeast_comparative_analysis:
         dataset:
           dto:
@@ -205,6 +215,24 @@ def test_dataset_manifest_emits_one_row_per_tagged_dataset(
             # are no longer included (they produced "ZEV / P / 45" hover labels).
             "time",
         ),
+        (
+            # v6: a promoter-set variant. NOT in PRIMARY_DATASETS (so the
+            # selector hides it), NOT in DEFAULT_ACTIVE_DATASETS (default_active
+            # False), has no default_filters/condition preset, and uses the
+            # peak_score / empty-pvalue measurement pair. (is_primary is asserted
+            # separately in test_dataset_manifest_is_primary.)
+            "rossi_peaks",
+            "binding",
+            "ChIP-exo",
+            "Rossi (peaks)",
+            "BrentLab/rossi_2021",
+            "sample_id",
+            "peak_score",
+            "",
+            False,
+            "",
+            "",
+        ),
     ]
 
 
@@ -267,7 +295,7 @@ def test_dataset_manifest_forces_materialized_sample_id(
     assert row[0] == "sample_id"  # NOT the YAML source name 'gm_id'
 
 
-def test_dataset_manifest_columns_v5(
+def test_dataset_manifest_columns_v6(
     fresh_duckdb: duckdb.DuckDBPyConnection,
 ) -> None:
     config = yaml.safe_load(_SAMPLE_YAML)
@@ -295,8 +323,87 @@ def test_dataset_manifest_columns_v5(
         # v5 additions
         "upstream_cols",
         "description",
+        # v6 additions
+        "is_primary",
+        "log10p_col",
+        "neglog10p_col",
     }
     assert cols == expected
+
+
+def test_dataset_manifest_is_primary(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """v6: is_primary mirrors PRIMARY_DATASETS — base datasets are True; the
+    promoter-set variants are False (so the frontend selector hides them).
+    _SAMPLE_YAML carries two base datasets (callingcards, hackett) and one
+    variant (rossi_peaks), so this drives both branches end-to-end through
+    write_dataset_manifest → dataset_manifest."""
+    config = yaml.safe_load(_SAMPLE_YAML)
+    write_dataset_manifest(fresh_duckdb, config)
+    by_name = {
+        db: bool(is_primary)
+        for db, is_primary in fresh_duckdb.execute(
+            "SELECT db_name, is_primary FROM dataset_manifest"
+        ).fetchall()
+    }
+    # callingcards + hackett are base datasets in PRIMARY_DATASETS.
+    assert by_name["callingcards"] is True
+    assert by_name["hackett"] is True
+    # rossi_peaks is a promoter-set variant → NOT primary (hidden from selector).
+    assert by_name["rossi_peaks"] is False
+
+
+def test_dataset_manifest_log10p_cols(
+    fresh_duckdb: duckdb.DuckDBPyConnection,
+) -> None:
+    """v6: pvalue_col / log10p_col / neglog10p_col are carried from
+    DATASET_MEASUREMENT_COLUMNS. callingcards / hackett both have '' for log10p
+    (only base rossi / chec_m2025 carry a log10p_col). rossi_peaks is the
+    variant + peak_score path: its pvalue_col AND log10p_col/neglog10p_col are
+    all '' even though its parent (rossi) carries a log10p_col — variants keep
+    '' as a deliberate local decision (see DATASET_MEASUREMENT_COLUMNS note)."""
+    config = yaml.safe_load(_SAMPLE_YAML)
+    write_dataset_manifest(fresh_duckdb, config)
+    rows = fresh_duckdb.execute(
+        "SELECT db_name, pvalue_col, log10p_col, neglog10p_col "
+        "FROM dataset_manifest ORDER BY db_name"
+    ).fetchall()
+    by_name = {db: (pv, l10, nl10) for (db, pv, l10, nl10) in rows}
+    assert by_name["callingcards"] == ("poisson_pval", "", "")
+    assert by_name["hackett"] == ("", "", "")
+    # rossi_peaks: peak_score binding score, no p-value, no log10p columns.
+    assert by_name["rossi_peaks"] == ("", "", "")
+
+
+def test_dataset_measurement_columns_log10p_parity() -> None:
+    """v6: only base rossi / chec_m2025 carry log10p_col=log_poisson_pval;
+    every other dataset (incl. all promoter-set variants) is ''. neglog10p_col
+    is '' for every dataset. Guards the reference DATASET_COLUMNS mapping."""
+    log10p_nonempty = {
+        db
+        for db, (_eff, _pv, l10, _nl10) in DATASET_MEASUREMENT_COLUMNS.items()
+        if l10 != ""
+    }
+    assert log10p_nonempty == {"rossi", "chec_m2025"}
+    assert DATASET_MEASUREMENT_COLUMNS["rossi"][2] == "log_poisson_pval"
+    assert DATASET_MEASUREMENT_COLUMNS["chec_m2025"][2] == "log_poisson_pval"
+    # All promoter-set variants keep log10p_col='' even though their parent
+    # carries one.
+    for variant in (
+        "rossi_mindel",
+        "rossi_500bp",
+        "rossi_intergenic",
+        "rossi_peaks",
+        "chec_m2025_mindel",
+        "chec_m2025_500bp",
+        "chec_m2025_intergenic",
+        "chec_m2025_peaks",
+    ):
+        assert DATASET_MEASUREMENT_COLUMNS[variant][2] == "", variant
+    # neglog10p_col is universally empty.
+    for db, cols in DATASET_MEASUREMENT_COLUMNS.items():
+        assert cols[3] == "", db
 
 
 def test_dataset_manifest_carries_description(

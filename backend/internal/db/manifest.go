@@ -53,6 +53,22 @@ type DatasetRow struct {
 	// tooltip + export README. May contain any UTF-8; capped at startup.
 	UpstreamCols string `db:"upstream_cols"`
 	Description  string `db:"description"`
+	// v6 additions — mirror reference/tfbpshiny/utils/vdb_init.py
+	// (PRIMARY_DATASETS) + DATASET_COLUMNS.
+	//
+	// IsPrimary: whether this dataset is a base dataset shown in the
+	// dataset selector. The 11 promoter-set variants are is_primary=false
+	// (comparison-only; hidden from the selector). Surfaced on the wire as
+	// DatasetEntry.IsPrimary so the frontend can filter the selector.
+	//
+	// Log10PCol / NegLog10PCol: pre-computed log10 / -log10 p-value column
+	// names (mirror reference DATASET_COLUMNS). Non-empty only for the base
+	// rossi / chec_m2025 binding datasets (log_poisson_pval); '' elsewhere.
+	// Carried server-side for a later feature — NOT part of the wire
+	// contract.
+	IsPrimary    bool   `db:"is_primary"`
+	Log10PCol    string `db:"log10p_col"`
+	NegLog10PCol string `db:"neglog10p_col"`
 }
 
 // FieldRow mirrors field_manifest.
@@ -115,7 +131,7 @@ func LoadManifests(ctx context.Context, p *Pool) (*Manifests, error) {
 	}
 	m.Artifact = rows[0]
 
-	if err := p.DB.SelectContext(ctx, &m.Datasets, `SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field, effect_col, pvalue_col, default_active, default_filters, condition_cols, upstream_cols, description FROM dataset_manifest ORDER BY db_name`); err != nil {
+	if err := p.DB.SelectContext(ctx, &m.Datasets, `SELECT db_name, data_type, assay, display_name, source_repo, sample_id_field, effect_col, pvalue_col, default_active, default_filters, condition_cols, upstream_cols, description, is_primary, log10p_col, neglog10p_col FROM dataset_manifest ORDER BY db_name`); err != nil {
 		return nil, fmt.Errorf("dataset_manifest: %w", err)
 	}
 	if err := p.DB.SelectContext(ctx, &m.Fields, `SELECT db_name, field, role, description, level_definitions, ui_kind_override, numeric_level_sort FROM field_manifest ORDER BY db_name, field`); err != nil {
