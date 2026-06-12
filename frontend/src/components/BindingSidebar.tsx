@@ -3,9 +3,9 @@ import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { RegulatorPicker } from "@/components/RegulatorPicker";
 
 // Sidebar for the Binding route. Mirrors
-// reference/tfbpshiny/modules/binding/server/sidebar.py:91-106:
+// reference/tfbpshiny/modules/binding/ui.py:23-52:
 //   - Sidebar heading "Binding"
-//   - Column radio (Effect / P-value / -log10(p-value), default -log10(p-value),
+//   - Column radio (-log10(p-value) / Effect / P-value, default -log10(p-value),
 //     inline) — the log10pval option + new default added in the 2026-06-11
 //     parity pass (BIND-1/BIND-5).
 //   - Correlation radio (Pearson / Spearman, default spearman, inline)

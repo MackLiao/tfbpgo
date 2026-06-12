@@ -65,8 +65,12 @@ export function PerturbationScatterPair({
             xanchor: "center",
             x: 0.5,
           },
-          xaxis: { title: { text: `${displayNameA}: ${resp.colA}` } },
-          yaxis: { title: { text: `${displayNameB}: ${resp.colB}` } },
+          // Axis label = "{displayName}: {measure}". The MEASURE comes from the
+          // backend (resp.axisLabelA/B), not the raw column, so under
+          // col=log10pval it reads "-log10(p)" / "rank by p-value" matching the
+          // plotted values. Mirrors reference workspace.py:1175-1189.
+          xaxis: { title: { text: `${displayNameA}: ${resp.axisLabelA}` } },
+          yaxis: { title: { text: `${displayNameB}: ${resp.axisLabelB}` } },
           showlegend: false,
           annotations: [
             {

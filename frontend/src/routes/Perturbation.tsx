@@ -29,12 +29,14 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 //   4. Bottom: one Plotly scatter per active dataset pair, fixed 400x400 in
 //      a flex-wrap row.
 
-// Defaults changed in the 2026-06-11 parity pass (PERT-1, mirroring BIND-5/
-// BIND-6): the perturbation module now first-loads on the -log10(p) measurement
-// with Spearman ranks, matching the reference. parseCol accepts all three
-// measurement kinds; anything else falls back to the new default.
-const DEFAULT_COL: MeasurementCol = "log10pval";
-const DEFAULT_METHOD: CorrMethod = "spearman";
+// Perturbation first-load defaults are effect / pearson — UNLIKE the binding
+// module, which the 2026-06-11 parity pass switched to log10pval / spearman.
+// The reference perturbation control keeps the old defaults
+// (reference/tfbpshiny/modules/perturbation/ui.py:41 selected="effect", :49
+// selected="pearson"). The log10pval measurement IS offered as a radio option
+// (ui.py:27-29) — it is just not the default. parseCol accepts all three kinds.
+const DEFAULT_COL: MeasurementCol = "effect";
+const DEFAULT_METHOD: CorrMethod = "pearson";
 
 function parseCol(raw: string | null): MeasurementCol {
   return raw === "effect" || raw === "pvalue" || raw === "log10pval" ? raw : DEFAULT_COL;

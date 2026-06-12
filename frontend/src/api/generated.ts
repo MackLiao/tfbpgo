@@ -1432,6 +1432,17 @@ export interface components {
             colA: string;
             /** @description Measurement column actually used on the B side. */
             colB: string;
+            /**
+             * @description Axis-label MEASURE for the A side — the text the frontend prepends
+             *     with "{displayName}: ". Names the plotted quantity, which under
+             *     `col=log10pval` is the transform output, not the raw column:
+             *     `-log10(p)` (Pearson, p-value source), `rank by p-value` (Spearman),
+             *     or the resolved column name (effect/pvalue, or the effect-fallback
+             *     side under log10pval). Mirrors reference workspace.py:1175-1188.
+             */
+            axisLabelA: string;
+            /** @description Axis-label MEASURE for the B side. See `axisLabelA`. */
+            axisLabelB: string;
             /** @enum {string} */
             method: "pearson" | "spearman";
             /**

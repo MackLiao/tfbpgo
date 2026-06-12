@@ -5,12 +5,12 @@ import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { RegulatorPicker } from "@/components/RegulatorPicker";
 
 // Sidebar for the Perturbation route. Mirrors
-// reference/tfbpshiny/modules/perturbation/server/sidebar.py:75-105:
+// reference/tfbpshiny/modules/perturbation/ui.py:23-49:
 //   - Sidebar heading "Perturbation"
-//   - Column radio (Effect / P-value / -log10(p-value), default -log10(p-value),
-//     inline) — the log10pval option + new default added in the 2026-06-11
-//     parity pass (PERT-1).
-//   - Correlation radio (Pearson / Spearman, default spearman, inline)
+//   - Column radio (-log10(p-value) / Effect / P-value, default Effect, inline)
+//     — the log10pval option was added in the 2026-06-11 parity pass (PERT-1),
+//     but the perturbation module keeps effect as its default (UNLIKE binding).
+//   - Correlation radio (Pearson / Spearman, default pearson, inline)
 //   - Regulator picker
 //
 // All three control values are URL-backed in Perturbation.tsx

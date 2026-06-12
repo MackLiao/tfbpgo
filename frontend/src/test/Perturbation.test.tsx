@@ -79,17 +79,19 @@ describe("Perturbation route URL keys", () => {
     const corrCall = calls.find((u) => u.includes("/perturbation/correlations"));
     expect(corrCall).toBeDefined();
     expect(corrCall!).toContain("datasets=hackett%2Ckemmeren");
-    // PERT-1: first-load defaults are now spearman + log10pval.
-    expect(corrCall!).toContain("method=spearman");
-    expect(corrCall!).toContain("col=log10pval");
+    // PERT-1: the perturbation module keeps effect / pearson defaults (UNLIKE
+    // binding, which switched to log10pval / spearman). Reference
+    // perturbation/ui.py:41 selected="effect", :49 selected="pearson".
+    expect(corrCall!).toContain("method=pearson");
+    expect(corrCall!).toContain("col=effect");
   });
 
-  it("Pearson radio click writes ?corr=pearson to the URL (spearman is the new default)", async () => {
+  it("Spearman radio click writes ?corr=spearman to the URL (pearson is the default)", async () => {
     vi.stubGlobal(
       "fetch",
       fakeFetch((url) => {
         if (url.includes("/perturbation/correlations"))
-          return { method: "spearman", col: "log10pval", pairs: [] };
+          return { method: "pearson", col: "effect", pairs: [] };
         if (url.endsWith("/datasets")) return { datasets: [] };
         return {};
       }),
@@ -118,23 +120,23 @@ describe("Perturbation route URL keys", () => {
       </QueryClientProvider>,
     );
 
-    // Spearman is the default now, so click Pearson to move OFF the default.
-    const pearson = screen.getByLabelText(/Pearson/i);
-    fireEvent.click(pearson);
+    // Pearson is the default for perturbation, so click Spearman to move OFF it.
+    const spearman = screen.getByLabelText(/Spearman/i);
+    fireEvent.click(spearman);
 
     await waitFor(() => {
       expect(screen.getByTestId("loc-search").textContent).toMatch(
-        /corr=pearson/,
+        /corr=spearman/,
       );
     });
   });
 
-  it("renders the -log10(p-value) measurement radio, selected by default", async () => {
+  it("offers the -log10(p-value) measurement radio (not the default; effect is)", async () => {
     vi.stubGlobal(
       "fetch",
       fakeFetch((url) => {
         if (url.includes("/perturbation/correlations"))
-          return { method: "spearman", col: "log10pval", pairs: [] };
+          return { method: "pearson", col: "effect", pairs: [] };
         if (url.endsWith("/datasets")) return { datasets: [] };
         return {};
       }),
@@ -148,9 +150,13 @@ describe("Perturbation route URL keys", () => {
       </QueryClientProvider>,
     );
 
+    // The log10pval option exists (ui.py:27-29) but is NOT the default;
+    // perturbation defaults to Effect.
     const log10 = screen.getByLabelText(/-log10\(p-value\)/i) as HTMLInputElement;
     expect(log10).toBeInTheDocument();
-    expect(log10.checked).toBe(true);
+    expect(log10.checked).toBe(false);
+    const effect = screen.getByLabelText(/^Effect$/i) as HTMLInputElement;
+    expect(effect.checked).toBe(true);
   });
 
   it("renders the correlation boxplot trace + selected-regulator overlay when corr data is present", async () => {
