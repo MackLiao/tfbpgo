@@ -95,7 +95,12 @@ export function Binding() {
   );
 
   // Active tab — kept in the URL (?tab=) so a deep link can land on any tab.
-  const tab = params.get("tab") ?? "matrix";
+  // Clamp to the known set: a stale/garbage value (e.g. ?tab=foo) would leave
+  // every TabsContent hidden — tab bar shown, empty panel, no active tab — so
+  // anything unrecognized falls back to the matrix tab.
+  const rawTab = params.get("tab");
+  const tab =
+    rawTab === "distribution" || rawTab === "scatter" ? rawTab : "matrix";
   const setTab = (next: string): void => {
     const np = new URLSearchParams(params);
     np.set("tab", next);

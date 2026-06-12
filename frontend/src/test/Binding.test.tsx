@@ -574,6 +574,28 @@ describe("Binding correlation-matrix pair selection (BIND-2)", () => {
     // No plot rendered while nothing is committed.
     expect(screen.queryByTestId("plotly")).toBeNull();
   });
+
+  it("falls back to the Correlation Matrix tab when ?tab= is an unknown value", async () => {
+    vi.stubGlobal("fetch", fakeFetch(threeDatasetFetch()));
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        {/* Garbage tab value must not leave every panel hidden. */}
+        <MemoryRouter initialEntries={["/binding?binding=aaa,bbb,ccc&tab=foo"]}>
+          <Binding />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // The matrix panel is active (its table renders) and its trigger is the
+    // selected tab — confirming the unknown value clamped to "matrix".
+    await waitFor(() => {
+      expect(screen.getByTestId("corr-matrix")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("tab", { name: /Correlation Matrix/i }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
 });
 
 // Perturbation route tests moved to test/Perturbation.test.tsx after the
