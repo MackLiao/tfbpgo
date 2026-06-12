@@ -90,17 +90,33 @@ export interface PromoterDefinitionsTableProps {
   bindingPrimaries: string[];
   /** Selected perturbation db_names. */
   perturbationDatasets: string[];
+  /**
+   * Promoter sets to compare, in canonical PROMOTER_SET_ORDER order. Drives both
+   * the table columns and the binding axis fan-out. Mirrors the reference's
+   * `cp_included_promoter_sets` checkbox group (workspace.py:552-568); defaults
+   * to all four sets when the URL param is absent.
+   */
+  selectedPromoterSets: string[];
   topN: number;
   preset: ResponsivenessPreset;
   filters: string;
 }
 
-// Expand each selected primary across every promoter set (Kang + Mindel/500bp/
-// Intergenic where the variant exists). Mirrors workspace.py:805-816.
-function expandPromoterBindings(primaries: string[]): string[] {
+// Expand each selected primary across the SELECTED promoter sets (Kang +
+// Mindel/500bp/Intergenic where the variant exists and the set is selected).
+// Mirrors workspace.py:805-816, narrowed by the cp_included_promoter_sets
+// checkbox group. We iterate PROMOTER_SET_ORDER for canonical order but skip any
+// set not in `selectedSets`, so the binding axis (and thus the topn fan-out)
+// shrinks to only the chosen sets' variant dbs.
+function expandPromoterBindings(
+  primaries: string[],
+  selectedSets: string[],
+): string[] {
+  const selected = new Set(selectedSets);
   const out: string[] = [];
   for (const primary of primaries) {
     for (const ps of PROMOTER_SET_ORDER) {
+      if (!selected.has(ps)) continue;
       const variant = resolvePromoterVariant(primary, ps);
       if (variant) out.push(variant);
     }
@@ -112,6 +128,7 @@ function expandPromoterBindings(primaries: string[]): string[] {
 export function PromoterDefinitionsTable({
   bindingPrimaries,
   perturbationDatasets,
+  selectedPromoterSets,
   topN,
   preset,
   filters,
@@ -124,8 +141,8 @@ export function PromoterDefinitionsTable({
     [bindingPrimaries],
   );
   const expanded = useMemo(
-    () => expandPromoterBindings(variantPrimaries),
-    [variantPrimaries],
+    () => expandPromoterBindings(variantPrimaries, selectedPromoterSets),
+    [variantPrimaries, selectedPromoterSets],
   );
 
   // One topn slice per perturbation: expanded bindings × this one perturbation.
@@ -159,6 +176,9 @@ export function PromoterDefinitionsTable({
         Calling Cards) to compare promoter definitions.
       </EmptyState>
     );
+  }
+  if (selectedPromoterSets.length === 0) {
+    return <EmptyState>Select at least one promoter set to compare.</EmptyState>;
   }
   if (perturbationDatasets.length === 0) {
     return <EmptyState>No perturbation datasets selected.</EmptyState>;
@@ -201,7 +221,7 @@ export function PromoterDefinitionsTable({
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-2.5 py-1.5 text-left">Binding Dataset</th>
-                  {PROMOTER_SET_ORDER.map((ps) => (
+                  {selectedPromoterSets.map((ps) => (
                     <th key={ps} className="px-2.5 py-1.5 text-right">
                       {ps}
                     </th>
@@ -214,7 +234,7 @@ export function PromoterDefinitionsTable({
                     <td className="whitespace-nowrap px-2.5 py-1.5 text-left">
                       {baseLabel}
                     </td>
-                    {PROMOTER_SET_ORDER.map((ps) => {
+                    {selectedPromoterSets.map((ps) => {
                       // Resolve (base label → primary db) then (primary, ps) →
                       // variant db. We find the primary whose base label matches.
                       const primary = variantPrimaries.find(

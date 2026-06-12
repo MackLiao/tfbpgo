@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, useNavigate } from "react-router-dom";
+import { MemoryRouter, useNavigate, useLocation } from "react-router-dom";
 import { Comparison } from "@/routes/Comparison";
 import { setArtifactVersion } from "@/api/client";
 
@@ -507,6 +507,81 @@ describe("Comparison route", () => {
     expect(screen.queryByTestId("drill-plot")).toBeNull();
     expect(
       screen.getByText(/Click a row header to view distributions/),
+    ).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Promoter-set selector on the Compare Promoter Definitions tab
+  // (reference cp_included_promoter_sets — workspace.py:552-568). DEFAULT all
+  // four selected (absent ?promoterSets=); unchecking one writes the param +
+  // drops that column; re-checking all clears the param again.
+  // ---------------------------------------------------------------------------
+  it("promoter-set selector defaults to all four checked; unchecking one drops its column + writes the URL; re-checking all clears the param", async () => {
+    vi.stubGlobal("fetch", routedFetch());
+    function LocationProbe() {
+      const loc = useLocation();
+      return <div data-testid="loc-search">{loc.search}</div>;
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={[
+            // callingcards is a variant-bearing primary → the cp table renders.
+            "/comparison?binding=callingcards&perturbation=hackett&tab=promoters",
+          ]}
+        >
+          <Comparison />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Four checkboxes, all checked by default (param absent => all selected).
+    const card = await screen.findByTestId("cp-card-hackett");
+    const kang = screen.getByLabelText("Promoter Set 1 (Kang)") as HTMLInputElement;
+    const mindel = screen.getByLabelText(
+      "Promoter Set 2 (Mindel)",
+    ) as HTMLInputElement;
+    const fiveHundred = screen.getByLabelText(
+      "Promoter Set 3 (500bp)",
+    ) as HTMLInputElement;
+    const intergenic = screen.getByLabelText(
+      "Promoter Set 4 (Intergenic)",
+    ) as HTMLInputElement;
+    expect(kang.checked).toBe(true);
+    expect(mindel.checked).toBe(true);
+    expect(fiveHundred.checked).toBe(true);
+    expect(intergenic.checked).toBe(true);
+    // All four columns render initially.
+    expect(within(card).getByText("Mindel")).toBeInTheDocument();
+
+    // Uncheck Mindel → ?promoterSets=Kang,500bp,Intergenic (no Mindel) AND the
+    // Mindel column disappears from the cp table.
+    fireEvent.click(mindel);
+    await waitFor(() => {
+      const search = screen.getByTestId("loc-search").textContent ?? "";
+      expect(search).toContain("promoterSets=");
+      const value = new URLSearchParams(search).get("promoterSets") ?? "";
+      const sets = value.split(",");
+      expect(sets).not.toContain("Mindel");
+      expect(sets).toEqual(["Kang", "500bp", "Intergenic"]);
+    });
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("cp-card-hackett")).queryByText("Mindel"),
+      ).toBeNull(),
+    );
+
+    // Re-check Mindel → back to all four → the param is cleared (clean URL).
+    fireEvent.click(screen.getByLabelText("Promoter Set 2 (Mindel)"));
+    await waitFor(() => {
+      const search = screen.getByTestId("loc-search").textContent ?? "";
+      expect(new URLSearchParams(search).has("promoterSets")).toBe(false);
+    });
+    // Mindel column is back.
+    expect(
+      within(screen.getByTestId("cp-card-hackett")).getByText("Mindel"),
     ).toBeInTheDocument();
   });
 });

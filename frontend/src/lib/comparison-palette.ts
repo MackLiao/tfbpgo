@@ -239,6 +239,37 @@ export const PROMOTER_SET_ORDER: ReadonlyArray<string> = [
   "Intergenic",
 ];
 
+// User-facing alias for each promoter set, shown as the checkbox label on the
+// Compare Promoter Definitions tab. Ported verbatim from workspace.py:67-72
+// `_PROMOTER_SET_ALIAS`.
+export const PROMOTER_SET_ALIAS: Record<string, string> = {
+  Kang: "Promoter Set 1 (Kang)",
+  Mindel: "Promoter Set 2 (Mindel)",
+  "500bp": "Promoter Set 3 (500bp)",
+  Intergenic: "Promoter Set 4 (Intergenic)",
+};
+
+// Hover tooltip for each promoter set, sourced from the YAML
+// genome_resources.region_sets. Ported verbatim from workspace.py:75-95
+// `_PROMOTER_TOOLTIPS`.
+export const PROMOTER_SET_TOOLTIPS: Record<string, string> = {
+  Kang:
+    "700 bp upstream of each start codon, truncated if there exists a feature " +
+    "within 700 bp of the ORF.",
+  Mindel:
+    "Promoter regions defined from the start codon to at least 700 bp upstream " +
+    "of the TSS defined by Park et al., 2014; Pelechano et al., 2013; Policastro " +
+    "et al., 2020 (provided in the SGD annotations). If no TSS is defined, the " +
+    "start codon is used.",
+  "500bp":
+    "Promoter regions defined as exactly 500 bp upstream of the start codon. " +
+    "No truncation or extension; all promoters are the same length.",
+  Intergenic:
+    "Promoter regions defined as the full intergenic region upstream of the 5' " +
+    "end of each feature. Note that approximately 1410 of 6040 features are " +
+    "divergently transcribed.",
+};
+
 // Index of each non-Kang promoter set into PROMOTER_VARIANT_PAIRS[primary].
 // workspace.py:774-778 `_ps_to_variant_index`.
 export const PROMOTER_SET_VARIANT_INDEX: Record<string, number> = {

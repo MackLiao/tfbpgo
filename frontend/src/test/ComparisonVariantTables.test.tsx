@@ -114,6 +114,7 @@ describe("PromoterDefinitionsTable", () => {
       <PromoterDefinitionsTable
         bindingPrimaries={["rossi"]}
         perturbationDatasets={["hackett"]}
+        selectedPromoterSets={[...PROMOTER_SET_ORDER]}
         topN={25}
         preset="Relaxed"
         filters=""
@@ -154,6 +155,7 @@ describe("PromoterDefinitionsTable", () => {
       <PromoterDefinitionsTable
         bindingPrimaries={["harbison"]} // harbison has no promoter variants
         perturbationDatasets={["hackett"]}
+        selectedPromoterSets={[...PROMOTER_SET_ORDER]}
         topN={25}
         preset="Relaxed"
         filters=""
@@ -168,6 +170,7 @@ describe("PromoterDefinitionsTable", () => {
       <PromoterDefinitionsTable
         bindingPrimaries={["rossi"]}
         perturbationDatasets={["hackett"]}
+        selectedPromoterSets={[...PROMOTER_SET_ORDER]}
         topN={25}
         preset="Relaxed"
         filters=""
@@ -182,6 +185,7 @@ describe("PromoterDefinitionsTable", () => {
       <PromoterDefinitionsTable
         bindingPrimaries={["rossi"]}
         perturbationDatasets={["hackett"]}
+        selectedPromoterSets={[...PROMOTER_SET_ORDER]}
         topN={25}
         preset="Relaxed"
         filters=""
@@ -193,6 +197,73 @@ describe("PromoterDefinitionsTable", () => {
     expect(errRow.textContent).toBe(CAP_ERROR_MSG);
     // And the data table is NOT rendered for that card.
     expect(screen.queryByTestId("cp-table-hackett")).toBeNull();
+  });
+
+  it("renders only the selected promoter-set columns and narrows the topn binding axis", async () => {
+    const fetchMock = variantFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithClient(
+      <PromoterDefinitionsTable
+        bindingPrimaries={["rossi"]}
+        perturbationDatasets={["hackett"]}
+        // Subset: only Kang + 500bp selected (Mindel/Intergenic unchecked).
+        selectedPromoterSets={["Kang", "500bp"]}
+        topN={25}
+        preset="Relaxed"
+        filters=""
+      />,
+    );
+    const card = await screen.findByTestId("cp-card-hackett");
+    // (a) Only the Kang and 500bp column headers render; Mindel/Intergenic absent.
+    const headers = within(card)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual(["Binding Dataset", "Kang", "500bp"]);
+    expect(within(card).queryByText("Mindel")).toBeNull();
+    expect(within(card).queryByText("Intergenic")).toBeNull();
+    // Only the selected sets' cells exist.
+    expect(
+      screen.getByTestId("cp-cell-hackett-2021 ChIP-exo-Kang").textContent,
+    ).toContain("40.0%");
+    expect(
+      screen.getByTestId("cp-cell-hackett-2021 ChIP-exo-500bp").textContent,
+    ).toContain("20.0%");
+    expect(
+      screen.queryByTestId("cp-cell-hackett-2021 ChIP-exo-Mindel"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("cp-cell-hackett-2021 ChIP-exo-Intergenic"),
+    ).toBeNull();
+
+    // (b) The topn fetch's binding axis contains only rossi (Kang primary) +
+    //     rossi_500bp — NOT the Mindel/Intergenic variant dbs.
+    const calledUrl = String(fetchMock.mock.calls[0]![0]);
+    const requestedBinding = new Set(
+      (new URL(calledUrl, "http://test.local").searchParams.get("binding") ?? "")
+        .split(",")
+        .filter(Boolean),
+    );
+    expect(requestedBinding.has("rossi")).toBe(true);
+    expect(requestedBinding.has("rossi_500bp")).toBe(true);
+    expect(requestedBinding.has("rossi_mindel")).toBe(false);
+    expect(requestedBinding.has("rossi_intergenic")).toBe(false);
+  });
+
+  it("renders the empty state when no promoter set is selected", () => {
+    renderWithClient(
+      <PromoterDefinitionsTable
+        bindingPrimaries={["rossi"]}
+        perturbationDatasets={["hackett"]}
+        selectedPromoterSets={[]}
+        topN={25}
+        preset="Relaxed"
+        filters=""
+      />,
+    );
+    const empty = screen.getByTestId("comparison-variant-empty");
+    expect(empty.textContent).toMatch(/at least one promoter set/i);
+    // No table or per-perturbation card is rendered.
+    expect(screen.queryByTestId("cp-tables")).toBeNull();
   });
 });
 

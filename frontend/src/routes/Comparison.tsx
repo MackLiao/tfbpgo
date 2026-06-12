@@ -12,12 +12,14 @@ import {
 } from "@/plots/ComparisonVariantTables";
 import {
   PEAKS_VARIANT_DBS,
+  PROMOTER_SET_ORDER,
   PROMOTER_VARIANT_DBS,
 } from "@/lib/comparison-palette";
 import {
   ComparisonSidebar,
   type ComparisonSidebarChange,
 } from "@/components/ComparisonSidebar";
+import { PromoterSetSelector } from "@/components/PromoterSetSelector";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { Schemas } from "@/api/client";
@@ -53,12 +55,23 @@ import type { Schemas } from "@/api/client";
 //     topn` reactively (and the backend coalesces + caches), so the tables
 //     render as soon as their queries land. The sidebar's "Execute Analysis"
 //     button is therefore omitted.
-//   - No per-tab sidebar selectors (cp promoter-set checkboxes / cm binding-
-//     dataset select). The reference defaults to ALL promoter sets selected and
-//     the first eligible binding dataset; we render ALL promoter sets and, for
-//     the methods tab, ALL selected peaks-eligible primaries. The dataset
-//     selection itself still comes from the shared `?binding=`/`?perturbation=`
-//     URL state (the Select page), so the user drives WHICH datasets appear.
+//   - The cp promoter-set checkboxes (reference `cp_included_promoter_sets`,
+//     workspace.py:552-568) ARE implemented — but as an INLINE control on the
+//     Compare Promoter Definitions tab (PromoterSetSelector), not a tab-aware
+//     sidebar. Selection is URL-encoded via `?promoterSets=` (absent => DEFAULT
+//     all four sets, matching the reference's `selected=all`), and narrows both
+//     the table columns and the topn binding-axis fan-out. With ZERO sets
+//     selected we render an explicit empty-state ("Select at least one promoter
+//     set…") rather than the reference's blank output — a small UX improvement.
+//   - Still divergent (the reference's other per-tab sidebar selectors are not
+//     ported; the dataset selection itself comes from the shared
+//     `?binding=`/`?perturbation=` URL state on the Select page):
+//       · Compare Datasets `cd_promoter_set` / `cd_binding_method`
+//         (workspace.py:537-549) — the matrix always uses the Kang primaries.
+//       · Compare Analysis Methods `cm_binding_dataset` single-select
+//         (workspace.py:574-580) — we render ALL selected peaks-eligible
+//         primaries rather than one chosen dataset — and `cm_promoter_set`
+//         (workspace.py:582-587).
 //
 // STATE-ENCODING choice:
 //   - Active tab → URL (`?tab=`), like Binding.tsx, so a deep link can land on
@@ -96,6 +109,19 @@ function parseFacetBy(raw: string | null): "binding" | "perturbation" {
   return raw === "perturbation" ? "perturbation" : "binding";
 }
 
+// Parse the `?promoterSets=` param for the Compare Promoter Definitions tab.
+// Mirrors the reference's `cp_included_promoter_sets` checkbox group default of
+// ALL sets selected (workspace.py:566 `selected=list(_PROMOTER_SET_ALIAS)`):
+//   - absent (null)        → DEFAULT: all four sets, in canonical order.
+//   - present-but-empty "" → NONE selected (the user unchecked every box).
+//   - "Kang,500bp"         → only the listed sets, canonical-ordered, invalid
+//                            tokens dropped (filter PROMOTER_SET_ORDER by membership).
+function parsePromoterSets(raw: string | null): string[] {
+  if (raw === null) return [...PROMOTER_SET_ORDER];
+  const set = new Set(raw.split(",").filter(Boolean));
+  return PROMOTER_SET_ORDER.filter((ps) => set.has(ps));
+}
+
 function parsePreset(raw: string | null): ResponsivenessPreset {
   return raw === "Stringent" ? "Stringent" : "Relaxed";
 }
@@ -118,6 +144,9 @@ export function Comparison() {
   const facetBy = parseFacetBy(params.get("facet_by"));
   const filters = params.get("filters") ?? "";
   const tab = parseTab(params.get("tab"));
+  // Promoter sets to compare on the Compare Promoter Definitions tab. Absent
+  // param => all four (the reference's checkbox-group default).
+  const selectedPromoterSets = parsePromoterSets(params.get("promoterSets"));
 
   // Drill-down selection: which row (binding) OR column (perturbation) of the
   // matrix is currently expanded into a distribution. Mutually exclusive.
@@ -201,6 +230,26 @@ export function Comparison() {
     const np = new URLSearchParams(params);
     np.set("tab", next);
     setParams(np, { replace: true });
+  };
+
+  // Write the selected promoter sets to `?promoterSets=`. Keep the URL clean +
+  // round-trippable through parsePromoterSets:
+  //   - all four selected  → DELETE the param (clean URL == the default).
+  //   - none selected      → set "" (present-but-empty), distinct from absent so
+  //                          parsePromoterSets reads it as NONE, not the default.
+  //   - a subset           → join the canonical-ordered list.
+  // (URLSearchParams preserves an empty-valued param: set("k","") serializes to
+  // "k=" and re-reads as "" — verified — so no "none" sentinel is needed.)
+  const setPromoterSets = (next: string[]): void => {
+    const np = new URLSearchParams(params);
+    if (next.length === PROMOTER_SET_ORDER.length) {
+      np.delete("promoterSets");
+    } else if (next.length === 0) {
+      np.set("promoterSets", "");
+    } else {
+      np.set("promoterSets", next.join(","));
+    }
+    setParams(np);
   };
 
   const handleSidebarChange = (next: ComparisonSidebarChange): void => {
@@ -342,9 +391,14 @@ export function Comparison() {
 
               {/* --- Compare Promoter Definitions tab --- */}
               <TabsContent value="promoters">
+                <PromoterSetSelector
+                  selected={selectedPromoterSets}
+                  onChange={setPromoterSets}
+                />
                 <PromoterDefinitionsTable
                   bindingPrimaries={bindingPrimaries}
                   perturbationDatasets={perturbation}
+                  selectedPromoterSets={selectedPromoterSets}
                   topN={topN}
                   preset={preset}
                   filters={filters}
