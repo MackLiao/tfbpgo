@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, apiErrorMessage, type ResponsivenessPreset } from "@/api/client";
@@ -150,6 +150,52 @@ export function Comparison() {
     }
     return (db: string): string => map.get(db) ?? db;
   }, [datasetsQuery.data]);
+
+  // Validate the ephemeral drill-down selection against the current data. The
+  // selection lives in component state (see the state-encoding note above) and
+  // therefore survives ?binding=/?perturbation=/?preset=/?top_n= URL changes —
+  // but a stale pick whose dataset was deselected (or whose preset no longer
+  // yields that row) would silently render an empty distribution with no
+  // explanation. Mirror Binding.tsx's pending-pair pruning (parseCommittedKeys +
+  // the corr-response useEffect): when the selected binding/perturbation is no
+  // longer present in the current selection arrays OR absent from the loaded
+  // topn rows, null the stale pick so the matrix returns to its prompt state.
+  useEffect(() => {
+    setSelection((prev) => {
+      if (prev.binding === null && prev.perturbation === null) return prev;
+      const bindingSet = new Set(binding);
+      const perturbationSet = new Set(perturbation);
+      // Datasets actually present in the loaded topn result (drives the matrix).
+      // Only enforce the row-presence check once data has landed: while the
+      // query is pending (e.g. mid-refetch after a preset change) the rows are
+      // momentarily empty, and a still-valid pick must not be nulled then.
+      const rows = topnQuery.data?.rows;
+      const rowBindings = new Set<string>();
+      const rowPerturbations = new Set<string>();
+      for (const r of rows ?? []) {
+        const sep = r.pairKey.indexOf("__");
+        if (sep < 0) continue;
+        rowBindings.add(r.pairKey.slice(0, sep));
+        rowPerturbations.add(r.pairKey.slice(sep + 2));
+      }
+      const inRows = rows !== undefined;
+      if (
+        prev.binding !== null &&
+        (!bindingSet.has(prev.binding) ||
+          (inRows && !rowBindings.has(prev.binding)))
+      ) {
+        return { binding: null, perturbation: null };
+      }
+      if (
+        prev.perturbation !== null &&
+        (!perturbationSet.has(prev.perturbation) ||
+          (inRows && !rowPerturbations.has(prev.perturbation)))
+      ) {
+        return { binding: null, perturbation: null };
+      }
+      return prev;
+    });
+  }, [binding.join(","), perturbation.join(","), topnQuery.data]);
 
   const setTab = (next: string): void => {
     const np = new URLSearchParams(params);

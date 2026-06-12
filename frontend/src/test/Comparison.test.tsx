@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { Comparison } from "@/routes/Comparison";
 import { setArtifactVersion } from "@/api/client";
 
@@ -24,10 +24,10 @@ vi.mock("@/plots/PlotLazy", () => ({
 
 // A mocked /comparison/topn response with two binding × two perturbation pairs,
 // each carrying a single regulator row so the matrix median is deterministic:
-//   callingcards__hackett   ratio 0.40 → 40%
-//   callingcards__kemmeren  ratio 0.20 → 20%
-//   harbison__hackett       ratio 0.60 → 60%
-//   harbison__kemmeren      ratio 0.10 → 10%
+//   callingcards__hackett   ratio 0.40 → 40.0%
+//   callingcards__kemmeren  ratio 0.20 → 20.0%
+//   harbison__hackett       ratio 0.60 → 60.0%
+//   harbison__kemmeren      ratio 0.10 → 10.0%
 const TOPN_ROWS = [
   {
     pairKey: "callingcards__hackett",
@@ -392,16 +392,16 @@ describe("Comparison route", () => {
     );
     // Wait for the topn query to land and the matrix to render.
     const cell = await screen.findByTestId("topn-cell-callingcards-hackett");
-    expect(cell.textContent).toContain("40%");
+    expect(cell.textContent).toContain("40.0%");
     expect(
       screen.getByTestId("topn-cell-callingcards-kemmeren").textContent,
-    ).toContain("20%");
+    ).toContain("20.0%");
     expect(
       screen.getByTestId("topn-cell-harbison-hackett").textContent,
-    ).toContain("60%");
+    ).toContain("60.0%");
     expect(
       screen.getByTestId("topn-cell-harbison-kemmeren").textContent,
-    ).toContain("10%");
+    ).toContain("10.0%");
     // Display names from /datasets drive the headers.
     expect(
       within(screen.getByTestId("topn-row-callingcards")).getByText("Calling Cards"),
@@ -443,5 +443,70 @@ describe("Comparison route", () => {
     const plot = await screen.findByTestId("drill-plot");
     // Faceted by perturbation → the single facet is the kemmeren label.
     expect(plot.getAttribute("data-facets")).toBe("2014 TFKO");
+  });
+
+  // ---------------------------------------------------------------------------
+  // LOW: a stale drill-down pick must reset when its dataset leaves ?binding= /
+  // ?perturbation=. The selection is ephemeral component state that survives URL
+  // changes, so without validation the matrix would render an empty distribution
+  // with no explanation. Mirrors Binding.tsx pruning committed pairs.
+  // ---------------------------------------------------------------------------
+  it("resets the drill-down when the selected binding dataset leaves ?binding=", async () => {
+    vi.stubGlobal("fetch", routedFetch());
+    // A small harness that renders Comparison plus a button that rewrites the
+    // URL (the equivalent of the user deselecting `harbison` on the Select page).
+    function Harness() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() =>
+              navigate(
+                "/comparison?binding=callingcards&perturbation=hackett,kemmeren",
+              )
+            }
+          >
+            drop-harbison
+          </button>
+          <Comparison />
+        </>
+      );
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={[
+            "/comparison?binding=callingcards,harbison&perturbation=hackett,kemmeren",
+          ]}
+        >
+          <Harness />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Drill into the harbison binding row.
+    await screen.findByTestId("topn-cell-callingcards-hackett");
+    fireEvent.click(
+      within(screen.getByTestId("topn-row-harbison")).getByRole("button"),
+    );
+    await screen.findByTestId("drill-plot");
+
+    // Now remove harbison from the URL. The ?binding= change re-keys the topn
+    // query (brief skeleton), then the matrix re-renders without the harbison
+    // row. The stale drill-down pick must clear: no empty distribution lingers.
+    fireEvent.click(screen.getByText("drop-harbison"));
+    // Wait for the refetched matrix to settle (callingcards row still present,
+    // harbison row gone).
+    await waitFor(() => {
+      expect(screen.getByTestId("topn-row-callingcards")).toBeInTheDocument();
+      expect(screen.queryByTestId("topn-row-harbison")).toBeNull();
+    });
+    // The stale drill-down is cleared: the prompt returns, no empty plot.
+    expect(screen.queryByTestId("drill-plot")).toBeNull();
+    expect(
+      screen.getByText(/Click a row header to view distributions/),
+    ).toBeInTheDocument();
   });
 });
