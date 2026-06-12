@@ -1,34 +1,37 @@
 import { Input } from "@/components/ui/input";
 
 // Sidebar controls for the Comparison route. Mirror
-// reference/tfbpshiny/modules/comparison/server/sidebar.py:91-165:
+// reference/tfbpshiny/modules/comparison/ui.py:
 //   - top_n: numeric, 1..500 step 5, default 25
-//   - effect: slider 0.0..5.0 step 0.1, default 0.0
-//   - pvalue: slider 0.001..1.0 step 0.001, default 0.05
+//   - responsiveness_preset: radio "Relaxed" | "Stringent", default "Relaxed"
+//     (replaces the old Min |effect| / Max p-value sliders — CMP-4/CMP-5)
 //   - facet_by: radio "binding" | "perturbation", default "binding"
+//
+// The preset strings "Relaxed" and "Stringent" are sent verbatim as
+// `?preset=` to the backend (comparison_topn.go `responsivenessPresets` map;
+// case-sensitive). Tooltips are copied verbatim from ui.py:37-52.
 //
 // Every change is pushed through `onChange` so the parent route can mirror
 // the new value into the URL — URL is the canonical state.
 
+export type ResponsivenessPreset = "Relaxed" | "Stringent";
+
 export interface ComparisonSidebarChange {
   topN?: number;
-  effect?: number;
-  pvalue?: number;
+  preset?: ResponsivenessPreset;
   facetBy?: "binding" | "perturbation";
 }
 
 export interface ComparisonSidebarProps {
   topN: number;
-  effect: number;
-  pvalue: number;
+  preset: ResponsivenessPreset;
   facetBy: "binding" | "perturbation";
   onChange: (next: ComparisonSidebarChange) => void;
 }
 
 export function ComparisonSidebar({
   topN,
-  effect,
-  pvalue,
+  preset,
   facetBy,
   onChange,
 }: ComparisonSidebarProps) {
@@ -52,49 +55,39 @@ export function ComparisonSidebar({
         />
       </div>
 
-      <div>
-        <div className="mb-1 flex items-baseline justify-between">
-          <label className="font-medium text-slate-700" htmlFor="cmp-effect">
-            Min |effect|
+      {/* Responsiveness preset — mirrors ui.py:32-54. Replaces the old
+          Min |effect| / Max p-value sliders (CMP-4/CMP-5). */}
+      <fieldset>
+        <legend className="mb-1 font-medium text-slate-700">Responsiveness</legend>
+        <div className="space-y-1">
+          <label
+            className="flex items-center gap-2"
+            title="Applies a uniform pvalue < 0.05 threshold. Hover over perturbation column headers in Compare Datasets for per-dataset details."
+          >
+            <input
+              type="radio"
+              name="cmp-preset"
+              value="Relaxed"
+              checked={preset === "Relaxed"}
+              onChange={() => onChange({ preset: "Relaxed" })}
+            />
+            <span>Relaxed</span>
           </label>
-          <span className="font-mono text-xs text-slate-500">{effect.toFixed(1)}</span>
-        </div>
-        <input
-          id="cmp-effect"
-          type="range"
-          min={0}
-          max={5}
-          step={0.1}
-          value={effect}
-          onChange={(e) =>
-            onChange({ effect: clamp(Number(e.target.value), 0, 5) })
-          }
-          className="w-full"
-        />
-      </div>
-
-      <div>
-        <div className="mb-1 flex items-baseline justify-between">
-          <label className="font-medium text-slate-700" htmlFor="cmp-pvalue">
-            Max p-value
+          <label
+            className="flex items-center gap-2"
+            title="Uses the original authors' thresholds for each dataset. Hover over perturbation column headers in Compare Datasets for per-dataset details."
+          >
+            <input
+              type="radio"
+              name="cmp-preset"
+              value="Stringent"
+              checked={preset === "Stringent"}
+              onChange={() => onChange({ preset: "Stringent" })}
+            />
+            <span>Stringent</span>
           </label>
-          <span className="font-mono text-xs text-slate-500">
-            {pvalue.toFixed(3)}
-          </span>
         </div>
-        <input
-          id="cmp-pvalue"
-          type="range"
-          min={0.001}
-          max={1}
-          step={0.001}
-          value={pvalue}
-          onChange={(e) =>
-            onChange({ pvalue: clamp(Number(e.target.value), 0.001, 1) })
-          }
-          className="w-full"
-        />
-      </div>
+      </fieldset>
 
       <fieldset>
         <legend className="mb-1 font-medium text-slate-700">Facet by</legend>

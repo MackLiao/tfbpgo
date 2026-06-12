@@ -55,8 +55,8 @@ export const qk = {
     const [a, b] = pair[0] <= pair[1] ? [pair[0], pair[1]] : [pair[1], pair[0]];
     return [v(), "perturbationScatter", regulator, a, b, method, col, filters] as const;
   },
-  topn: (b: string[], p: string[], topN: number, eff: number, pv: number, filters: string) =>
-    [v(), "topn", b.join(","), p.join(","), topN, eff, pv, filters] as const,
+  topn: (b: string[], p: string[], topN: number, preset: string, filters: string) =>
+    [v(), "topn", b.join(","), p.join(","), topN, preset, filters] as const,
   dto: () => [v(), "dto"] as const,
 
   // ----- Select Datasets (Task B4) ---------------------------------------

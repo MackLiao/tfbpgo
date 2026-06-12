@@ -176,8 +176,7 @@ export const api = {
       binding: string[];
       perturbation: string[];
       top_n?: number;
-      effect?: number;
-      pvalue?: number;
+      preset?: string;
       filters?: string;
     },
     signal?: AbortSignal,
@@ -187,8 +186,7 @@ export const api = {
       perturbation: q.perturbation.join(","),
     });
     if (q.top_n) s.set("top_n", String(q.top_n));
-    if (q.effect !== undefined) s.set("effect", String(q.effect));
-    if (q.pvalue !== undefined) s.set("pvalue", String(q.pvalue));
+    if (q.preset) s.set("preset", q.preset);
     if (q.filters) s.set("filters", q.filters);
     return get<Schemas["TopNResponse"]>(vpath("/comparison/topn"), s, signal);
   },
