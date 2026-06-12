@@ -998,6 +998,8 @@ export interface paths {
                     effect?: number;
                     /** @description P-value threshold for the responsive predicate. Default `0.05`. */
                     pvalue?: number;
+                    /** @description Selects a named set of per-dataset responsiveness thresholds (effect-size / p-value), mirroring the reference `DEFAULT_RESPONSIVENESS_PRESETS`. When set to a known value, the preset's per-dataset author thresholds OVERRIDE the numeric `effect` and `pvalue` query parameters above. When omitted or unknown, the numeric `effect`/`pvalue` apply uniformly (the historical, Relaxed-equivalent default). */
+                    preset?: "Relaxed" | "Stringent";
                     /**
                      * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
                      *     string is capped at 16 KiB before unmarshal to prevent DoS.

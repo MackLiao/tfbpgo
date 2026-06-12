@@ -669,6 +669,20 @@ paths:
             type: number
             format: double
             default: 0.05
+        - name: preset
+          in: query
+          required: false
+          description: >
+            Selects a named set of per-dataset responsiveness thresholds
+            (effect-size / p-value), mirroring the reference
+            `DEFAULT_RESPONSIVENESS_PRESETS`. When set to a known value, the
+            preset's per-dataset author thresholds OVERRIDE the numeric `effect`
+            and `pvalue` query parameters above. When omitted or unknown, the
+            numeric `effect`/`pvalue` apply uniformly (the historical,
+            Relaxed-equivalent default).
+          schema:
+            type: string
+            enum: [Relaxed, Stringent]
         - $ref: "#/components/parameters/Filters"
       responses:
         "200":
