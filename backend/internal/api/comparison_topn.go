@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -267,60 +268,136 @@ func (s *Server) buildTopNResponse(
 	filters domain.FiltersByDB,
 ) ([]byte, error) {
 	tmpl := queries.Get("comparison/topn.sql")
-	parts := []string{}
-	args := []any{}
 
+	// Enumerate the (binding, perturbation) pairs and sort by pair_key. Each
+	// pair is executed + cached SEPARATELY rather than fused into one big
+	// UNION ALL. Two reasons:
+	//   1. Memory/speed: the combined UNION accumulated every pair's hash tables
+	//      + window sorts at once and SPILLED to disk on the real artifact (a
+	//      4-pair request took ~4.7s at memory_limit=800MB vs ~1.4s for the four
+	//      pairs run separately — ~3x). Per-pair execution caps peak memory at a
+	//      single pair's working set, so it does not spill regardless of the
+	//      memory_limit.
+	//   2. Cache hit rate: a per-pair cache key (scoped to that pair's two
+	//      datasets + thresholds) lets overlapping requests reuse already-computed
+	//      pairs — the Compare-Datasets matrix and the variant tabs, or
+	//      adding/removing a single dataset, no longer trigger a full re-miss.
+	// Sorting by pair_key here, plus a per-pair ORDER BY on the remaining columns
+	// (in loadOnePairRows), reproduces the previous single-UNION global
+	// `ORDER BY pair_key, binding_sample_id, regulator_locus_tag,
+	// perturbation_sample_id` byte-for-byte.
+	type pairRef struct{ b, p, key string }
+	pairs := make([]pairRef, 0, len(bindingDS)*len(pertDS))
 	for _, b := range bindingDS {
-		bcfg, ok := bindingConfigs[b]
-		if !ok {
+		if _, ok := bindingConfigs[b]; !ok {
 			return nil, fmt.Errorf("no binding config for %q", b)
 		}
 		for _, p := range pertDS {
-			pcfg, ok := pertConfigs[p]
-			if !ok {
+			if _, ok := pertConfigs[p]; !ok {
 				return nil, fmt.Errorf("no perturbation config for %q", p)
 			}
-			pairSQL, pairArgs, err := s.buildOnePair(tmpl, b, p, bcfg, pcfg, topN, effectThr, pvalThr, preset, filters)
-			if err != nil {
-				return nil, err
-			}
-			parts = append(parts, "SELECT * FROM ("+pairSQL+")")
-			args = append(args, pairArgs...)
+			pairs = append(pairs, pairRef{b: b, p: p, key: b + "__" + p})
 		}
 	}
-	if len(parts) == 0 {
+	if len(pairs) == 0 {
 		return json.Marshal(domain.TopNResponse{TopN: topN, EffectThreshold: effectThr, PValueThreshold: pvalThr})
 	}
-	full := strings.Join(parts, "\nUNION ALL\n")
-	// Deterministic total order over the assembled UNION so the serialized JSON
-	// (and version-scoped cache bytes) is a pure function of the inputs and does
-	// not flap under preserve_insertion_order=false. pair_key discriminates the
-	// per-pair blocks; the remaining columns are that pair's GROUP BY key.
-	full += "\nORDER BY pair_key, binding_sample_id, regulator_locus_tag, perturbation_sample_id"
-	dbCtx, cancel := context.WithTimeout(ctx, db.QueryTimeout)
-	defer cancel()
-	// Fix A: serialize comparison DB execution so a heavy multi-pair query can
-	// never occupy both pool connections — one stays free for the rest of the
-	// site. Honor the deadline while waiting rather than queueing on the pool.
-	select {
-	case comparisonSemaphore <- struct{}{}:
-		defer func() { <-comparisonSemaphore }()
-	case <-dbCtx.Done():
-		return nil, dbCtx.Err()
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
+
+	// One absolute deadline shared across all pairs preserves the per-request
+	// 30s DB budget (each per-pair load re-applies it after the cache layer
+	// strips cancellation via context.WithoutCancel). Honor an earlier deadline
+	// already on ctx, matching the previous WithTimeout(ctx, QueryTimeout).
+	deadline := time.Now().Add(db.QueryTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
 	}
-	t0 := time.Now()
-	rows := []domain.TopNRow{}
-	if err := s.Pool.DB.SelectContext(dbCtx, &rows, full, args...); err != nil {
-		return nil, err
-	}
-	elapsed := time.Since(t0)
-	AddDBMillis(ctx, elapsed.Milliseconds())
-	if s.Metrics != nil {
-		s.Metrics.DBDuration.WithLabelValues("comparison/topn").Observe(elapsed.Seconds())
+
+	rows := make([]domain.TopNRow, 0, len(pairs)*topN)
+	for _, pr := range pairs {
+		pairRows, err := s.loadOnePairRows(ctx, deadline, tmpl, pr.b, pr.p, topN, effectThr, pvalThr, preset, filters)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, pairRows...)
 	}
 	return json.Marshal(domain.TopNResponse{
 		TopN: topN, EffectThreshold: effectThr, PValueThreshold: pvalThr, Rows: rows,
 	})
+}
+
+// loadOnePairRows returns the topn rows for ONE (binding, perturbation) pair,
+// cached under a per-pair key so overlapping multi-pair requests reuse
+// already-computed pairs instead of a full whole-response re-miss. The pair is
+// run as a standalone query (not a UNION branch) so it carries its own ORDER BY
+// and keeps peak memory to a single pair's working set. The cache key + the SQL
+// are scoped to just this pair's two datasets (buildOnePair only ever reads
+// filters[b]/filters[p]), maximising cross-request reuse.
+func (s *Server) loadOnePairRows(
+	ctx context.Context, deadline time.Time, tmpl, b, p string,
+	topN int, effectThr, pvalThr float64, preset string,
+	filters domain.FiltersByDB,
+) ([]domain.TopNRow, error) {
+	bcfg := bindingConfigs[b]
+	pcfg := pertConfigs[p]
+
+	pairFilters := domain.FiltersByDB{}
+	if f, ok := filters[b]; ok {
+		pairFilters[b] = f
+	}
+	if f, ok := filters[p]; ok {
+		pairFilters[p] = f
+	}
+	pairCanonFilters := ""
+	if len(pairFilters) > 0 {
+		bb, _ := json.Marshal(pairFilters)
+		pairCanonFilters = string(bb)
+	}
+	canon := canonValues(topnCacheCanonEntries([]string{b}, []string{p}, topN, effectThr, pvalThr, preset, pairCanonFilters))
+	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, "GET", "/comparison/topn#pair", canon)
+
+	body, _, _, err := s.Cache.GetOrLoad(ctx, "comparison/topn-pair", key, func(loadCtx context.Context) ([]byte, error) {
+		pairSQL, pairArgs, err := s.buildOnePair(tmpl, b, p, bcfg, pcfg, topN, effectThr, pvalThr, preset, pairFilters)
+		if err != nil {
+			return nil, err
+		}
+		// Standalone pair query → its own ORDER BY (the previous combined query
+		// could not, since ORDER BY inside a UNION branch is a syntax error). The
+		// keys match the old global order's trailing columns; buildTopNResponse
+		// concatenates pairs in pair_key order, reproducing it exactly.
+		pairSQL = "SELECT * FROM (" + pairSQL + ") ORDER BY binding_sample_id, regulator_locus_tag, perturbation_sample_id"
+
+		dbCtx, cancel := context.WithDeadline(loadCtx, deadline)
+		defer cancel()
+		// Serialize comparison DB execution (one connection at most) so a heavy
+		// pair can never occupy both pool connections; honor the deadline while
+		// waiting rather than queueing on the pool.
+		select {
+		case comparisonSemaphore <- struct{}{}:
+			defer func() { <-comparisonSemaphore }()
+		case <-dbCtx.Done():
+			return nil, dbCtx.Err()
+		}
+		t0 := time.Now()
+		rows := []domain.TopNRow{}
+		if err := s.Pool.DB.SelectContext(dbCtx, &rows, pairSQL, pairArgs...); err != nil {
+			return nil, err
+		}
+		elapsed := time.Since(t0)
+		AddDBMillis(loadCtx, elapsed.Milliseconds())
+		if s.Metrics != nil {
+			s.Metrics.DBDuration.WithLabelValues("comparison/topn").Observe(elapsed.Seconds())
+		}
+		return json.Marshal(rows)
+	})
+	if err != nil {
+		return nil, err
+	}
+	rows := []domain.TopNRow{}
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // buildOnePair instantiates one per-pair SQL block and returns it with its positional args.

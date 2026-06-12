@@ -210,6 +210,53 @@ func TestComparisonTopN_ExecutionParity_CallingcardsHackett(t *testing.T) {
 	}
 }
 
+// TestComparisonTopN_MultiPairAssemblyOrder pins the per-pair execution
+// rewrite: /comparison/topn now runs + caches each (binding, perturbation) pair
+// as its own query (instead of one big UNION ALL) and concatenates them in
+// pair_key order, each pair ordered by its remaining GROUP BY columns. The
+// assembled stream MUST therefore be globally non-decreasing in
+// (pair_key, binding_sample_id, regulator_locus_tag, perturbation_sample_id) —
+// byte-for-byte the order the old single-UNION `ORDER BY ...` produced. The
+// snapshot/golden URLs only exercise single-pair requests, so this is the
+// multi-pair ordering guard.
+func TestComparisonTopN_MultiPairAssemblyOrder(t *testing.T) {
+	s := newTestServer(t)
+	rr := httptest.NewRecorder()
+	q := url.Values{}
+	q.Set("binding", "harbison,callingcards") // deliberately NOT pair_key order
+	q.Set("perturbation", "kemmeren,hackett")
+	q.Set("top_n", "25")
+	reqURL := "/api/v/" + s.Manifests.Artifact.ArtifactVersion + "/comparison/topn?" + q.Encode()
+	s.Routes().ServeHTTP(rr, httptest.NewRequest("GET", reqURL, nil))
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+
+	var resp domain.TopNResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Rows, "multi-pair request must produce rows")
+
+	// Null-joined key compares the 4-tuple lexicographically (0x00 < any value
+	// char, so it is a clean separator) and is a string testify can order.
+	sortKey := func(r domain.TopNRow) string {
+		return strings.Join([]string{
+			r.PairKey, r.BindingSampleID, r.RegulatorLocusTag, r.PerturbationSampleID,
+		}, "\x00")
+	}
+	distinctPairs := map[string]bool{}
+	for i, row := range resp.Rows {
+		distinctPairs[row.PairKey] = true
+		if i == 0 {
+			continue
+		}
+		require.LessOrEqual(t, sortKey(resp.Rows[i-1]), sortKey(row),
+			"rows must be globally ordered by (pair_key, binding_sample_id, "+
+				"regulator_locus_tag, perturbation_sample_id); row %d breaks it", i)
+	}
+	// More than one pair_key proves the multi-pair assembly actually ran (not a
+	// single dominant pair), and request order (harbison/kemmeren first) did not
+	// leak into the output order.
+	require.Greater(t, len(distinctPairs), 1, "expected multiple pair_keys in a 4-pair request")
+}
+
 // TestComparisonTopN_HackettFilterParity pins the A4 fix: when the
 // perturbation dataset has hackett_time_filter=true, user-supplied
 // filters[pDB] MUST NOT be applied to the perturbation CTE — Shiny does
