@@ -233,7 +233,35 @@ config tweaks:
 
 ---
 
+## Accepted implementation divergences (note at cutover)
+
+- **Binding Gene Scatter scopes to committed pairs only (BIND-2).** The reference scatter +
+  missing-note compute `sel_dbs = ⋃ committed datasets` and render every active pair whose two
+  datasets are a subset of `sel_dbs` (`workspace.py:1001-1002`, `:1048-1049`) — a superset that, once
+  ≥2 committed pairs span enough datasets, also shows the cross-combinations (commit A-B + C-D → also
+  renders A-C/A-D/B-C/B-D). The React rewrite renders **exactly the committed pairs** (A-B, C-D). This
+  is internally consistent (scatter grid + missing-note both use strict-committed), arguably the more
+  intuitive "show what I selected," and deliberate — not a bug. Revisit only if the lab wants the
+  superset behavior.
+
+---
+
 ## Phased implementation plan + status
+
+> **Subagent-driven build status (2026-06-11, branch `parity/promoter-sets-and-comparison`):**
+> Tasks executed as fresh implementer subagents (Opus for integration/numerical work) with
+> independent spec + code-quality review each. **DONE & merged on-branch:** schema 5→6
+> (`is_primary` + `log10p`/`neglog10p` columns, DEF-1 harbison default-active) [Task 1];
+> selector hides non-primary variants [Task 2]; `log10pval` measurement column + scatter
+> `-log10(p)` transform + axis labels, binding default → spearman/log10pval (perturbation stays
+> effect/pearson per its reference) [Task 3]; comparison Relaxed/Stringent preset radio [Task 4];
+> binding correlation-matrix pair-selection tab (3 tabs, pending/committed, medians client-derived)
+> [Task 5]; chrome — nav label "Binding/Perturbation Comparisons", loading CSS, datasets banner
+> [Task 7]. **REMAINING:** comparison 3-tab restructure (Compare Datasets matrix / Promoter
+> Definitions / Analysis Methods) + promoter/method display maps (CMP-6) [Task 6 — the largest build].
+> **DEFERRED:** DEF-2 hackett filter numeric→categorical (frontend categorical-spec interaction);
+> the `is_primary=False` Go-fixture case + a binding-only-target topn fixture (both want a widened fixture).
+> Whole branch green: data_prep 76, backend all-ok+vet+gofmt, frontend 95/95+tsc, parity 18/18.
 
 > **Phase A-core needs no schema bump.** Adding variant *rows*, fixing degron's column *value*,
 > and changing default *values* don't alter the `dataset_manifest` *table schema*. Only the
