@@ -424,6 +424,89 @@ def test_dataset_measurement_columns_log10p_parity() -> None:
         assert cols[3] == "", db
 
 
+# The 11 promoter-set variants (2026-06-11 parity re-audit). These are the same
+# assays re-quantified over different promoter-region definitions; they are
+# comparison-only and deliberately EXCLUDED from PRIMARY_DATASETS so the frontend
+# selector hides them. Derived explicitly so subtracting them from
+# DATASET_MEASUREMENT_COLUMNS yields exactly the base (selector-visible) set.
+_PROMOTER_SET_VARIANTS: frozenset[str] = frozenset(
+    {
+        "callingcards_mindel",
+        "callingcards_500bp",
+        "callingcards_intergenic",
+        "rossi_mindel",
+        "rossi_500bp",
+        "rossi_intergenic",
+        "rossi_peaks",
+        "chec_m2025_mindel",
+        "chec_m2025_500bp",
+        "chec_m2025_intergenic",
+        "chec_m2025_peaks",
+    }
+)
+
+
+def test_primary_datasets_pins_base_dataset_set() -> None:
+    """LOW-1: pin is_primary / PRIMARY_DATASETS so a forgotten base dataset
+    fails loudly.
+
+    write_dataset_manifest derives is_primary = (db_name in PRIMARY_DATASETS),
+    but a *base* dataset accidentally omitted from PRIMARY_DATASETS would
+    silently get is_primary=False and vanish from the selector. This test pins
+    the relationship two ways:
+
+    1. The set of datasets the manifest would mark is_primary=True (i.e.
+       PRIMARY_DATASETS itself) equals exactly the base (non-variant) datasets
+       in DATASET_MEASUREMENT_COLUMNS — no more, no less.
+    2. Every base dataset in DATASET_MEASUREMENT_COLUMNS (the measurement map +
+       YAML source of truth) is in PRIMARY_DATASETS.
+
+    If a future base dataset is added to DATASET_MEASUREMENT_COLUMNS + YAML but
+    forgotten in PRIMARY_DATASETS, assertion (1)/(2) FAILS — the dataset would
+    otherwise ship active-but-hidden.
+    """
+    # _PROMOTER_SET_VARIANTS must be a real subset of the measurement map, or the
+    # subtraction below is meaningless (e.g. a renamed variant).
+    assert _PROMOTER_SET_VARIANTS <= set(DATASET_MEASUREMENT_COLUMNS), (
+        "promoter-set variant(s) missing from DATASET_MEASUREMENT_COLUMNS: "
+        f"{sorted(_PROMOTER_SET_VARIANTS - set(DATASET_MEASUREMENT_COLUMNS))}"
+    )
+    base_datasets = set(DATASET_MEASUREMENT_COLUMNS) - _PROMOTER_SET_VARIANTS
+
+    # (1) is_primary=True set (== PRIMARY_DATASETS) is exactly the base set.
+    assert PRIMARY_DATASETS == base_datasets, (
+        "PRIMARY_DATASETS must equal the base (non-variant) datasets in "
+        "DATASET_MEASUREMENT_COLUMNS. Mismatch — "
+        f"in PRIMARY_DATASETS only: {sorted(PRIMARY_DATASETS - base_datasets)}; "
+        f"base datasets missing from PRIMARY_DATASETS: "
+        f"{sorted(base_datasets - PRIMARY_DATASETS)}"
+    )
+
+    # (2) every base dataset is primary (the forgotten-base tripwire).
+    missing_from_primary = base_datasets - PRIMARY_DATASETS
+    assert not missing_from_primary, (
+        "base dataset(s) in DATASET_MEASUREMENT_COLUMNS absent from "
+        f"PRIMARY_DATASETS (would be hidden from the selector): "
+        f"{sorted(missing_from_primary)}"
+    )
+    # The variants must NOT be primary (so the selector hides them).
+    assert PRIMARY_DATASETS.isdisjoint(_PROMOTER_SET_VARIANTS), (
+        "promoter-set variant(s) leaked into PRIMARY_DATASETS: "
+        f"{sorted(PRIMARY_DATASETS & _PROMOTER_SET_VARIANTS)}"
+    )
+
+
+def test_degron_pvalue_is_padj() -> None:
+    """M4: pin the degron pvalue→padj fix at the source of truth.
+
+    degron's responsiveness p-value is the DESeq2-adjusted `padj` column, NOT
+    the raw `pvalue` (reference perturbation/queries.py:DATASET_COLUMNS +
+    DEFAULT_RESPONSIVENESS_PRESETS "padj < 0.1"). A regression back to `pvalue`
+    would silently compute the degron responsive-ratio against the wrong column.
+    """
+    assert DATASET_MEASUREMENT_COLUMNS["degron"] == ("log2FoldChange", "padj", "", "")
+
+
 def test_dataset_manifest_carries_description(
     fresh_duckdb: duckdb.DuckDBPyConnection,
 ) -> None:
