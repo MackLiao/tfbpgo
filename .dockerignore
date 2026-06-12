@@ -11,6 +11,7 @@ tests/parity/snapshots
 docs
 reference
 data_prep/.venv
+infra
 *.md
 .env
 .env.*

@@ -135,7 +135,8 @@ builds the image → SSH and bump `TAG`.
 # Local: cut a tag.
 git tag -a v1.X.Y -m "release v1.X.Y: ..." && git push origin v1.X.Y
 # `.github/workflows/image-publish.yml` builds + pushes
-# ghcr.io/brentlab/tfbpshiny-go:v1.X.Y. Wait for the green check.
+# ghcr.io/mackliao/tfbpgo:v1.X.Y (override the repo via TFBP_IMAGE in .env if
+# you publish elsewhere). Wait for the green check.
 
 # On the host:
 cd /opt/tfbp

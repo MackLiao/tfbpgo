@@ -123,6 +123,15 @@ services:
     command:
       - |
         set -euo pipefail
+        # Fail CLOSED on a missing/malformed checksum — see the prod
+        # docker-compose.yml init container for the rationale (the init step is
+        # the sole §9.5 artifact-integrity gate; a vacuous sha256sum -c on an
+        # empty SHA must never silently "pass").
+        expected_sha="$${ARTIFACT_SHA256:-}"
+        case "$$expected_sha" in
+          "" | *[!0-9a-fA-F]*) echo "FATAL: ARTIFACT_SHA256 must be set to 64 hex chars" >&2; exit 1 ;;
+        esac
+        [ "$${#expected_sha}" -eq 64 ] || { echo "FATAL: ARTIFACT_SHA256 must be 64 hex chars (got $${#expected_sha})" >&2; exit 1; }
         trap 'rm -f /data/tfbp.duckdb.new' EXIT
         ok=""
         for i in 1 2 3; do
@@ -133,7 +142,8 @@ services:
           sleep $$((i*10))
         done
         [ -n "$$ok" ] || { echo "FATAL: download failed after 3 attempts" >&2; exit 1; }
-        echo "$${ARTIFACT_SHA256}  /data/tfbp.duckdb.new" | sha256sum -c -
+        echo "$$expected_sha  /data/tfbp.duckdb.new" | sha256sum -c --status - \
+          || { echo "FATAL: SHA256 mismatch on downloaded artifact" >&2; exit 1; }
         mv /data/tfbp.duckdb.new /data/tfbp.duckdb
         echo "artifact installed: $$(wc -c < /data/tfbp.duckdb) bytes"
     environment:

@@ -38,7 +38,10 @@
 
 services:
   tfbp:
-    image: ghcr.io/brentlab/tfbpshiny-go:${TAG:-latest}
+    # Must match what CI actually publishes (image-publish.yml pushes
+    # ghcr.io/mackliao/tfbpgo). Overridable via TFBP_IMAGE once the artifact
+    # is published under the brentlab org. Mirrors deploy/demo/.
+    image: ${TFBP_IMAGE:-ghcr.io/mackliao/tfbpgo}:${TAG:-latest}
     restart: unless-stopped
     # tfbp-data-init is opt-in via profile `init`; run it explicitly to
     # download/refresh the artifact into the named volume before bringing
@@ -59,7 +62,15 @@ services:
       # /comparison/topn is CPU-bound and ~2x faster at threads=2 (measured
       # 1.05s -> 0.33s for a callingcards×kemmeren pair). The binary default
       # stays 1 (safe for a 2GB t3.small / unknown host); this override is the
-      # production value (matches deploy/demo/). tests/parity passes at threads=2.
+      # production value (matches deploy/demo/).
+      #
+      # NOTE: the unit/fixture parity suite does not meaningfully exercise
+      # threads>1 (the fixture is too small to parallelize — see
+      # correlation_parity_test.go). comparison/topn is thread-stable (RANK by a
+      # deterministic ORDER BY), but four templates ship without an ORDER BY
+      # (datasets/matrix_*, {binding,perturbation}/data.sql), so a threads=1-vs-2
+      # output diff across all golden URLs MUST be run on the REAL artifact
+      # before relying on this default — keep DUCKDB_THREADS=1 if any diverges.
       DUCKDB_THREADS: ${DUCKDB_THREADS:-2}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
       MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
@@ -129,6 +140,18 @@ services:
     command:
       - |
         set -euo pipefail
+        # Fail CLOSED if the expected checksum is missing or malformed. Compose
+        # substitutes ${ARTIFACT_SHA256} at YAML-parse time, so an empty/unset
+        # value becomes a literal empty string the container's `set -u` cannot
+        # catch — and `echo "  file" | sha256sum -c -` then "passes" vacuously.
+        # This init container is the SOLE artifact-integrity gate (the Go binary
+        # does not re-hash at startup, spec §9.5), so validate the SHA shape
+        # ourselves before downloading anything.
+        expected_sha="${ARTIFACT_SHA256}"
+        case "$$expected_sha" in
+          "" | *[!0-9a-fA-F]*) echo "FATAL: ARTIFACT_SHA256 must be set to 64 hex chars" >&2; exit 1 ;;
+        esac
+        [ "$${#expected_sha}" -eq 64 ] || { echo "FATAL: ARTIFACT_SHA256 must be 64 hex chars (got $${#expected_sha})" >&2; exit 1; }
         # Always clear the staging file on exit: a failed download or SHA
         # mismatch must not leave a multi-GB .new orphan on the volume
         # (repeated failures would exhaust the 30GB disk). After a successful
@@ -143,7 +166,8 @@ services:
           sleep $$((i*10))
         done
         [ -n "$$ok" ] || { echo "FATAL: download failed after 3 attempts" >&2; exit 1; }
-        echo "${ARTIFACT_SHA256}  /data/tfbp.duckdb.new" | sha256sum -c -
+        echo "$$expected_sha  /data/tfbp.duckdb.new" | sha256sum -c --status - \
+          || { echo "FATAL: SHA256 mismatch on downloaded artifact" >&2; exit 1; }
         mv /data/tfbp.duckdb.new /data/tfbp.duckdb
         echo "artifact installed: $$(wc -c < /data/tfbp.duckdb) bytes"
     environment:
