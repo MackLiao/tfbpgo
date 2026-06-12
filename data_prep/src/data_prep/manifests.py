@@ -45,8 +45,10 @@ class ColumnFieldMeta(NamedTuple):
 #     are comparison-only and hidden from the selector).
 #   * dataset_manifest gains `log10p_col` / `neglog10p_col` (mirrors reference
 #     DATASET_COLUMNS: the pre-computed log10 / -log10 p-value columns some
-#     binding datasets carry; both default '' where absent). The FEATURE that
-#     consumes them is a later task — v6 only carries the column names.
+#     binding datasets carry; both default '' where absent). The Go service
+#     consumes them at request time: `col=log10pval` resolves via the
+#     neglog10p_col > log10p_col > pvalue_col > effect_col precedence in
+#     correlation.go and drives the server-side -log10(p) scatter transform.
 #   * DEFAULT_ACTIVE_DATASETS drops `harbison` (parity with the reference set,
 #     which no longer pre-selects it).
 SCHEMA_VERSION: int = 6
