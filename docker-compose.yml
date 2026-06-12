@@ -55,6 +55,12 @@ services:
       # DUCKDB_MEMORY_LIMIT (e.g. 600MB) for the legacy co-tenancy overlap.
       DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-800MB}
       DUCKDB_MAX_TEMP_SIZE: ${DUCKDB_MAX_TEMP_SIZE:-2GB}
+      # Prod runs on a t3.large (2 vCPU / 8GB), so default to 2 DuckDB threads:
+      # /comparison/topn is CPU-bound and ~2x faster at threads=2 (measured
+      # 1.05s -> 0.33s for a callingcards×kemmeren pair). The binary default
+      # stays 1 (safe for a 2GB t3.small / unknown host); this override is the
+      # production value (matches deploy/demo/). tests/parity passes at threads=2.
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-2}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
       MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
       # Cap binding×perturbation pairs per /comparison/topn request so the B×P
