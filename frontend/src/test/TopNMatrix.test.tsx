@@ -6,7 +6,7 @@ import type { Schemas } from "@/api/client";
 // Unit tests for the binding × perturbation responsive-ratio matrix
 // (Compare Datasets tab). These assert the FRONTEND-derived cell median (the
 // task contract: median-of-per-regulator-medians of responsiveRatio*100,
-// formatted as an integer percent — parity with
+// formatted with one decimal — parity with
 // reference/tfbpshiny/modules/comparison/server/workspace.py:1228-1235), the
 // "—" placeholder for absent pairs, and the row/column click → selection
 // callbacks. The matrix↔distribution wiring is exercised end-to-end in
@@ -37,11 +37,11 @@ function resp(rows: Schemas["TopNRow"][]): Schemas["TopNResponse"] {
 const noop = () => {};
 
 describe("TopNMatrix", () => {
-  it("renders cell medians as integer percents (median of per-regulator medians)", () => {
+  it("renders cell medians as one-decimal percents (median of per-regulator medians)", () => {
     // Pair (b1, p1): two regulators.
     //   R1 rows → responsiveRatio [0.2, 0.4] → per-reg median 0.3 → 30%
     //   R2 rows → responsiveRatio [0.6]      → per-reg median 0.6 → 60%
-    //   median of [30, 60] = 45 → "45%"
+    //   median of [30, 60] = 45 → "45.0%"
     render(
       <TopNMatrix
         resp={resp([
@@ -57,7 +57,7 @@ describe("TopNMatrix", () => {
         onSelectPerturbation={noop}
       />,
     );
-    expect(screen.getByTestId("topn-cell-b1-p1").textContent).toContain("45%");
+    expect(screen.getByTestId("topn-cell-b1-p1").textContent).toContain("45.0%");
   });
 
   it("renders an em-dash for a pair with no rows", () => {
@@ -73,7 +73,7 @@ describe("TopNMatrix", () => {
       />,
     );
     // p1 has data; p2 has no rows for b1 → placeholder.
-    expect(screen.getByTestId("topn-cell-b1-p1").textContent).toContain("50%");
+    expect(screen.getByTestId("topn-cell-b1-p1").textContent).toContain("50.0%");
     expect(screen.getByTestId("topn-cell-b1-p2").textContent).toContain("—");
   });
 
@@ -187,7 +187,7 @@ describe("TopNMatrix", () => {
     const btn = within(
       screen.getByTestId("topn-cell-callingcards-hackett"),
     ).getByRole("button");
-    expect(btn.getAttribute("aria-label")).toBe("Calling Cards × Hackett: 40%");
+    expect(btn.getAttribute("aria-label")).toBe("Calling Cards × Hackett: 40.0%");
     // Row is selected → cell is active → aria-pressed reflects it.
     expect(btn.getAttribute("aria-pressed")).toBe("true");
   });

@@ -31,7 +31,7 @@ import type { Schemas } from "@/api/client";
 //   1. group the pair's rows by regulatorLocusTag,
 //   2. take median(responsiveRatio) within each regulator group,
 //   3. take the median of those per-regulator medians,
-//   4. ×100 and format as an integer percent ("42%"); "—" when no rows.
+//   4. ×100 and format with one decimal ("42.0%"); "—" when no rows.
 // (responsiveRatio is already a 0..1 ratio; percent_responsive in the reference
 // is responsive_ratio*100 — workspace.py:193.)
 //
@@ -218,7 +218,7 @@ export function TopNMatrix({
                   const label =
                     pct === undefined || pct === null
                       ? "—"
-                      : `${Math.round(pct)}%`;
+                      : `${pct.toFixed(1)}%`;
                   const cellCls = cellActive
                     ? "border border-blue-400 bg-blue-100 p-0 text-xs"
                     : "border border-slate-200 p-0 text-xs";
