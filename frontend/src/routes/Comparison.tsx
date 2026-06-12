@@ -7,6 +7,14 @@ import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
 import { ComparisonBoxplotSkeleton } from "@/plots/ComparisonBoxplotSkeleton";
 import { TopNMatrix, type TopNMatrixSelection } from "@/plots/TopNMatrix";
 import {
+  PromoterDefinitionsTable,
+  AnalysisMethodsTable,
+} from "@/plots/ComparisonVariantTables";
+import {
+  PEAKS_VARIANT_DBS,
+  PROMOTER_VARIANT_DBS,
+} from "@/lib/comparison-palette";
+import {
   ComparisonSidebar,
   type ComparisonSidebarChange,
 } from "@/components/ComparisonSidebar";
@@ -25,23 +33,32 @@ import type { Schemas } from "@/api/client";
 //   1. Compare Datasets — binding(rows) × perturbation(cols) responsive-ratio
 //      MATRIX; each cell is the median percent-responsive for that pair. Click a
 //      row/column header to drill into a distribution (ComparisonBoxplot).
-//   2. Compare Promoter Definitions — placeholder (built in a follow-up).
-//   3. Compare Analysis Methods — placeholder (built in a follow-up).
+//   2. Compare Promoter Definitions — one table per perturbation; rows = binding
+//      datasets, columns = promoter sets (Kang/Mindel/500bp/Intergenic). Built in
+//      ComparisonVariantTables.tsx (Task 6b).
+//   3. Compare Analysis Methods — one table per (peaks-eligible primary,
+//      perturbation); rows = scoring variants (Promoter Enrichment vs Original
+//      Peaks). Built in ComparisonVariantTables.tsx (Task 6b).
 //
 // ALL THREE tabs are driven by the SAME `/comparison/topn` endpoint — they are
 // different labelings/groupings of the same topn result, not new backend calls.
-// Only the Compare Datasets matrix + drill-down is wired this sub-task.
+// Tabs 2 & 3 run topn over the promoter-set / scoring VARIANT binding datasets
+// (now whitelisted in the artifact), batched ONE request per perturbation so
+// each stays under the backend's 12-pair cap (see ComparisonVariantTables.tsx).
 //
 // DELIBERATE DIVERGENCES from the reference:
 //   - No "Execute Analysis" gating. The reference gates the topn computation
 //     behind an explicit button (ui.py:17-22) because each run is a multi-second
 //     off-thread DuckDB sweep; this React app already auto-fetches `/comparison/
-//     topn` reactively (and the backend coalesces + caches), so the matrix
-//     renders as soon as the query lands. The sidebar's "Execute Analysis"
+//     topn` reactively (and the backend coalesces + caches), so the tables
+//     render as soon as their queries land. The sidebar's "Execute Analysis"
 //     button is therefore omitted.
-//   - Tabs 2 & 3 are clean-seam placeholders (a "coming soon" panel), filled in
-//     a follow-up sub-task using the maps already ported into
-//     comparison-palette.ts.
+//   - No per-tab sidebar selectors (cp promoter-set checkboxes / cm binding-
+//     dataset select). The reference defaults to ALL promoter sets selected and
+//     the first eligible binding dataset; we render ALL promoter sets and, for
+//     the methods tab, ALL selected peaks-eligible primaries. The dataset
+//     selection itself still comes from the shared `?binding=`/`?perturbation=`
+//     URL state (the Select page), so the user drives WHICH datasets appear.
 //
 // STATE-ENCODING choice:
 //   - Active tab → URL (`?tab=`), like Binding.tsx, so a deep link can land on
@@ -89,6 +106,13 @@ export function Comparison() {
   const perturbation = (params.get("perturbation") ?? "")
     .split(",")
     .filter(Boolean);
+  // Primary binding datasets for the variant tabs: drop promoter-set variants
+  // (Mindel/500bp/Intergenic) and peaks variants so the tab's own enumeration
+  // re-derives them. Mirrors `binding_primary` in workspace.py:524-530 /
+  // 672-678 (the `not in _variant_dbs` and `not in peaks` filters).
+  const bindingPrimaries = binding.filter(
+    (b) => !PROMOTER_VARIANT_DBS.has(b) && !PEAKS_VARIANT_DBS.has(b),
+  );
   const topN = clampNumber(params.get("top_n"), DEFAULTS.topN, 1, 500);
   const preset = parsePreset(params.get("preset"));
   const facetBy = parseFacetBy(params.get("facet_by"));
@@ -270,19 +294,25 @@ export function Comparison() {
                 ) : null}
               </TabsContent>
 
-              {/* --- Compare Promoter Definitions tab (placeholder) --- */}
+              {/* --- Compare Promoter Definitions tab --- */}
               <TabsContent value="promoters">
-                <ComingSoonPanel
-                  title="Compare Promoter Definitions"
-                  body="Side-by-side tables comparing promoter enrichment scores across promoter set definitions. Coming in a follow-up."
+                <PromoterDefinitionsTable
+                  bindingPrimaries={bindingPrimaries}
+                  perturbationDatasets={perturbation}
+                  topN={topN}
+                  preset={preset}
+                  filters={filters}
                 />
               </TabsContent>
 
-              {/* --- Compare Analysis Methods tab (placeholder) --- */}
+              {/* --- Compare Analysis Methods tab --- */}
               <TabsContent value="methods">
-                <ComingSoonPanel
-                  title="Compare Analysis Methods"
-                  body="Side-by-side tables comparing promoter enrichment vs. original peaks scoring. Coming in a follow-up."
+                <AnalysisMethodsTable
+                  bindingPrimaries={bindingPrimaries}
+                  perturbationDatasets={perturbation}
+                  topN={topN}
+                  preset={preset}
+                  filters={filters}
                 />
               </TabsContent>
             </Tabs>
@@ -290,20 +320,6 @@ export function Comparison() {
         </ErrorBoundary>
       </div>
     </section>
-  );
-}
-
-// Clean-seam placeholder for the two not-yet-built tabs. Renders without
-// crashing and reserves the layout; the follow-up sub-task replaces the body.
-function ComingSoonPanel({ title, body }: { title: string; body: string }) {
-  return (
-    <div
-      className="rounded border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600"
-      data-testid="comparison-coming-soon"
-    >
-      <p className="font-medium text-slate-700">{title}</p>
-      <p className="mt-1">{body}</p>
-    </div>
   );
 }
 

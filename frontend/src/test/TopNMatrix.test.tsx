@@ -172,6 +172,26 @@ describe("TopNMatrix", () => {
     expect(screen.getByTestId("topn-cell-b2-p1").getAttribute("data-selected")).toBeNull();
   });
 
+  it("gives interior cells an aria-label + aria-pressed for header-parity a11y", () => {
+    render(
+      <TopNMatrix
+        resp={resp([mkRow("callingcards", "hackett", "R1", 0.4)])}
+        bindingDatasets={["callingcards"]}
+        perturbationDatasets={["hackett"]}
+        displayName={(d) => (d === "callingcards" ? "Calling Cards" : "Hackett")}
+        selection={{ binding: "callingcards", perturbation: null }}
+        onSelectBinding={noop}
+        onSelectPerturbation={noop}
+      />,
+    );
+    const btn = within(
+      screen.getByTestId("topn-cell-callingcards-hackett"),
+    ).getByRole("button");
+    expect(btn.getAttribute("aria-label")).toBe("Calling Cards × Hackett: 40%");
+    // Row is selected → cell is active → aria-pressed reflects it.
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows the empty state when a dataset axis is empty", () => {
     render(
       <TopNMatrix

@@ -57,6 +57,30 @@ export const qk = {
   },
   topn: (b: string[], p: string[], topN: number, preset: string, filters: string) =>
     [v(), "topn", b.join(","), p.join(","), topN, preset, filters] as const,
+  // One /comparison/topn slice per perturbation dataset for the variant tabs
+  // (Compare Promoter Definitions / Compare Analysis Methods). Each slice fires
+  // [all binding variant dbs] × [a single perturbation] so each request stays
+  // under the backend's 12-pair cap — mirroring the reference's per-perturbation
+  // `_slice_queue` batching (workspace.py:894-908, 922-937). `tab` namespaces the
+  // promoter vs. methods slices so they never collide in the query cache.
+  topnSlice: (
+    tab: string,
+    bindings: string[],
+    perturbation: string,
+    topN: number,
+    preset: string,
+    filters: string,
+  ) =>
+    [
+      v(),
+      "topnSlice",
+      tab,
+      bindings.join(","),
+      perturbation,
+      topN,
+      preset,
+      filters,
+    ] as const,
   dto: () => [v(), "dto"] as const,
 
   // ----- Select Datasets (Task B4) ---------------------------------------

@@ -77,7 +77,12 @@ function median(values: number[]): number | null {
 // workspace.py:1231-1233 exactly:
 //   per_reg = sub.groupby("regulator_locus_tag")["percent_responsive"].median()
 //   val = float(per_reg.median())
-function cellPercent(rows: Schemas["TopNRow"][]): number | null {
+// Exported so the Compare Promoter Definitions / Compare Analysis Methods tables
+// (PromoterDefinitionsTable / AnalysisMethodsTable) compute their cells with the
+// IDENTICAL two-stage median — never re-derive this. The reference uses the same
+// `groupby(regulator).median().median()` for the matrix cells (workspace.py:
+// 1231-1233) and both variant tables (1469-1472 cp, 1618-1621 cm).
+export function cellPercent(rows: Schemas["TopNRow"][]): number | null {
   if (rows.length === 0) return null;
   const byReg = new Map<string, number[]>();
   for (const r of rows) {
@@ -232,6 +237,10 @@ export function TopNMatrix({
                         // A cell click drills into the binding ROW (reference
                         // _on_cell: cd_selected_binding=b, perturbation=None).
                         onClick={() => onSelectBinding(b)}
+                        // a11y parity with the row/col header buttons: announce
+                        // the pair + value and reflect the row/column selection.
+                        aria-pressed={cellActive}
+                        aria-label={`${displayName(b)} × ${displayName(p)}: ${label}`}
                         title="Click to view distributions for this binding dataset"
                         className={btnCls}
                       >

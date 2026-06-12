@@ -10,11 +10,29 @@
 // lookup. The palettes are keyed on the *display label*, so the rendering
 // path is db_name → label → color.
 
+// Base (Kang) binding labels, keyed by primary db_name. Spellings are the
+// reference's CURRENT canonical forms ("2021 ChIP-exo" / "2025 ChEC-seq" — note
+// the hyphen + capital C), matching workspace.py:56-61 `_BINDING_ORDER` and
+// queries.py:469-483 `BINDING_LABEL_MAP`. The Task-6a Shiny-port spellings
+// ("ChIPexo" / "Chec-seq") were stale; this is the single source of truth that
+// `BINDING_PALETTE` / `BINDING_ORDER` / `ComparisonBoxplot` key on.
 export const BINDING_LABEL_MAP: Record<string, string> = {
   callingcards: "2026 Calling Cards",
   harbison: "2004 ChIP-chip",
-  chec_m2025: "2025 Chec-seq",
-  rossi: "2021 ChIPexo",
+  chec_m2025: "2025 ChEC-seq",
+  rossi: "2021 ChIP-exo",
+  // Promoter-set variants (suffixed with the promoter set in parentheses) —
+  // folded in from the former duplicate BINDING_LABEL_MAP_FULL.
+  // queries.py:469-483.
+  chec_m2025_mindel: "2025 ChEC-seq (Mindel)",
+  rossi_mindel: "2021 ChIP-exo (Mindel)",
+  callingcards_mindel: "2026 Calling Cards (Mindel)",
+  rossi_500bp: "2021 ChIP-exo (500bp)",
+  chec_m2025_500bp: "2025 ChEC-seq (500bp)",
+  rossi_intergenic: "2021 ChIP-exo (Intergenic)",
+  chec_m2025_intergenic: "2025 ChEC-seq (Intergenic)",
+  callingcards_500bp: "2026 Calling Cards (500bp)",
+  callingcards_intergenic: "2026 Calling Cards (Intergenic)",
 };
 
 export const PERTURBATION_LABEL_MAP: Record<string, string> = {
@@ -28,8 +46,8 @@ export const PERTURBATION_LABEL_MAP: Record<string, string> = {
 
 export const BINDING_PALETTE: Record<string, string> = {
   "2004 ChIP-chip": "#E64B35",
-  "2021 ChIPexo": "#F39B7F",
-  "2025 Chec-seq": "#00A087",
+  "2021 ChIP-exo": "#F39B7F",
+  "2025 ChEC-seq": "#00A087",
   "2026 Calling Cards": "#3C5488",
 };
 
@@ -47,8 +65,8 @@ export const PERTURBATION_PALETTE: Record<string, string> = {
 // `_PERT_ORDER` in workspace.py:46-60.
 export const BINDING_ORDER: ReadonlyArray<string> = [
   "2004 ChIP-chip",
-  "2021 ChIPexo",
-  "2025 Chec-seq",
+  "2021 ChIP-exo",
+  "2025 ChEC-seq",
   "2026 Calling Cards",
 ];
 
@@ -111,28 +129,10 @@ export const PROMOTER_SET_MAP: Record<string, string> = {
   chec_m2025_intergenic: "Intergenic",
 };
 
-// Full binding label map, extended with the promoter-set variants (each variant
-// suffixed with its promoter set in parentheses). queries.py:469-483
-// BINDING_LABEL_MAP. Note: this is the variant-extended superset; the base-only
-// BINDING_LABEL_MAP above (kept for the Compare Datasets boxplot facet titles)
-// uses the Shiny-port spellings ("ChIPexo"/"Chec-seq") that the existing
-// ComparisonBoxplot + BINDING_PALETTE are keyed on. The variant map below uses
-// the reference's canonical spellings ("ChIP-exo"/"ChEC-seq").
-export const BINDING_LABEL_MAP_FULL: Record<string, string> = {
-  callingcards: "2026 Calling Cards",
-  harbison: "2004 ChIP-chip",
-  chec_m2025: "2025 ChEC-seq",
-  rossi: "2021 ChIP-exo",
-  chec_m2025_mindel: "2025 ChEC-seq (Mindel)",
-  rossi_mindel: "2021 ChIP-exo (Mindel)",
-  callingcards_mindel: "2026 Calling Cards (Mindel)",
-  rossi_500bp: "2021 ChIP-exo (500bp)",
-  chec_m2025_500bp: "2025 ChEC-seq (500bp)",
-  rossi_intergenic: "2021 ChIP-exo (Intergenic)",
-  chec_m2025_intergenic: "2025 ChEC-seq (Intergenic)",
-  callingcards_500bp: "2026 Calling Cards (500bp)",
-  callingcards_intergenic: "2026 Calling Cards (Intergenic)",
-};
+// (The former `BINDING_LABEL_MAP_FULL` was folded into the single
+// `BINDING_LABEL_MAP` above — there is now one binding-label map keyed on the
+// reference's canonical spellings, covering both the base datasets and their
+// promoter-set variants. queries.py:469-483.)
 
 // Maps primary binding db_name to its ordered promoter-set variants, in the
 // promoter-selector order: Mindel, 500bp, Intergenic (Kang is the primary
@@ -222,4 +222,71 @@ export function bindingLabel(db: string): string {
 
 export function perturbationLabel(db: string): string {
   return PERTURBATION_LABEL_MAP[db] ?? db;
+}
+
+// ---------------------------------------------------------------------------
+// Promoter-set ordering / variant-tab helpers (Task 6b).
+// ---------------------------------------------------------------------------
+
+// Promoter-set keys in selector order. workspace.py:67-72 `_PROMOTER_SET_ALIAS`
+// (Kang, Mindel, 500bp, Intergenic). Drives the Compare Promoter Definitions
+// table column order; index aligns with PROMOTER_VARIANT_PAIRS for non-Kang sets
+// ("Mindel"→0, "500bp"→1, "Intergenic"→2 — Kang is the primary db itself).
+export const PROMOTER_SET_ORDER: ReadonlyArray<string> = [
+  "Kang",
+  "Mindel",
+  "500bp",
+  "Intergenic",
+];
+
+// Index of each non-Kang promoter set into PROMOTER_VARIANT_PAIRS[primary].
+// workspace.py:774-778 `_ps_to_variant_index`.
+export const PROMOTER_SET_VARIANT_INDEX: Record<string, number> = {
+  Mindel: 0,
+  "500bp": 1,
+  Intergenic: 2,
+};
+
+// Binding primaries eligible for the Compare Analysis Methods tab — the keys of
+// PEAKS_VARIANT_MAP. workspace.py:64 `_METHODS_ELIGIBLE = frozenset(PEAKS_VARIANT_MAP)`.
+export const METHODS_ELIGIBLE: ReadonlyArray<string> = Object.keys(
+  PEAKS_VARIANT_MAP,
+);
+
+// All non-primary promoter-set variant db_names (Mindel/500bp/Intergenic of every
+// primary). Used to strip variants out of the user-selected primary binding list.
+// workspace.py:316-319 `_variant_dbs`.
+export const PROMOTER_VARIANT_DBS: ReadonlySet<string> = new Set(
+  Object.values(PROMOTER_VARIANT_PAIRS).flat(),
+);
+
+// All peaks variant db_names. workspace.py:336/529 frozenset().union(*PEAKS_VARIANT_MAP.values()).
+export const PEAKS_VARIANT_DBS: ReadonlySet<string> = new Set(
+  Object.values(PEAKS_VARIANT_MAP).flat(),
+);
+
+// HSL green scale for table cells: 0% → white, 100% → full green. Mirrors
+// workspace.py:1157-1164 `_cell_style` so the variant tables shade identically
+// to the Compare Datasets matrix. Returns a CSS `background-color` string.
+export function cellGreenBg(pct: number): string {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const lightness = 100 - clamped * 0.5;
+  return `hsl(120, 60%, ${Math.round(lightness)}%)`;
+}
+
+// Resolve a primary binding db_name + promoter-set key to the variant db_name
+// that should be queried/displayed for that cell. "Kang" → the primary db
+// itself; other sets → PROMOTER_VARIANT_PAIRS[primary][index], when it exists.
+// Returns null when the variant is unknown. Mirrors the Kang/index branch of
+// workspace.py:780-793 (`_resolve_cd_db`) and the cp expansion (805-816).
+export function resolvePromoterVariant(
+  primary: string,
+  promoterSet: string,
+): string | null {
+  if (promoterSet === "Kang") return primary;
+  const idx = PROMOTER_SET_VARIANT_INDEX[promoterSet];
+  if (idx === undefined) return null;
+  const variants = PROMOTER_VARIANT_PAIRS[primary];
+  if (!variants || idx >= variants.length) return null;
+  return variants[idx] ?? null;
 }

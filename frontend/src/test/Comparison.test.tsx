@@ -364,23 +364,24 @@ describe("Comparison route", () => {
     );
   });
 
-  it("renders the placeholder tabs without crashing", async () => {
+  it("shows the variant-tab empty state when no eligible binding dataset is picked", async () => {
+    vi.stubGlobal("fetch", routedFetch());
+    // callingcards HAS promoter variants but NO peaks variant → the methods tab
+    // shows its empty state, while the promoters tab renders a table.
     renderComparison(
-      "/comparison?binding=callingcards&perturbation=hackett&tab=promoters",
+      "/comparison?binding=callingcards&perturbation=hackett&tab=methods",
     );
-    const panel = await screen.findByTestId("comparison-coming-soon");
-    expect(panel).toBeInTheDocument();
+    const empty = await screen.findByTestId("comparison-variant-empty");
     expect(
-      within(panel).getByText(/promoter enrichment scores across promoter set/i),
+      within(empty).getByText(/original peaks calls/i),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Compare Analysis Methods" }));
+    // Switching to the promoters tab renders a real per-perturbation table.
+    fireEvent.click(
+      screen.getByRole("tab", { name: "Compare Promoter Definitions" }),
+    );
     await waitFor(() =>
-      expect(
-        within(screen.getByTestId("comparison-coming-soon")).getByText(
-          /promoter enrichment vs\. original peaks scoring/i,
-        ),
-      ).toBeInTheDocument(),
+      expect(screen.getByTestId("cp-tables")).toBeInTheDocument(),
     );
   });
 

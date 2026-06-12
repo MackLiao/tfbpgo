@@ -69,9 +69,10 @@ describe("ComparisonBoxplot", () => {
     const facetTitles = (lastProps!.layout.annotations as Array<{ text: string }>).map(
       (a) => a.text,
     );
-    // _BINDING_ORDER: "2004 ChIP-chip", "2021 ChIPexo" — both should appear in
-    // chronological order regardless of input order.
-    expect(facetTitles).toEqual(["2004 ChIP-chip", "2021 ChIPexo"]);
+    // _BINDING_ORDER: "2004 ChIP-chip", "2021 ChIP-exo" (canonical reference
+    // spellings) — both should appear in chronological order regardless of
+    // input order.
+    expect(facetTitles).toEqual(["2004 ChIP-chip", "2021 ChIP-exo"]);
   });
 
   it("swaps the axis when facetBy=perturbation", () => {
