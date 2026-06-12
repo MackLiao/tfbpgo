@@ -1,13 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { api, apiErrorMessage } from "@/api/client";
+import { api, apiErrorMessage, type ResponsivenessPreset } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
 import { ComparisonBoxplotSkeleton } from "@/plots/ComparisonBoxplotSkeleton";
 import {
   ComparisonSidebar,
   type ComparisonSidebarChange,
-  type ResponsivenessPreset,
 } from "@/components/ComparisonSidebar";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 

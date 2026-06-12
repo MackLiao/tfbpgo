@@ -13,6 +13,15 @@ export type MeasurementCol = "effect" | "pvalue" | "log10pval";
 // CorrMethod is the closed set of `method` query-param values.
 export type CorrMethod = "pearson" | "spearman";
 
+// ResponsivenessPreset is the closed set of `preset` query-param values on
+// /comparison/topn. These EXACT strings are case-sensitive keys into the
+// backend's `responsivenessPresets` map (comparison_topn.go); a mis-cased
+// value would silently fall through to the Relaxed-equivalent numeric default,
+// so the union — not a bare `string` — is the canonical type used by both the
+// api caller and the Comparison components. Default "Relaxed" matches
+// reference/tfbpshiny/utils/vdb_init.py DEFAULT_RESPONSIVENESS_PRESET.
+export type ResponsivenessPreset = "Relaxed" | "Stringent";
+
 let artifactVersion: string | null = null;
 
 export function setArtifactVersion(v: string): void {
@@ -176,7 +185,7 @@ export const api = {
       binding: string[];
       perturbation: string[];
       top_n?: number;
-      preset?: string;
+      preset?: ResponsivenessPreset;
       filters?: string;
     },
     signal?: AbortSignal,

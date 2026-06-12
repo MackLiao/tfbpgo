@@ -1,4 +1,5 @@
 import { Input } from "@/components/ui/input";
+import type { ResponsivenessPreset } from "@/api/client";
 
 // Sidebar controls for the Comparison route. Mirror
 // reference/tfbpshiny/modules/comparison/ui.py:
@@ -13,8 +14,6 @@ import { Input } from "@/components/ui/input";
 //
 // Every change is pushed through `onChange` so the parent route can mirror
 // the new value into the URL — URL is the canonical state.
-
-export type ResponsivenessPreset = "Relaxed" | "Stringent";
 
 export interface ComparisonSidebarChange {
   topN?: number;
