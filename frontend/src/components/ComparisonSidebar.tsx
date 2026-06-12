@@ -6,7 +6,6 @@ import type { ResponsivenessPreset } from "@/api/client";
 //   - top_n: numeric, 1..500 step 5, default 25
 //   - responsiveness_preset: radio "Relaxed" | "Stringent", default "Relaxed"
 //     (replaces the old Min |effect| / Max p-value sliders — CMP-4/CMP-5)
-//   - facet_by: radio "binding" | "perturbation", default "binding"
 //
 // The preset strings "Relaxed" and "Stringent" are sent verbatim as
 // `?preset=` to the backend (comparison_topn.go `responsivenessPresets` map;
@@ -18,20 +17,17 @@ import type { ResponsivenessPreset } from "@/api/client";
 export interface ComparisonSidebarChange {
   topN?: number;
   preset?: ResponsivenessPreset;
-  facetBy?: "binding" | "perturbation";
 }
 
 export interface ComparisonSidebarProps {
   topN: number;
   preset: ResponsivenessPreset;
-  facetBy: "binding" | "perturbation";
   onChange: (next: ComparisonSidebarChange) => void;
 }
 
 export function ComparisonSidebar({
   topN,
   preset,
-  facetBy,
   onChange,
 }: ComparisonSidebarProps) {
   return (
@@ -84,32 +80,6 @@ export function ComparisonSidebar({
               onChange={() => onChange({ preset: "Stringent" })}
             />
             <span>Stringent</span>
-          </label>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend className="mb-1 font-medium text-slate-700">Facet by</legend>
-        <div className="space-y-1">
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              name="cmp-facet-by"
-              value="binding"
-              checked={facetBy === "binding"}
-              onChange={() => onChange({ facetBy: "binding" })}
-            />
-            <span>Binding source</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="radio"
-              name="cmp-facet-by"
-              value="perturbation"
-              checked={facetBy === "perturbation"}
-              onChange={() => onChange({ facetBy: "perturbation" })}
-            />
-            <span>Perturbation source</span>
           </label>
         </div>
       </fieldset>

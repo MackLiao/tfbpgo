@@ -117,7 +117,7 @@ describe("Comparison route", () => {
     );
   });
 
-  it("renders the sidebar controls (Top N, responsiveness preset radios, facet radios)", () => {
+  it("renders the sidebar controls (Top N, responsiveness preset radios)", () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -135,9 +135,11 @@ describe("Comparison route", () => {
     // Old effect/pvalue sliders must NOT be present
     expect(screen.queryByLabelText("Min |effect|")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Max p-value")).not.toBeInTheDocument();
-    // Facet radios remain
-    expect(screen.getByLabelText("Binding source")).toBeInTheDocument();
-    expect(screen.getByLabelText("Perturbation source")).toBeInTheDocument();
+    // The vestigial "Facet by" radio was removed: the drill-down direction is
+    // derived from which matrix header the user clicks (drill.facetBy), so the
+    // sidebar control drove nothing. Guard against it reappearing.
+    expect(screen.queryByLabelText("Binding source")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Perturbation source")).not.toBeInTheDocument();
   });
 
   it("defaults to Relaxed preset when no ?preset= param is in the URL", () => {
@@ -265,23 +267,6 @@ describe("Comparison route", () => {
       await screen.findByText(/too many comparisons.*select fewer/),
     ).toBeInTheDocument();
     expect(screen.queryByText("HTTP 400")).not.toBeInTheDocument();
-  });
-
-  it("toggling facet_by radio writes to the URL", async () => {
-    const qc = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={qc}>
-        <MemoryRouter initialEntries={["/comparison?binding=callingcards&perturbation=hackett"]}>
-          <Comparison />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    const pertRadio = screen.getByLabelText("Perturbation source") as HTMLInputElement;
-    expect(pertRadio.checked).toBe(false);
-    fireEvent.click(pertRadio);
-    await waitFor(() => expect(pertRadio.checked).toBe(true));
   });
 
   it("sends ?preset=Stringent to the API when Stringent is selected", async () => {

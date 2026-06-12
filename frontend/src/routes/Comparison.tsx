@@ -86,7 +86,7 @@ import type { Schemas } from "@/api/client";
 //
 // URL behaviour (preset): when `?preset=` is absent, defaults to "Relaxed" but
 // is not written into the URL proactively — it only appears once the user
-// explicitly changes the control, matching `top_n`/`facet_by`. The query-key
+// explicitly changes the control, matching `top_n`. The query-key
 // and API call always use the resolved value, so caching is correct regardless.
 
 const DEFAULT_PRESET: ResponsivenessPreset = "Relaxed";
@@ -94,7 +94,6 @@ const DEFAULT_PRESET: ResponsivenessPreset = "Relaxed";
 const DEFAULTS = {
   topN: 25,
   preset: DEFAULT_PRESET,
-  facetBy: "binding" as const,
 };
 
 type ComparisonTab = "datasets" | "promoters" | "methods";
@@ -103,10 +102,6 @@ type ComparisonTab = "datasets" | "promoters" | "methods";
 // garbage) falls back to the first tab so we never show an empty tabpanel.
 function parseTab(raw: string | null): ComparisonTab {
   return raw === "promoters" || raw === "methods" ? raw : "datasets";
-}
-
-function parseFacetBy(raw: string | null): "binding" | "perturbation" {
-  return raw === "perturbation" ? "perturbation" : "binding";
 }
 
 // Parse the `?promoterSets=` param for the Compare Promoter Definitions tab.
@@ -141,7 +136,6 @@ export function Comparison() {
   );
   const topN = clampNumber(params.get("top_n"), DEFAULTS.topN, 1, 500);
   const preset = parsePreset(params.get("preset"));
-  const facetBy = parseFacetBy(params.get("facet_by"));
   const filters = params.get("filters") ?? "";
   const tab = parseTab(params.get("tab"));
   // Promoter sets to compare on the Compare Promoter Definitions tab. Absent
@@ -257,7 +251,6 @@ export function Comparison() {
       const out = new URLSearchParams(prev);
       if (next.topN !== undefined) out.set("top_n", String(next.topN));
       if (next.preset !== undefined) out.set("preset", next.preset);
-      if (next.facetBy !== undefined) out.set("facet_by", next.facetBy);
       return out;
     });
   };
@@ -297,7 +290,6 @@ export function Comparison() {
       <ComparisonSidebar
         topN={topN}
         preset={preset}
-        facetBy={facetBy}
         onChange={handleSidebarChange}
       />
       <div className="space-y-4">
