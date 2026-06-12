@@ -14,12 +14,17 @@ import {
   PEAKS_VARIANT_DBS,
   PROMOTER_SET_ORDER,
   PROMOTER_VARIANT_DBS,
+  resolveCompareDatasetsDb,
 } from "@/lib/comparison-palette";
 import {
   ComparisonSidebar,
   type ComparisonSidebarChange,
 } from "@/components/ComparisonSidebar";
 import { PromoterSetSelector } from "@/components/PromoterSetSelector";
+import {
+  CompareDatasetsControls,
+  type CompareDatasetsMethod,
+} from "@/components/CompareDatasetsControls";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { Schemas } from "@/api/client";
@@ -63,11 +68,20 @@ import type { Schemas } from "@/api/client";
 //     the table columns and the topn binding-axis fan-out. With ZERO sets
 //     selected we render an explicit empty-state ("Select at least one promoter
 //     set…") rather than the reference's blank output — a small UX improvement.
+//   - The cd Binding Method + Promoter Set selectors (reference
+//     `cd_binding_method` / `cd_promoter_set`, workspace.py:531-549) ARE
+//     implemented — also as an INLINE control (CompareDatasetsControls) above the
+//     Compare Datasets matrix. They re-resolve each primary row to its scoring
+//     variant (resolveCompareDatasetsDb): Promoter Enrichment + Kang is the base
+//     matrix (the prior behaviour), other promoter sets swap to the variant db,
+//     and Peaks swaps to the peaks variant (dropping primaries that have none).
+//     URL-encoded via `?cd_method=` / `?cd_promoter_set=` (absent => the defaults
+//     Promoter Enrichment / Kang). The matrix still labels rows by the PRIMARY
+//     base label; we re-key the topn rows variant→primary so the matrix + the
+//     drill-down boxplot read/label in primary space.
 //   - Still divergent (the reference's other per-tab sidebar selectors are not
 //     ported; the dataset selection itself comes from the shared
 //     `?binding=`/`?perturbation=` URL state on the Select page):
-//       · Compare Datasets `cd_promoter_set` / `cd_binding_method`
-//         (workspace.py:537-549) — the matrix always uses the Kang primaries.
 //       · Compare Analysis Methods `cm_binding_dataset` single-select
 //         (workspace.py:574-580) — we render ALL selected peaks-eligible
 //         primaries rather than one chosen dataset — and `cm_promoter_set`
@@ -121,6 +135,22 @@ function parsePreset(raw: string | null): ResponsivenessPreset {
   return raw === "Stringent" ? "Stringent" : "Relaxed";
 }
 
+const DEFAULT_CD_METHOD: CompareDatasetsMethod = "Promoter Enrichment";
+const DEFAULT_CD_PROMOTER_SET = "Kang";
+
+// Parse the Compare Datasets `?cd_method=` / `?cd_promoter_set=` params. Both
+// default to the base/Kang matrix when absent or unrecognized, matching the
+// reference's `selected="Promoter Enrichment"` / `selected="Kang"`
+// (workspace.py:541 / 549).
+function parseCdMethod(raw: string | null): CompareDatasetsMethod {
+  return raw === "Peaks" ? "Peaks" : DEFAULT_CD_METHOD;
+}
+function parseCdPromoterSet(raw: string | null): string {
+  return raw !== null && PROMOTER_SET_ORDER.includes(raw)
+    ? raw
+    : DEFAULT_CD_PROMOTER_SET;
+}
+
 export function Comparison() {
   const [params, setParams] = useSearchParams();
   const binding = (params.get("binding") ?? "").split(",").filter(Boolean);
@@ -142,6 +172,67 @@ export function Comparison() {
   // param => all four (the reference's checkbox-group default).
   const selectedPromoterSets = parsePromoterSets(params.get("promoterSets"));
 
+  // Compare Datasets binding-method + promoter-set selection (absent => the
+  // base/Kang matrix, i.e. the behaviour before this control existed). See
+  // CompareDatasetsControls + resolveCompareDatasetsDb.
+  const cdMethod = parseCdMethod(params.get("cd_method"));
+  const cdPromoterSet = parseCdPromoterSet(params.get("cd_promoter_set"));
+
+  // db_name → display_name lookup from /datasets (already cached per artifact
+  // version). Declared here because the cd resolver's availability gate
+  // (availableDbs) also derives from it. Mirrors workspace.py:326-328.
+  const datasetsQuery = useQuery({
+    queryKey: qk.datasets(),
+    queryFn: ({ signal }) => api.datasets(signal),
+  });
+
+  // Set of db_names the artifact actually serves (from /datasets, incl. variant
+  // dbs). Threaded into the resolver as the reference's `_available_datasets` +
+  // `cd_resolved in BINDING_CONFIGS` guard so a resolved-but-missing variant
+  // degrades to Kang instead of 400ing the topn request. `undefined` until the
+  // manifest loads → the resolver uses the static maps in the meantime (the
+  // common case, where the maps already match the artifact).
+  const availableDbs = useMemo<ReadonlySet<string> | undefined>(() => {
+    const ds = datasetsQuery.data?.datasets;
+    // Gate only against a real, non-empty manifest. An absent (still loading /
+    // errored) or empty datasets list => undefined => no gating (the static maps
+    // remain the source of truth), so we never drop every row on a degenerate
+    // manifest — only drift between the maps and a populated manifest gates.
+    if (!ds || ds.length === 0) return undefined;
+    const s = new Set<string>();
+    for (const d of ds) s.add(d.dbName);
+    return s;
+  }, [datasetsQuery.data]);
+
+  // Resolve each selected primary to the variant db that supplies its matrix
+  // row, dropping primaries that resolve to nothing (Peaks with no peaks
+  // variant, or a variant absent from the artifact). Mirrors workspace.py:795-803
+  // (`cd_resolved`).
+  const cdRows = useMemo<Array<{ primary: string; resolved: string }>>(() => {
+    const out: Array<{ primary: string; resolved: string }> = [];
+    for (const primary of bindingPrimaries) {
+      const resolved = resolveCompareDatasetsDb(
+        primary,
+        cdMethod,
+        cdPromoterSet,
+        availableDbs,
+      );
+      if (resolved !== null) out.push({ primary, resolved });
+    }
+    return out;
+    // bindingPrimaries is re-derived each render; key the memo on its content.
+  }, [bindingPrimaries.join(","), cdMethod, cdPromoterSet, availableDbs]);
+
+  const cdResolvedDbs = useMemo(() => cdRows.map((r) => r.resolved), [cdRows]);
+  const cdRowPrimaries = useMemo(() => cdRows.map((r) => r.primary), [cdRows]);
+  // resolved variant db → primary, for re-keying the topn rows back into the
+  // primary "space" the matrix + drill-down label in.
+  const resolvedToPrimary = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of cdRows) m.set(r.resolved, r.primary);
+    return m;
+  }, [cdRows]);
+
   // Drill-down selection: which row (binding) OR column (perturbation) of the
   // matrix is currently expanded into a distribution. Mutually exclusive.
   // Ephemeral component state — see the state-encoding note in the file header.
@@ -150,22 +241,21 @@ export function Comparison() {
     perturbation: null,
   });
 
+  // The Compare Datasets matrix queries topn over the RESOLVED variant dbs
+  // (cd_method/cd_promoter_set), not the raw primaries. Under the default
+  // Promoter Enrichment + Kang, cdResolvedDbs === bindingPrimaries, so this is
+  // byte-identical to the prior `binding` query in the common case.
   const topnQuery = useQuery({
-    queryKey: qk.topn(binding, perturbation, topN, preset, filters),
+    queryKey: qk.topn(cdResolvedDbs, perturbation, topN, preset, filters),
     queryFn: ({ signal }) => {
-      const base = { binding, perturbation, top_n: topN, preset };
+      const base = { binding: cdResolvedDbs, perturbation, top_n: topN, preset };
       return api.topn(filters ? { ...base, filters } : base, signal);
     },
-    enabled: binding.length > 0 && perturbation.length > 0,
+    enabled: cdResolvedDbs.length > 0 && perturbation.length > 0,
   });
 
-  // db_name → display_name lookup from /datasets (already cached per artifact
-  // version). Falls back to the db_name when absent. Mirrors workspace.py:326-328
-  // (display_names from vdb.get_tags(...).display_name).
-  const datasetsQuery = useQuery({
-    queryKey: qk.datasets(),
-    queryFn: ({ signal }) => api.datasets(signal),
-  });
+  // db_name → display_name lookup from /datasets (datasetsQuery declared above).
+  // Falls back to the db_name when absent. Mirrors workspace.py:326-328.
   const displayName = useMemo(() => {
     const map = new Map<string, string>();
     for (const d of datasetsQuery.data?.datasets ?? []) {
@@ -173,6 +263,25 @@ export function Comparison() {
     }
     return (db: string): string => map.get(db) ?? db;
   }, [datasetsQuery.data]);
+
+  // Re-key the topn rows from the resolved variant db back to the PRIMARY db so
+  // the matrix rows + drill-down boxplot read/label in primary space (the matrix
+  // shows primary base labels regardless of which scoring variant supplies the
+  // cell value, and ComparisonBoxplot's bindingLabel/BINDING_ORDER only know the
+  // base labels). A no-op when resolved === primary (Promoter Enrichment + Kang).
+  const cdResponse = useMemo<Schemas["TopNResponse"] | undefined>(() => {
+    if (!topnQuery.data) return undefined;
+    const rows = (topnQuery.data.rows ?? []).map((r) => {
+      const sep = r.pairKey.indexOf("__");
+      if (sep < 0) return r;
+      const bDb = r.pairKey.slice(0, sep);
+      const primary = resolvedToPrimary.get(bDb);
+      if (primary === undefined || primary === bDb) return r;
+      // slice(sep) is "__{perturbationDb}", so this rebuilds "{primary}__{pDb}".
+      return { ...r, pairKey: `${primary}${r.pairKey.slice(sep)}` };
+    });
+    return { ...topnQuery.data, rows };
+  }, [topnQuery.data, resolvedToPrimary]);
 
   // Validate the ephemeral drill-down selection against the current data. The
   // selection lives in component state (see the state-encoding note above) and
@@ -189,10 +298,12 @@ export function Comparison() {
       const bindingSet = new Set(binding);
       const perturbationSet = new Set(perturbation);
       // Datasets actually present in the loaded topn result (drives the matrix).
-      // Only enforce the row-presence check once data has landed: while the
-      // query is pending (e.g. mid-refetch after a preset change) the rows are
-      // momentarily empty, and a still-valid pick must not be nulled then.
-      const rows = topnQuery.data?.rows;
+      // Use the re-keyed cdResponse so rowBindings are in primary space (the
+      // matrix selects primaries). Only enforce the row-presence check once data
+      // has landed: while the query is pending (e.g. mid-refetch after a preset
+      // change) the rows are momentarily empty, and a still-valid pick must not
+      // be nulled then.
+      const rows = cdResponse?.rows;
       const rowBindings = new Set<string>();
       const rowPerturbations = new Set<string>();
       for (const r of rows ?? []) {
@@ -218,7 +329,7 @@ export function Comparison() {
       }
       return prev;
     });
-  }, [binding.join(","), perturbation.join(","), topnQuery.data]);
+  }, [binding.join(","), perturbation.join(","), cdResponse]);
 
   const setTab = (next: string): void => {
     const np = new URLSearchParams(params);
@@ -246,6 +357,21 @@ export function Comparison() {
     setParams(np);
   };
 
+  // Write the Compare Datasets selectors to the URL; absent param == the default
+  // (a clean URL for the base/Kang matrix).
+  const setCdMethod = (next: CompareDatasetsMethod): void => {
+    const np = new URLSearchParams(params);
+    if (next === DEFAULT_CD_METHOD) np.delete("cd_method");
+    else np.set("cd_method", next);
+    setParams(np);
+  };
+  const setCdPromoterSet = (next: string): void => {
+    const np = new URLSearchParams(params);
+    if (next === DEFAULT_CD_PROMOTER_SET) np.delete("cd_promoter_set");
+    else np.set("cd_promoter_set", next);
+    setParams(np);
+  };
+
   const handleSidebarChange = (next: ComparisonSidebarChange): void => {
     setParams((prev) => {
       const out = new URLSearchParams(prev);
@@ -265,10 +391,10 @@ export function Comparison() {
     resp: Schemas["TopNResponse"];
     facetBy: "binding" | "perturbation";
   } | null>(() => {
-    if (!topnQuery.data) return null;
+    if (!cdResponse) return null;
     const { binding: selB, perturbation: selP } = selection;
     if (selB === null && selP === null) return null;
-    const rows = (topnQuery.data.rows ?? []).filter((r) => {
+    const rows = (cdResponse.rows ?? []).filter((r) => {
       const sep = r.pairKey.indexOf("__");
       if (sep < 0) return false;
       const bDb = r.pairKey.slice(0, sep);
@@ -276,12 +402,12 @@ export function Comparison() {
       return selB !== null ? bDb === selB : pDb === selP;
     });
     return {
-      resp: { ...topnQuery.data, rows },
+      resp: { ...cdResponse, rows },
       // A selected binding row varies over perturbations → facet by binding.
       // A selected perturbation column varies over bindings → facet by perturbation.
       facetBy: selB !== null ? "binding" : "perturbation",
     };
-  }, [topnQuery.data, selection]);
+  }, [cdResponse, selection]);
 
   const bothPicked = binding.length > 0 && perturbation.length > 0;
 
@@ -347,13 +473,25 @@ export function Comparison() {
 
               {/* --- Compare Datasets tab --- */}
               <TabsContent value="datasets">
-                {topnQuery.isPending ? (
+                <CompareDatasetsControls
+                  method={cdMethod}
+                  promoterSet={cdPromoterSet}
+                  onMethodChange={setCdMethod}
+                  onPromoterSetChange={setCdPromoterSet}
+                />
+                {cdRowPrimaries.length === 0 ? (
+                  <p className="text-sm text-slate-600">
+                    {cdMethod === "Peaks"
+                      ? "None of the selected binding datasets have original peaks calls (only the ChIP-exo and ChEC-seq datasets do). Switch Binding Method back to Promoter Enrichment, or select one of those datasets."
+                      : "Select at least one primary binding dataset to see the comparison matrix."}
+                  </p>
+                ) : topnQuery.isPending ? (
                   <ComparisonBoxplotSkeleton />
-                ) : topnQuery.data ? (
+                ) : cdResponse ? (
                   <div className="space-y-6">
                     <TopNMatrix
-                      resp={topnQuery.data}
-                      bindingDatasets={binding}
+                      resp={cdResponse}
+                      bindingDatasets={cdRowPrimaries}
                       perturbationDatasets={perturbation}
                       displayName={displayName}
                       selection={selection}

@@ -82,6 +82,9 @@ function routedFetch(rows: unknown[] = TOPN_ROWS) {
             datasets: [
               { dbName: "callingcards", displayName: "Calling Cards" },
               { dbName: "harbison", displayName: "Harbison" },
+              { dbName: "rossi", displayName: "2021 ChIP-exo" },
+              { dbName: "rossi_mindel", displayName: "2021 ChIP-exo (Mindel)" },
+              { dbName: "rossi_peaks", displayName: "2021 ChIP-exo (Peaks)" },
               { dbName: "hackett", displayName: "Hackett" },
               { dbName: "kemmeren", displayName: "Kemmeren" },
             ],
@@ -237,15 +240,19 @@ describe("Comparison route", () => {
   });
 
   it("renders the backend's readable message (not 'HTTP 400') when the top_n query is rejected", async () => {
+    // Fresh Response per call (a Response body is single-read; a shared instance
+    // would be consumed by whichever query fetches first).
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            error:
-              "too many comparisons: 24 binding×perturbation pairs requested (max 6) — select fewer binding or perturbation datasets",
-          }),
-          { status: 400 },
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error:
+                "too many comparisons: 24 binding×perturbation pairs requested (max 6) — select fewer binding or perturbation datasets",
+            }),
+            { status: 400 },
+          ),
         ),
       ),
     );
@@ -288,13 +295,22 @@ describe("Comparison route", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    // Wait for the query to fire
-    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
-    const calledUrl: string = mockFetch.mock.calls[0]![0] as string;
-    expect(calledUrl).toContain("preset=Stringent");
+    // Find the /comparison/topn fetch (the /datasets query also fires, and order
+    // is not guaranteed — don't assume calls[0]).
+    await waitFor(() =>
+      expect(
+        mockFetch.mock.calls
+          .map((c) => String(c[0]))
+          .some((u) => u.includes("comparison/topn")),
+      ).toBe(true),
+    );
+    const topnUrl = mockFetch.mock.calls
+      .map((c) => String(c[0]))
+      .find((u) => u.includes("comparison/topn"))!;
+    expect(topnUrl).toContain("preset=Stringent");
     // Must NOT fall back to numeric effect/pvalue params
-    expect(calledUrl).not.toContain("effect=");
-    expect(calledUrl).not.toContain("pvalue=");
+    expect(topnUrl).not.toContain("effect=");
+    expect(topnUrl).not.toContain("pvalue=");
   });
 
   // ---------------------------------------------------------------------------
@@ -568,5 +584,153 @@ describe("Comparison route", () => {
     expect(
       within(screen.getByTestId("cp-card-hackett")).getByText("Mindel"),
     ).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Compare Datasets Binding Method + Promoter Set selectors
+  // (reference cd_binding_method / cd_promoter_set — workspace.py:531-549).
+  // They re-resolve each primary row to a scoring variant: default Promoter
+  // Enrichment + Kang is the base matrix; other sets / Peaks swap the queried db
+  // while the matrix still labels rows by the PRIMARY (rows are re-keyed).
+  // ---------------------------------------------------------------------------
+
+  // Pull the `binding=` param of the first /comparison/topn fetch.
+  function topnBindingParam(mockFetch: ReturnType<typeof vi.fn>): string | null {
+    const call = mockFetch.mock.calls
+      .map((c) => String(c[0]))
+      .find((u) => u.includes("comparison/topn"));
+    if (!call) return null;
+    return new URL(call, "http://localhost").searchParams.get("binding");
+  }
+
+  it("renders the Binding Method + Promoter Set selectors, defaulting to Promoter Enrichment / Kang", () => {
+    renderComparison("/comparison?binding=rossi&perturbation=hackett");
+    const method = screen.getByLabelText("Binding Method") as HTMLSelectElement;
+    const pset = screen.getByLabelText("Promoter Set") as HTMLSelectElement;
+    expect(method.value).toBe("Promoter Enrichment");
+    expect(pset.value).toBe("Kang");
+    // Both choices for the method; all four promoter sets (alias labels).
+    expect(
+      within(method).getByRole("option", { name: "Peaks" }),
+    ).toBeInTheDocument();
+    expect(
+      within(pset).getByRole("option", { name: "Promoter Set 2 (Mindel)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("queries the primary binding db by default (Promoter Enrichment + Kang)", async () => {
+    const mockFetch = routedFetch([]);
+    vi.stubGlobal("fetch", mockFetch);
+    renderComparison("/comparison?binding=rossi&perturbation=hackett");
+    await waitFor(() => expect(topnBindingParam(mockFetch)).toBe("rossi"));
+  });
+
+  it("?cd_method=Peaks queries the peaks-variant db", async () => {
+    const mockFetch = routedFetch([]);
+    vi.stubGlobal("fetch", mockFetch);
+    renderComparison(
+      "/comparison?binding=rossi&perturbation=hackett&cd_method=Peaks",
+    );
+    await waitFor(() => expect(topnBindingParam(mockFetch)).toBe("rossi_peaks"));
+    expect(
+      (screen.getByLabelText("Binding Method") as HTMLSelectElement).value,
+    ).toBe("Peaks");
+  });
+
+  it("?cd_promoter_set=Mindel queries the _mindel variant but the matrix still shows the PRIMARY row (re-keyed)", async () => {
+    const rows = [
+      {
+        pairKey: "rossi_mindel__hackett",
+        bindingSampleId: "b",
+        regulatorLocusTag: "R1",
+        regulatorDisplayName: "R1",
+        perturbationSampleId: "p",
+        n: 25,
+        nResponsive: 13,
+        responsiveRatio: 0.5,
+      },
+    ];
+    const mockFetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/datasets")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              datasets: [
+                { dbName: "rossi", displayName: "ChIP-exo (Rossi 2021)" },
+                { dbName: "rossi_mindel", displayName: "ChIP-exo (Rossi 2021) Mindel" },
+                { dbName: "hackett", displayName: "Hackett" },
+              ],
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ rows }), { status: 200 }),
+      );
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    renderComparison(
+      "/comparison?binding=rossi&perturbation=hackett&cd_promoter_set=Mindel",
+    );
+    // Queried the Mindel variant…
+    await waitFor(() => expect(topnBindingParam(mockFetch)).toBe("rossi_mindel"));
+    // …but the matrix shows the PRIMARY row + cell (rows re-keyed rossi_mindel→rossi).
+    const cell = await screen.findByTestId("topn-cell-rossi-hackett");
+    expect(cell.textContent).toBe("50.0%");
+    expect(screen.getByTestId("topn-row-rossi")).toBeInTheDocument();
+    expect(screen.queryByTestId("topn-row-rossi_mindel")).toBeNull();
+  });
+
+  it("changing the Binding Method select writes ?cd_method= and clears it back to the default", async () => {
+    vi.stubGlobal("fetch", routedFetch([]));
+    function LocationProbe() {
+      const loc = useLocation();
+      return <div data-testid="loc-search">{loc.search}</div>;
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter
+          initialEntries={["/comparison?binding=rossi&perturbation=hackett"]}
+        >
+          <Comparison />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const method = screen.getByLabelText("Binding Method") as HTMLSelectElement;
+    fireEvent.change(method, { target: { value: "Peaks" } });
+    await waitFor(() => {
+      const search = screen.getByTestId("loc-search").textContent ?? "";
+      expect(new URLSearchParams(search).get("cd_method")).toBe("Peaks");
+    });
+    // Back to the default → the param is cleared (clean URL).
+    fireEvent.change(screen.getByLabelText("Binding Method"), {
+      target: { value: "Promoter Enrichment" },
+    });
+    await waitFor(() => {
+      const search = screen.getByTestId("loc-search").textContent ?? "";
+      expect(new URLSearchParams(search).has("cd_method")).toBe(false);
+    });
+  });
+
+  it("Peaks drops binding datasets without peaks calls (harbison) and shows guidance instead of an empty matrix", async () => {
+    const mockFetch = routedFetch([]);
+    vi.stubGlobal("fetch", mockFetch);
+    renderComparison(
+      "/comparison?binding=harbison&perturbation=hackett&cd_method=Peaks",
+    );
+    expect(
+      await screen.findByText(
+        /None of the selected binding datasets have original peaks calls/,
+      ),
+    ).toBeInTheDocument();
+    // Nothing resolved → the topn query is disabled → no /comparison/topn fetch.
+    const topnCalls = mockFetch.mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.includes("comparison/topn"));
+    expect(topnCalls.length).toBe(0);
   });
 });

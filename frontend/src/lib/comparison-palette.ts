@@ -321,3 +321,47 @@ export function resolvePromoterVariant(
   if (!variants || idx >= variants.length) return null;
   return variants[idx] ?? null;
 }
+
+// Compare Datasets matrix: resolve a primary binding db to the variant db that
+// supplies its row, given the `cd_binding_method` + `cd_promoter_set` selection.
+// Verbatim mirror of workspace.py:780-799 (`_resolve_cd_db` + the `cd_resolved`
+// `resolved in BINDING_CONFIGS` filter):
+//   - "Peaks"               → the primary's peaks variant, or null when it has
+//                             none (the reference returns None and the row is
+//                             then dropped from the matrix).
+//   - "Promoter Enrichment" + "Kang"            → the primary db itself.
+//   - "Promoter Enrichment" + Mindel/500bp/Int. → the indexed promoter variant
+//                             when it exists, else FALL BACK to the primary db
+//                             (the reference's `return b_db` fallback).
+// Note the asymmetry: Peaks drops a primary with no peaks variant (null),
+// whereas Promoter Enrichment never drops — it degrades to Kang.
+//
+// `available` mirrors the reference's `_available_datasets` membership guard
+// (workspace.py:790-792) PLUS the `cd_resolved` `resolved in BINDING_CONFIGS`
+// final filter (workspace.py:799): when provided, a resolved db that is NOT in
+// the set is treated as missing — Promoter Enrichment degrades to the primary
+// (or null if even the primary is unavailable), and any other branch drops the
+// row. So a future artifact that omits a configured variant degrades to Kang
+// instead of emitting a db that would 400 the topn request. When `available` is
+// omitted, no gating is applied (the static maps are the source of truth — the
+// behaviour callers get before the /datasets manifest has loaded).
+export function resolveCompareDatasetsDb(
+  primary: string,
+  method: "Promoter Enrichment" | "Peaks",
+  promoterSet: string,
+  available?: ReadonlySet<string>,
+): string | null {
+  const has = (db: string): boolean =>
+    available === undefined || available.has(db);
+  if (method === "Peaks") {
+    const peaks = (PEAKS_VARIANT_MAP[primary] ?? [])[0];
+    return peaks !== undefined && has(peaks) ? peaks : null;
+  }
+  if (promoterSet === "Kang") return has(primary) ? primary : null;
+  const idx = PROMOTER_SET_VARIANT_INDEX[promoterSet];
+  if (idx === undefined) return has(primary) ? primary : null;
+  const variant = (PROMOTER_VARIANT_PAIRS[primary] ?? [])[idx];
+  if (variant !== undefined && has(variant)) return variant;
+  // Variant missing/unavailable → fall back to the primary (Kang).
+  return has(primary) ? primary : null;
+}
