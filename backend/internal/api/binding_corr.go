@@ -24,6 +24,24 @@ import (
 // connection free at all times. Mirrors comparisonSemaphore / exportSemaphore.
 var correlationSemaphore = make(chan struct{}, 1)
 
+// defaultMaxCorrPairs bounds the C(N,2) dataset pairs one /binding/corr or
+// /perturbation/correlations request fuses into a single UNION-ALL query when
+// Server.MaxCorrPairs is unset. The legitimate heavy case is the all-6-
+// perturbation correlation = C(6,2)=15 branches (see correlationSemaphore);
+// 21 = C(7,2) keeps that case (plus one dataset of headroom) while rejecting
+// the pathological all-binding-incl-variants fan-out (C(15,2)=105) BEFORE any
+// DB work. Symmetric with defaultMaxComparisonPairs.
+const defaultMaxCorrPairs = 21
+
+// corrPairCount returns the number of unordered dataset pairs C(n,2) that
+// serveCorr would compute for n datasets (0 for n < 2).
+func corrPairCount(n int) int {
+	if n < 2 {
+		return 0
+	}
+	return n * (n - 1) / 2
+}
+
 // BindingCorr serves /api/v/{v}/binding/corr — per-regulator correlation
 // (Pearson or Spearman, raw values or ranks) between every pair drawn from
 // `sorted(datasets) choose 2`. Datasets must all be data_type=binding.
@@ -85,6 +103,23 @@ func (s *Server) serveCorr(w http.ResponseWriter, r *http.Request, dataType stri
 				fmt.Sprintf("dataset %q is not %s", name, dataType))
 			return
 		}
+	}
+
+	// Reject the C(N,2) pair explosion before any DB work — symmetric with the
+	// comparison/topn pair cap. buildCorrResponse fuses every pair into one
+	// UNION-ALL on the 2-conn pool; an unbounded dataset list (CheckDataset does
+	// not filter is_primary, so all binding variants are reachable) would fan out
+	// to C(15,2)=105 heavy ranking branches in a single query. Fail fast with an
+	// actionable message rather than serializing a multi-second spilling query.
+	maxPairs := s.MaxCorrPairs
+	if maxPairs <= 0 {
+		maxPairs = defaultMaxCorrPairs
+	}
+	if pairs := corrPairCount(len(dsList)); pairs > maxPairs {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf(
+			"too many correlations: %d dataset pairs requested (max %d) — select fewer datasets",
+			pairs, maxPairs))
+		return
 	}
 
 	rawFilters := q.Get("filters")

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -76,7 +77,13 @@ func parseFloatOr(raw string, def float64) float64 {
 		return def
 	}
 	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
+	// strconv.ParseFloat accepts "NaN"/"Inf"/"+Inf"/"-Inf" with err==nil. A
+	// non-finite threshold would flow into domain.TopNResponse (a plain float64
+	// field with no custom marshaller), where json.Marshal rejects it with
+	// "json: unsupported value: NaN" → a client-triggerable 500 + ERROR log,
+	// even on the early-return path before any DB work. Treat non-finite like a
+	// parse failure and fall back to the default (still permissive, never 500).
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return def
 	}
 	return v

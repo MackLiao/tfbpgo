@@ -497,6 +497,48 @@ func TestComparisonTopN_AllowsWithinCap(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 }
 
+// TestComparisonTopN_NonFiniteThresholdDoesNotPanic500 pins the parseFloatOr
+// NaN/Inf guard. strconv.ParseFloat accepts "NaN"/"Inf"/"±Inf" with err==nil; a
+// non-finite threshold would flow into domain.TopNResponse (a plain float64
+// with no custom marshaller) and make json.Marshal fail with "unsupported
+// value: NaN" → a client-triggerable 500 + ERROR log, even on the early-return
+// path before any DB work. A non-finite ?effect=/?pvalue= must fall back to the
+// default and return 200, never a 5xx.
+func TestComparisonTopN_NonFiniteThresholdDoesNotPanic500(t *testing.T) {
+	s := newTestServer(t)
+	cases := []url.Values{
+		{"binding": {"callingcards"}, "perturbation": {"hackett"}, "effect": {"NaN"}},
+		{"binding": {"callingcards"}, "perturbation": {"hackett"}, "effect": {"Inf"}},
+		{"binding": {"callingcards"}, "perturbation": {"hackett"}, "effect": {"-Inf"}},
+		{"binding": {"callingcards"}, "perturbation": {"hackett"}, "pvalue": {"NaN"}},
+		{"binding": {"callingcards"}, "perturbation": {"hackett"}, "pvalue": {"+Inf"}},
+	}
+	for _, q := range cases {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("GET",
+			"/api/v/"+s.Manifests.Artifact.ArtifactVersion+"/comparison/topn?"+q.Encode(), nil)
+		s.Routes().ServeHTTP(rr, req)
+		require.Equalf(t, http.StatusOK, rr.Code,
+			"params %v must fall back to default and 200, not 500", q)
+	}
+}
+
+// TestResponsivenessPresets_AllHaveStarFallback enforces the invariant the
+// cache-key drop in topnCacheCanonEntries relies on: when a preset is set,
+// effect/pvalue are dropped from the key because resolveResponsivenessThresholds
+// ignores them — which is only sound if every preset can resolve a threshold for
+// ANY perturbation dataset via its "*" fallback. A preset missing "*" would make
+// the dropped effect/pvalue silently load-bearing for an unlisted dataset, so
+// two requests differing only in effect/pvalue would collide on one cache entry.
+func TestResponsivenessPresets_AllHaveStarFallback(t *testing.T) {
+	require.NotEmpty(t, responsivenessPresets)
+	for name, m := range responsivenessPresets {
+		_, ok := m["*"]
+		require.Truef(t, ok,
+			"preset %q must define a \"*\" fallback (the cache-key effect/pvalue drop depends on it)", name)
+	}
+}
+
 // TestBuildTopNResponse_SemaphoreFullBlocksUntilContextDeadline pins fix A: the
 // comparison DB execution is gated by a semaphore so it can never hold both of
 // the 2 pool connections. When the semaphore is already taken, a new comparison

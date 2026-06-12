@@ -34,18 +34,30 @@ type StartupReport struct {
 func RunStartupChecks(ctx context.Context, p *Pool, minSchema, maxSchema int) (*StartupReport, error) {
 	r := &StartupReport{}
 
+	// Gate the schema version with a NARROW read BEFORE LoadManifests. The v6
+	// loader SELECTs v6-only columns (is_primary/log10p_col/neglog10p_col), so
+	// running it first would make a v5 rollback artifact die with a confusing
+	// "column not found" binder error instead of this actionable mismatch
+	// message. schema_version exists on every artifact version, so this probe is
+	// version-agnostic. (Still fail-fast either way — only the message improves.)
+	var schemaVersion int
+	if err := p.DB.QueryRowxContext(ctx,
+		`SELECT schema_version FROM artifact_manifest LIMIT 1`,
+	).Scan(&schemaVersion); err != nil {
+		return nil, fmt.Errorf("startup: read artifact_manifest.schema_version: %w", err)
+	}
+	if schemaVersion < minSchema || schemaVersion > maxSchema {
+		return nil, fmt.Errorf(
+			"startup: artifact schema_version=%d outside compatible range [%d,%d]",
+			schemaVersion, minSchema, maxSchema,
+		)
+	}
+
 	m, err := LoadManifests(ctx, p)
 	if err != nil {
 		return nil, fmt.Errorf("startup: %w", err)
 	}
 	r.Manifests = m
-
-	if m.Artifact.SchemaVersion < minSchema || m.Artifact.SchemaVersion > maxSchema {
-		return nil, fmt.Errorf(
-			"startup: artifact schema_version=%d outside compatible range [%d,%d]",
-			m.Artifact.SchemaVersion, minSchema, maxSchema,
-		)
-	}
 
 	_ = p.DB.QueryRowxContext(ctx, `SELECT current_setting('storage_compatibility_version')`).Scan(&r.StorageVersion)
 	_ = p.DB.QueryRowxContext(ctx, `SELECT version()`).Scan(&r.RuntimeDuckDB)

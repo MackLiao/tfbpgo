@@ -45,6 +45,14 @@ type Server struct {
 	// exceed the query budget and starve the pool. Set from config in main.
 	MaxComparisonPairs int
 
+	// MaxCorrPairs caps the C(N,2) dataset pairs a single /binding/corr or
+	// /perturbation/correlations request may fuse into one UNION-ALL query.
+	// <= 0 falls back to defaultMaxCorrPairs (the production default). Symmetric
+	// with MaxComparisonPairs — bounds the all-pairs correlation so one request
+	// can't fan out to the pathological C(15,2)=105 branches. Not currently
+	// env-tunable (the const default is sufficient); settable in tests.
+	MaxCorrPairs int
+
 	// --- A5 Select Datasets handler state ---
 	// Per-(db, field) DuckDB type introspection and numeric min/max
 	// aggregates. Both maps are eagerly allocated by initIntrospect()

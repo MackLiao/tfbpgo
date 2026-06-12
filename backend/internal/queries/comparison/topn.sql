@@ -75,6 +75,9 @@ JOIN perturbation pert
 LEFT JOIN regulator_display_names rdn
     ON  rdn.regulator_locus_tag = b.regulator_locus_tag
 GROUP BY b.binding_sample_id, b.regulator_locus_tag, rdn.display_name, pert.perturbation_sample_id
--- NOTE: no ORDER BY here — per-pair segments are combined with a UNION in
--- comparison_topn.go, which appends a single trailing ORDER BY to the assembled
--- query (an ORDER BY inside a UNION branch is a syntax error).
+-- NOTE: no ORDER BY here — loadOnePairRows (comparison_topn.go) executes each
+-- pair standalone and wraps this template as
+--   SELECT * FROM (<this>) ORDER BY binding_sample_id, regulator_locus_tag,
+--                                   perturbation_sample_id
+-- then buildTopNResponse concatenates the per-pair results in pair_key order,
+-- reproducing the previous single-UNION global ordering byte-for-byte.

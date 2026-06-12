@@ -15,6 +15,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -492,4 +493,49 @@ func TestBindingCorr_4xxResponsesAreJSON(t *testing.T) {
 	require.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 	require.Equal(t, "no-store", rr.Header().Get("Cache-Control"))
 	require.True(t, strings.Contains(rr.Body.String(), `"error"`))
+}
+
+// TestCorrPairCount pins C(n,2) — the per-request branch count serveCorr fuses
+// into one UNION-ALL — that the pair cap bounds.
+func TestCorrPairCount(t *testing.T) {
+	cases := []struct{ n, want int }{
+		{0, 0}, {1, 0}, {2, 1}, {3, 3}, {4, 6}, {6, 15}, {7, 21}, {8, 28}, {15, 105},
+	}
+	for _, c := range cases {
+		require.Equalf(t, c.want, corrPairCount(c.n), "corrPairCount(%d)", c.n)
+	}
+}
+
+// TestDefaultMaxCorrPairs_AdmitsLegitRejectsPathological pins the cap window.
+// The committed fixture exposes only 2 binding (and 2 perturbation) datasets =
+// C(2,2)=1 pair, so the HTTP rejection path can't be exercised through it;
+// assert the invariant directly. The legitimate heavy case is all 6
+// perturbation datasets = C(6,2)=15 branches (see correlationSemaphore); the
+// pathological case is all 15 binding incl. variants = C(15,2)=105. The default
+// cap must admit the former and reject the latter. A future edit that lowers it
+// below 15 (breaking a real correlation) or raises it past 105 fails here.
+func TestDefaultMaxCorrPairs_AdmitsLegitRejectsPathological(t *testing.T) {
+	require.GreaterOrEqual(t, defaultMaxCorrPairs, corrPairCount(6),
+		"cap must admit the all-6-perturbation correlation (15 pairs)")
+	require.Less(t, defaultMaxCorrPairs, corrPairCount(15),
+		"cap must reject the all-15-binding-variant fan-out (105 pairs)")
+}
+
+// TestServeCorr_RejectsPairExplosion exercises the HTTP-level rejection using a
+// 4-binding-dataset in-memory whitelist (the fixture only has 2). The cap fires
+// BEFORE any cache/DB access, so newServerWithFixtureWhitelist (no Pool/Cache)
+// is sufficient: 4 datasets = C(4,2)=6 pairs > the forced cap of 3 → 400.
+func TestServeCorr_RejectsPairExplosion(t *testing.T) {
+	s := newServerWithFixtureWhitelist(t)
+	s.MaxCorrPairs = 3
+	q := url.Values{
+		"datasets": {"callingcards,harbison,rossi,chec_m2025"}, // 4 binding → 6 pairs
+		"method":   {"pearson"},
+		"col":      {"effect"},
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/x?"+q.Encode(), nil)
+	s.serveCorr(rr, req, "binding")
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	require.Contains(t, rr.Body.String(), "too many correlations")
 }
