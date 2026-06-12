@@ -11,9 +11,9 @@ variable "project_name" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type. t3.large (8GB RAM) — the box RAM AND the container mem_limit must BOTH exceed the ~2.9GB artifact, or DuckDB thrashes re-reading it from EBS under broad queries and the whole box freezes (a 2GB t3.small with a 1.6g container did exactly that). 2 vCPU is fine here; RAM is the binding constraint, not CPU."
+  description = "EC2 instance type. t3.xlarge (16GB RAM / 4 vCPU) — the box RAM AND the container mem_limit must BOTH exceed the artifact + working set, or DuckDB thrashes re-reading it from EBS under broad queries and the whole box freezes (a 2GB t3.small with a 1.6g container did exactly that). The schema-v6 artifact grew to ~7.9GiB (11 promoter-set variants), so an 8GB t3.large can no longer hold it; t3.xlarge gives 16GB plus a 3rd/4th vCPU for DUCKDB_THREADS. RAM is the binding constraint."
   type        = string
-  default     = "t3.large"
+  default     = "t3.xlarge"
 }
 
 variable "root_volume_gb" {

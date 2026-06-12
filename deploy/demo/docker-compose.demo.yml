@@ -72,18 +72,19 @@ services:
       - tfbp_data:/data:ro
       - tfbp_tmp:/tmp/duckdb
     networks: [web]
-    # mem_limit MUST exceed the ~2.9GB artifact — not merely "enough heap".
-    # In cgroup v2 the artifact's file-backed page cache is charged to THIS
-    # container, so a limit below the artifact size makes the kernel evict and
-    # re-read it from EBS on every broad scan (page-cache thrash). With this at
-    # 1.6g on the old t3.small the box froze: ~8GB/5min of EBS reads on a 2.9GB
-    # file, I/O queue backed up, even /healthz + SSM hung while CPU sat at ~50%.
-    # 6g on the 8GB box holds the whole artifact + DuckDB buffer + Go heap with
-    # headroom; the remaining ~2GB is left for the OS + Traefik. Raising the box
+    # mem_limit MUST exceed the artifact size + working set — not merely "enough
+    # heap". In cgroup v2 the artifact's file-backed page cache is charged to
+    # THIS container, so a limit below the artifact size makes the kernel evict
+    # and re-read it from EBS on every broad scan (page-cache thrash). With this
+    # at 1.6g on the old t3.small the box froze: ~8GB/5min of EBS reads on a
+    # 2.9GB file, I/O queue backed up, even /healthz + SSM hung while CPU sat at
+    # ~50%. The schema-v6 artifact grew to ~7.9GiB (11 promoter-set variants), so
+    # 6g is no longer enough: 12g on a 16GB t3.xlarge holds the whole artifact +
+    # DuckDB buffer + Go heap, leaving ~4GB for the OS + Traefik. Raising the box
     # RAM alone does NOT fix it unless this limit is raised too.
     # memswap_limit == mem_limit ⇒ swap off (the box has none anyway).
-    mem_limit: ${TFBP_MEM_LIMIT:-6g}
-    memswap_limit: ${TFBP_MEM_LIMIT:-6g}
+    mem_limit: ${TFBP_MEM_LIMIT:-12g}
+    memswap_limit: ${TFBP_MEM_LIMIT:-12g}
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
