@@ -10,9 +10,11 @@ import yaml
 
 from data_prep.manifests import (
     DATASET_MEASUREMENT_COLUMNS,
+    DEFAULT_ACTIVE_DATASETS,
     EXPERIMENTAL_CONDITION_FIELDS,
     HIDDEN_FILTER_FIELDS,
     LEVEL_CACHE_THRESHOLD,
+    PRIMARY_DATASETS,
     SCHEMA_VERSION,
     assert_default_filters_in_field_manifest,
     harvest_column_metadata,
@@ -21,6 +23,22 @@ from data_prep.manifests import (
     write_field_manifest,
     write_filter_level_cache,
 )
+
+
+def test_default_active_datasets_are_all_primary() -> None:
+    """Every default-active dataset must be primary.
+
+    The frontend selector shows only primary datasets (is_primary). A dataset
+    that is both default_active and NOT primary would be pre-selected on first
+    visit yet invisible in the selector — an active-but-hidden state the user
+    cannot see or deselect. This invariant tripwire prevents that combination
+    from ever shipping in the artifact.
+    """
+    offenders = DEFAULT_ACTIVE_DATASETS - PRIMARY_DATASETS
+    assert not offenders, (
+        "default-active datasets that are not primary (would be active but "
+        f"hidden from the selector): {sorted(offenders)}"
+    )
 
 
 def test_schema_version_is_six() -> None:
