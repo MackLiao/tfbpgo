@@ -1,12 +1,17 @@
 import { useMemo } from "react";
 import type { Schemas } from "@/api/client";
 import { htmlEscape } from "@/lib/html-escape";
+import { pairKey } from "./CorrelationMatrix";
 import { PlotLazy } from "./PlotLazy";
 
 // Pairwise correlation distribution box plot for the Binding module.
 //
-// Mirrors reference/tfbpshiny/modules/binding/server/workspace.py:218-364:
-//   - One go.Box per active dataset pair, points jittered (jitter=0.4,
+// Mirrors reference/tfbpshiny/modules/binding/server/workspace.py
+// (pair_box_container + _make_pair_box_render): one go.Box per COMMITTED
+// dataset pair (workspace.py:678 `pairs = committed_pairs()`), not every active
+// pair. The committed selection is supplied by the parent route as a set of
+// canonical `dbA__dbB` keys; pairs outside it are filtered out here.
+//   - One go.Box per committed pair, points jittered (jitter=0.4,
 //     pointpos=0, boxpoints="all"). Each point's customdata is the regulator
 //     locus tag — clicking a point lifts the locus tag up to the parent
 //     route so the URL ?regulator= can be updated (Shiny achieves the same
@@ -14,8 +19,9 @@ import { PlotLazy } from "./PlotLazy";
 //   - Second go.Scatter overlay trace highlights the currently-selected
 //     regulator (large black dot, one per pair where the regulator has a
 //     correlation row).
-//   - Empty state (zero pairs) is a centered annotation matching the
-//     Shiny placeholder string.
+//   - Empty state (zero committed pairs) is a centered annotation hinting the
+//     user to select cells in the Correlation Matrix and run Execute Analysis
+//     (workspace.py:647-655 pair_box_status).
 
 export interface BindingCorrBoxplotProps {
   resp: Schemas["CorrResponse"];
@@ -30,6 +36,10 @@ export interface BindingCorrBoxplotProps {
   // workspace.py:295-306 (`fetch_sample_condition_map` → hover join).
   sampleConditionsByDB?: Record<string, Record<string, string>>;
   onRegulatorClick: (locusTag: string) => void;
+  // Committed pair selection as canonical `dbA__dbB` keys. Only pairs whose
+  // key is in this set are rendered (workspace.py:678 committed_pairs gating).
+  // When omitted, all pairs render (back-compat for any non-gated caller).
+  committedPairKeys?: Set<string>;
 }
 
 interface PointAccumulator {
@@ -58,6 +68,7 @@ export function BindingCorrBoxplot({
   regulatorDisplayMap,
   sampleConditionsByDB,
   onRegulatorClick,
+  committedPairKeys,
 }: BindingCorrBoxplotProps) {
   const displayDb = datasetDisplay ?? ((db: string) => db);
   const regDisplay = (locus: string): string =>
@@ -68,7 +79,13 @@ export function BindingCorrBoxplot({
   const yAxisTitle = `${methodLabel} r`;
 
   const { boxTraces, overlayTrace, hasPairs } = useMemo(() => {
-    const pairs = resp.pairs ?? [];
+    // Render only committed pairs. workspace.py:678-689 iterates
+    // committed_pairs() (intersected with the active pair set) — an undefined
+    // set means "no gating" for back-compat, but the Binding route always
+    // supplies one.
+    const pairs = (resp.pairs ?? []).filter((p) =>
+      committedPairKeys ? committedPairKeys.has(pairKey(p.dbA, p.dbB)) : true,
+    );
     if (pairs.length === 0) {
       return {
         boxTraces: [] as Array<Record<string, unknown>>,
@@ -162,6 +179,7 @@ export function BindingCorrBoxplot({
     displayDb,
     regulatorDisplayMap,
     sampleConditionsByDB,
+    committedPairKeys,
   ]);
 
   // Empty state: render a placeholder annotation centered in the figure,
@@ -181,7 +199,9 @@ export function BindingCorrBoxplot({
           showlegend: false,
           annotations: [
             {
-              text: "Select at least two binding datasets to see correlations.",
+              text:
+                "Select cells in the Correlation Matrix and click Execute " +
+                "Analysis to view their distributions.",
               xref: "paper",
               yref: "paper",
               x: 0.5,
