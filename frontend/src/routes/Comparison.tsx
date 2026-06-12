@@ -1,38 +1,63 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, apiErrorMessage, type ResponsivenessPreset } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ComparisonBoxplot } from "@/plots/ComparisonBoxplot";
 import { ComparisonBoxplotSkeleton } from "@/plots/ComparisonBoxplotSkeleton";
+import { TopNMatrix, type TopNMatrixSelection } from "@/plots/TopNMatrix";
 import {
   ComparisonSidebar,
   type ComparisonSidebarChange,
 } from "@/components/ComparisonSidebar";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import type { Schemas } from "@/api/client";
 
-// Comparison route — faceted boxplot replacement for the old heatmap.
+// Comparison route — restructured (CMP-6 / Task 6a) into a 3-tab navset
+// mirroring the reference Comparison rewrite:
+//   reference/tfbpshiny/modules/comparison/ui.py (the 3-tab navset + the
+//     explanatory bullet text + the Top N / Responsiveness sidebar)
+//   reference/tfbpshiny/modules/comparison/server/workspace.py (the Compare
+//     Datasets matrix → distribution drill-down).
 //
-// Parity reference: reference/tfbpshiny/modules/comparison/{ui.py,
-// server/workspace.py, server/sidebar.py}.
+// Tabs (ui.py:160-184):
+//   1. Compare Datasets — binding(rows) × perturbation(cols) responsive-ratio
+//      MATRIX; each cell is the median percent-responsive for that pair. Click a
+//      row/column header to drill into a distribution (ComparisonBoxplot).
+//   2. Compare Promoter Definitions — placeholder (built in a follow-up).
+//   3. Compare Analysis Methods — placeholder (built in a follow-up).
 //
-// URL is the canonical state: all sidebar params (`top_n`, `preset`,
-// `facet_by`) are deep-linkable and writeable. The DTO tab from
-// the previous iteration is removed — Shiny has no equivalent, see
-// docs/parity/comparison.md §2 row 18. (`api.dto` remains in client.ts for
-// potential future use but is unused on the frontend.)
+// ALL THREE tabs are driven by the SAME `/comparison/topn` endpoint — they are
+// different labelings/groupings of the same topn result, not new backend calls.
+// Only the Compare Datasets matrix + drill-down is wired this sub-task.
 //
-// CMP-4/CMP-5: The old `effect` / `pvalue` URL params and sliders have been
-// replaced by a `preset` param ("Relaxed" | "Stringent"), mirroring the
-// reference's input_radio_buttons("responsiveness_preset", ...) in ui.py:33-54.
-// DEFAULT_RESPONSIVENESS_PRESET = "Relaxed" (reference/tfbpshiny/utils/vdb_init.py:174).
+// DELIBERATE DIVERGENCES from the reference:
+//   - No "Execute Analysis" gating. The reference gates the topn computation
+//     behind an explicit button (ui.py:17-22) because each run is a multi-second
+//     off-thread DuckDB sweep; this React app already auto-fetches `/comparison/
+//     topn` reactively (and the backend coalesces + caches), so the matrix
+//     renders as soon as the query lands. The sidebar's "Execute Analysis"
+//     button is therefore omitted.
+//   - Tabs 2 & 3 are clean-seam placeholders (a "coming soon" panel), filled in
+//     a follow-up sub-task using the maps already ported into
+//     comparison-palette.ts.
 //
-// URL behaviour: when `?preset=` is absent, defaults to "Relaxed" but the
-// param is NOT written into the URL proactively — it only appears once the
-// user has explicitly changed the control, matching how `top_n` and other
-// params behave in this codebase (they start absent and are set on first
-// explicit user interaction). The query-key and API call always use the
-// resolved value ("Relaxed" by default), so caching is correct regardless of
-// whether the param is present in the URL.
+// STATE-ENCODING choice:
+//   - Active tab → URL (`?tab=`), like Binding.tsx, so a deep link can land on
+//     any tab. Unknown values normalize to the first tab ("datasets").
+//   - Matrix↔distribution drill-down SELECTION → ephemeral COMPONENT state. The
+//     reference holds it in `reactive.value` (workspace.py:343-344), not the
+//     URL: it does not change WHAT is fetched (the topn query loads all pairs at
+//     once and the selection only filters the already-loaded result client-side,
+//     so no re-fetch / cache key depends on it), and it is a transient view
+//     toggle. Contrast the prior binding-matrix task, which put COMMITTED pairs
+//     in `?pairs=` precisely because those drive the data fetch + cache key.
+//
+// URL behaviour (preset): when `?preset=` is absent, defaults to "Relaxed" but
+// is not written into the URL proactively — it only appears once the user
+// explicitly changes the control, matching `top_n`/`facet_by`. The query-key
+// and API call always use the resolved value, so caching is correct regardless.
 
 const DEFAULT_PRESET: ResponsivenessPreset = "Relaxed";
 
@@ -41,6 +66,14 @@ const DEFAULTS = {
   preset: DEFAULT_PRESET,
   facetBy: "binding" as const,
 };
+
+type ComparisonTab = "datasets" | "promoters" | "methods";
+
+// Normalize ?tab= to the known set; anything unrecognized (stale bookmark,
+// garbage) falls back to the first tab so we never show an empty tabpanel.
+function parseTab(raw: string | null): ComparisonTab {
+  return raw === "promoters" || raw === "methods" ? raw : "datasets";
+}
 
 function parseFacetBy(raw: string | null): "binding" | "perturbation" {
   return raw === "perturbation" ? "perturbation" : "binding";
@@ -60,6 +93,15 @@ export function Comparison() {
   const preset = parsePreset(params.get("preset"));
   const facetBy = parseFacetBy(params.get("facet_by"));
   const filters = params.get("filters") ?? "";
+  const tab = parseTab(params.get("tab"));
+
+  // Drill-down selection: which row (binding) OR column (perturbation) of the
+  // matrix is currently expanded into a distribution. Mutually exclusive.
+  // Ephemeral component state — see the state-encoding note in the file header.
+  const [selection, setSelection] = useState<TopNMatrixSelection>({
+    binding: null,
+    perturbation: null,
+  });
 
   const topnQuery = useQuery({
     queryKey: qk.topn(binding, perturbation, topN, preset, filters),
@@ -70,6 +112,27 @@ export function Comparison() {
     enabled: binding.length > 0 && perturbation.length > 0,
   });
 
+  // db_name → display_name lookup from /datasets (already cached per artifact
+  // version). Falls back to the db_name when absent. Mirrors workspace.py:326-328
+  // (display_names from vdb.get_tags(...).display_name).
+  const datasetsQuery = useQuery({
+    queryKey: qk.datasets(),
+    queryFn: ({ signal }) => api.datasets(signal),
+  });
+  const displayName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const d of datasetsQuery.data?.datasets ?? []) {
+      map.set(d.dbName, d.displayName);
+    }
+    return (db: string): string => map.get(db) ?? db;
+  }, [datasetsQuery.data]);
+
+  const setTab = (next: string): void => {
+    const np = new URLSearchParams(params);
+    np.set("tab", next);
+    setParams(np, { replace: true });
+  };
+
   const handleSidebarChange = (next: ComparisonSidebarChange): void => {
     setParams((prev) => {
       const out = new URLSearchParams(prev);
@@ -79,6 +142,36 @@ export function Comparison() {
       return out;
     });
   };
+
+  // Build the drill-down response + facet axis from the current selection.
+  // - binding selected   → that binding's ROW: keep its pairs, facet by binding
+  //                        (one facet = the binding, x = perturbation sources).
+  // - perturbation selected → that perturbation's COLUMN: keep its pairs, facet
+  //                        by perturbation (one facet, x = binding sources).
+  // Mirrors workspace.py:1352-1357 (the x_col / pairs split).
+  const drill = useMemo<{
+    resp: Schemas["TopNResponse"];
+    facetBy: "binding" | "perturbation";
+  } | null>(() => {
+    if (!topnQuery.data) return null;
+    const { binding: selB, perturbation: selP } = selection;
+    if (selB === null && selP === null) return null;
+    const rows = (topnQuery.data.rows ?? []).filter((r) => {
+      const sep = r.pairKey.indexOf("__");
+      if (sep < 0) return false;
+      const bDb = r.pairKey.slice(0, sep);
+      const pDb = r.pairKey.slice(sep + 2);
+      return selB !== null ? bDb === selB : pDb === selP;
+    });
+    return {
+      resp: { ...topnQuery.data, rows },
+      // A selected binding row varies over perturbations → facet by binding.
+      // A selected perturbation column varies over bindings → facet by perturbation.
+      facetBy: selB !== null ? "binding" : "perturbation",
+    };
+  }, [topnQuery.data, selection]);
+
+  const bothPicked = binding.length > 0 && perturbation.length > 0;
 
   return (
     <section className="grid grid-cols-[260px_1fr] gap-4">
@@ -93,27 +186,124 @@ export function Comparison() {
         <h1 className="text-2xl font-semibold">
           Binding/Perturbation Comparisons
         </h1>
+
+        {/* Explanatory bullets mirror ui.py:61-89. */}
+        <div className="text-sm text-slate-600">
+          <p>
+            Compare selected binding and perturbation datasets. Values are median
+            percent-responsive across regulators.
+          </p>
+          <ul className="ml-5 mt-2 list-disc space-y-1">
+            <li>
+              <strong>Compare Datasets:</strong> binding vs. perturbation matrix.
+              Each cell shows the median percent of top-N binding targets that
+              are transcriptionally responsive. Click row/column headers to view
+              distributions.
+            </li>
+            <li>
+              <strong>Compare Promoter Definitions:</strong> side-by-side tables
+              comparing promoter enrichment scores across promoter sets.
+            </li>
+            <li>
+              <strong>Compare Analysis Methods:</strong> side-by-side tables
+              comparing promoter enrichment vs. original peaks scoring.
+            </li>
+          </ul>
+        </div>
+
         <ErrorBoundary>
-          {!binding.length || !perturbation.length ? (
+          {!bothPicked ? (
             <p className="text-sm text-slate-600">
               Pick at least one binding and one perturbation dataset on the
-              Select page to render the Top-N comparison boxplot.
+              Select page to render the Top-N comparison.
             </p>
           ) : null}
           {topnQuery.error ? (
             <p className="text-red-600">{apiErrorMessage(topnQuery.error)}</p>
           ) : null}
-          {topnQuery.isPending &&
-          binding.length > 0 &&
-          perturbation.length > 0 ? (
-            <ComparisonBoxplotSkeleton />
-          ) : null}
-          {topnQuery.data ? (
-            <ComparisonBoxplot resp={topnQuery.data} facetBy={facetBy} />
+
+          {bothPicked ? (
+            <Tabs value={tab} onValueChange={setTab}>
+              <TabsList>
+                <TabsTrigger value="datasets">Compare Datasets</TabsTrigger>
+                <TabsTrigger value="promoters">
+                  Compare Promoter Definitions
+                </TabsTrigger>
+                <TabsTrigger value="methods">
+                  Compare Analysis Methods
+                </TabsTrigger>
+              </TabsList>
+
+              {/* --- Compare Datasets tab --- */}
+              <TabsContent value="datasets">
+                {topnQuery.isPending ? (
+                  <ComparisonBoxplotSkeleton />
+                ) : topnQuery.data ? (
+                  <div className="space-y-6">
+                    <TopNMatrix
+                      resp={topnQuery.data}
+                      bindingDatasets={binding}
+                      perturbationDatasets={perturbation}
+                      displayName={displayName}
+                      selection={selection}
+                      onSelectBinding={(db) =>
+                        setSelection({ binding: db, perturbation: null })
+                      }
+                      onSelectPerturbation={(db) =>
+                        setSelection({ binding: null, perturbation: db })
+                      }
+                    />
+                    {/* Drill-down distribution for the selected row/column. */}
+                    {drill ? (
+                      <ComparisonBoxplot
+                        resp={drill.resp}
+                        facetBy={drill.facetBy}
+                      />
+                    ) : (
+                      <p className="text-sm text-slate-600">
+                        Click a row header to view distributions for a binding
+                        dataset, or a column header to view distributions for a
+                        perturbation dataset.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </TabsContent>
+
+              {/* --- Compare Promoter Definitions tab (placeholder) --- */}
+              <TabsContent value="promoters">
+                <ComingSoonPanel
+                  title="Compare Promoter Definitions"
+                  body="Side-by-side tables comparing promoter enrichment scores across promoter set definitions. Coming in a follow-up."
+                />
+              </TabsContent>
+
+              {/* --- Compare Analysis Methods tab (placeholder) --- */}
+              <TabsContent value="methods">
+                <ComingSoonPanel
+                  title="Compare Analysis Methods"
+                  body="Side-by-side tables comparing promoter enrichment vs. original peaks scoring. Coming in a follow-up."
+                />
+              </TabsContent>
+            </Tabs>
           ) : null}
         </ErrorBoundary>
       </div>
     </section>
+  );
+}
+
+// Clean-seam placeholder for the two not-yet-built tabs. Renders without
+// crashing and reserves the layout; the follow-up sub-task replaces the body.
+function ComingSoonPanel({ title, body }: { title: string; body: string }) {
+  return (
+    <div
+      className="rounded border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600"
+      data-testid="comparison-coming-soon"
+    >
+      <p className="font-medium text-slate-700">{title}</p>
+      <p className="mt-1">{body}</p>
+    </div>
   );
 }
 
