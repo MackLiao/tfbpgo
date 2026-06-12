@@ -216,15 +216,14 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(filters)
 		canonFilters = string(b)
 	}
-	canon := canonValues(map[string]any{
-		"binding":      bindingDS,
-		"perturbation": pertDS,
-		"top_n":        topN,
-		"effect":       effectThr,
-		"pvalue":       pvalThr,
-		"preset":       preset,
-		"filters":      canonFilters,
-	})
+	// M7: preset overrides effect/pvalue. When a known preset is set,
+	// resolveResponsivenessThresholds IGNORES the request's numeric
+	// effect/pvalue (the per-dataset author thresholds win), so two requests
+	// differing only in effect/pvalue but sharing a preset compute identical
+	// results. Keeping effect/pvalue in the cache key would fragment those into
+	// distinct entries (one DB hit per (effect,pvalue) permutation for the same
+	// answer). Drop them from the key when preset != ""; keep them otherwise.
+	canon := canonValues(topnCacheCanonEntries(bindingDS, pertDS, topN, effectThr, pvalThr, preset, canonFilters))
 	key := cache.Key(s.Manifests.Artifact.ArtifactVersion, r.Method, r.URL.Path, canon)
 	body, hit, shared, err := s.Cache.GetOrLoad(r.Context(), chiRoutePattern(r), key, func(loadCtx context.Context) ([]byte, error) {
 		return s.buildTopNResponse(loadCtx, bindingDS, pertDS, topN, effectThr, pvalThr, preset, filters)
@@ -232,6 +231,33 @@ func (s *Server) ComparisonTopN(w http.ResponseWriter, r *http.Request) {
 	MarkCacheHit(r.Context(), hit)
 	s.recordCacheOutcome(r, hit, shared)
 	s.writeCachedJSON(w, r, body, hit, err)
+}
+
+// topnCacheCanonEntries builds the canonical cache-key entries for a /comparison/topn
+// request. M7: when a known preset is set, resolveResponsivenessThresholds ignores the
+// request's numeric effect/pvalue (the per-dataset author thresholds win), so two
+// requests differing only in effect/pvalue but sharing a preset compute identical
+// results. Keeping effect/pvalue in the key would fragment those into distinct cache
+// entries (one DB hit per (effect,pvalue) permutation for the same answer), so they are
+// dropped when preset != "" and retained (load-bearing) otherwise. This is the SINGLE
+// source of truth for the precedence: ComparisonTopN and the M7 precedence test both
+// call it, so a regression to the guard fails the test instead of only the test's copy.
+func topnCacheCanonEntries(
+	bindingDS, pertDS []string,
+	topN int, effectThr, pvalThr float64, preset, canonFilters string,
+) map[string]any {
+	canonEntries := map[string]any{
+		"binding":      bindingDS,
+		"perturbation": pertDS,
+		"top_n":        topN,
+		"preset":       preset,
+		"filters":      canonFilters,
+	}
+	if preset == "" {
+		canonEntries["effect"] = effectThr
+		canonEntries["pvalue"] = pvalThr
+	}
+	return canonEntries
 }
 
 func (s *Server) buildTopNResponse(

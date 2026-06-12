@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BrentLab/tfbpshiny-go/backend/internal/cache"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/db"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/domain"
 	"github.com/BrentLab/tfbpshiny-go/backend/internal/queries"
+	_ "github.com/marcboeker/go-duckdb/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -463,4 +466,249 @@ func TestBuildTopNResponse_SemaphoreFullBlocksUntilContextDeadline(t *testing.T)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond,
 		"should have waited on the semaphore until the deadline, not run immediately")
+}
+
+// topNCacheKey routes through the PRODUCTION canon construction
+// (topnCacheCanonEntries) and the real canonValues/cache.Key path, so the M7
+// precedence test guards the handler's actual logic rather than a re-derivation:
+// removing or inverting the `preset != ""` guard in topnCacheCanonEntries now
+// fails this test instead of only its private copy.
+func topNCacheKey(binding, perturbation []string, topN int, effectThr, pvalThr float64, preset, canonFilters string) string {
+	canon := canonValues(topnCacheCanonEntries(binding, perturbation, topN, effectThr, pvalThr, preset, canonFilters))
+	return cache.Key("v1", "GET", "/comparison/topn", canon)
+}
+
+// TestComparisonTopN_PresetCacheKeyPrecedence pins M7: when a known preset is set
+// the request's effect/pvalue are ignored for the computation, so two requests
+// that share the preset but differ in effect/pvalue MUST collapse to one cache
+// key (no fragmentation). With no preset, effect/pvalue are load-bearing and the
+// keys MUST differ.
+func TestComparisonTopN_PresetCacheKeyPrecedence(t *testing.T) {
+	binding := []string{"callingcards"}
+	pert := []string{"kemmeren"}
+
+	// With a preset, effect/pvalue must NOT influence the key.
+	withPresetA := topNCacheKey(binding, pert, 25, 0.0, 0.05, "Stringent", "")
+	withPresetB := topNCacheKey(binding, pert, 25, 0.9, 0.99, "Stringent", "")
+	require.Equal(t, withPresetA, withPresetB,
+		"same preset + different effect/pvalue must share one cache key (M7: preset overrides effect/pvalue)")
+
+	// With no preset, effect/pvalue ARE load-bearing — keys must differ.
+	noPresetA := topNCacheKey(binding, pert, 25, 0.0, 0.05, "", "")
+	noPresetB := topNCacheKey(binding, pert, 25, 0.9, 0.99, "", "")
+	require.NotEqual(t, noPresetA, noPresetB,
+		"no preset + different effect/pvalue must produce distinct cache keys")
+
+	// Sanity: a preset key and a no-preset key are never confused even when the
+	// no-preset effect/pvalue happen to match the preset call's nominal values.
+	require.NotEqual(t, withPresetA, noPresetA,
+		"presence of preset must distinguish the key from the bare effect/pvalue path")
+}
+
+// TestComparisonTopN_BindingAndPertConfigCoverage is the M5 tripwire: every
+// binding dataset and every perturbation dataset the production manifest knows
+// about MUST have an entry in bindingConfigs / pertConfigs. Without this, a
+// future variant added to the manifest would be silently dropped by
+// keepConfigured() at request time instead of failing CI here.
+//
+// The canonical dataset list is sourced authoritatively from the same in-memory
+// manifest newServerWithFixtureWhitelist builds (base datasets) AND the explicit
+// promoter-set variant list below (the 11 variants from the 2026-06-11 parity
+// re-audit), so adding a variant to bindingConfigs without registering it here —
+// or vice versa — surfaces immediately.
+func TestComparisonTopN_BindingAndPertConfigCoverage(t *testing.T) {
+	srv := newServerWithFixtureWhitelist(t)
+
+	// The 11 promoter-set variants (2026-06-11 parity re-audit). The base
+	// datasets are sourced from the manifest below; these variants are not in
+	// the fixture-whitelist manifest, so list them explicitly so the tripwire
+	// still guards them.
+	variantBinding := []string{
+		"callingcards_mindel", "callingcards_500bp", "callingcards_intergenic",
+		"rossi_mindel", "rossi_500bp", "rossi_intergenic", "rossi_peaks",
+		"chec_m2025_mindel", "chec_m2025_500bp", "chec_m2025_intergenic", "chec_m2025_peaks",
+	}
+
+	// Base datasets, sourced authoritatively from the manifest the helper builds.
+	bindingDS := append([]string{}, variantBinding...)
+	var pertDS []string
+	for _, d := range srv.Manifests.Datasets {
+		switch d.DataType {
+		case "binding":
+			bindingDS = append(bindingDS, d.DBName)
+		case "perturbation":
+			pertDS = append(pertDS, d.DBName)
+		default:
+			t.Fatalf("manifest dataset %q has unexpected data_type %q", d.DBName, d.DataType)
+		}
+	}
+
+	for _, b := range bindingDS {
+		_, ok := bindingConfigs[b]
+		require.Truef(t, ok, "binding dataset %q has no bindingConfig — keepConfigured would silently drop it", b)
+	}
+	for _, p := range pertDS {
+		_, ok := pertConfigs[p]
+		require.Truef(t, ok, "perturbation dataset %q has no pertConfig — keepConfigured would silently drop it", p)
+	}
+
+	// Explicit promoter-set coverage assertion: all 11 variants are present in
+	// bindingConfigs (defense-in-depth on top of the loop above).
+	for _, b := range variantBinding {
+		_, ok := bindingConfigs[b]
+		require.Truef(t, ok, "promoter-set variant %q missing from bindingConfigs", b)
+	}
+}
+
+// TestComparisonTopN_DegronRendersPadjNotPvalue pins the R-3 latent-bug fix
+// (M4-degron) at the SQL-rendering layer: degron carries PValueCol=padj in the
+// manifest, so the responsive CASE expression must reference the double-quoted
+// `padj` identifier and never the literal `pvalue`. newServerWithFixtureWhitelist
+// already wires degron with EffectCol=log2FoldChange / PValueCol=padj. Fixture-
+// free: this asserts on the rendered SQL only.
+func TestComparisonTopN_DegronRendersPadjNotPvalue(t *testing.T) {
+	tmpl := queries.Get("comparison/topn.sql")
+	srv := newServerWithFixtureWhitelist(t)
+	pcfg := pertConfigs["degron"]
+
+	for _, b := range []string{"callingcards", "harbison"} {
+		bcfg := bindingConfigs[b]
+		rendered, _, err := srv.buildOnePair(
+			tmpl, b, "degron", bcfg, pcfg,
+			25, 0.0, 0.05, "", domain.FiltersByDB{},
+		)
+		require.NoErrorf(t, err, "pair %s/degron", b)
+		require.Containsf(t, rendered, `p."padj"`,
+			"degron responsive predicate must reference the padj column (double-quoted); got SQL:\n%s", rendered)
+		require.NotContainsf(t, rendered, `p."pvalue"`,
+			"degron must NOT reference a pvalue column (R-3 fix: pvalue->padj); got SQL:\n%s", rendered)
+		// The two-term CASE with log2FoldChange + padj must be present verbatim.
+		require.Containsf(t, rendered,
+			`CASE WHEN ABS(p."log2FoldChange") > ? AND p."padj" < ? THEN 1 ELSE 0 END`,
+			"degron two-term responsive CASE must use log2FoldChange/padj; got SQL:\n%s", rendered)
+	}
+}
+
+// TestComparisonTopN_IntersectingTargetsExcludesBindingOnlyTarget proves the
+// intersecting_targets CTE (M4-intersect): a binding (regulator, target) whose
+// target has NO perturbation row — even when it ranks within top_n — is excluded
+// from the result, and responsive_ratio is computed over intersecting targets
+// only.
+//
+// Approach chosen (real execution): we open a fresh in-memory DuckDB
+// (sql.Open("duckdb", "")) and create minimal binding/perturbation/display
+// tables with the EXACT column names the callingcards bindingConfig +
+// degron pertConfig expect (sample_id / regulator_locus_tag / target_locus_tag /
+// poisson_pval for binding; log2FoldChange / padj for the degron responsive
+// expr). We render the pair SQL via the production buildOnePair and execute it
+// against the in-memory DB — mirroring buildTopNResponse's own execution path
+// (SELECT * FROM (...) wrapper, positional args). A faithful in-memory execution
+// IS feasible, so we use it rather than the substring fallback. The CC target
+// blacklist placeholders are honored by binding non-blacklisted target tags.
+func TestComparisonTopN_IntersectingTargetsExcludesBindingOnlyTarget(t *testing.T) {
+	db, err := sql.Open("duckdb", "")
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Minimal schema. callingcards binding ranks by poisson_pval ASC; degron is
+	// a non-hackett perturbation (no hackett_analysis_set join needed) carrying
+	// log2FoldChange / padj.
+	stmts := []string{
+		`CREATE TABLE callingcards (
+			sample_id VARCHAR,
+			regulator_locus_tag VARCHAR,
+			target_locus_tag VARCHAR,
+			poisson_pval DOUBLE
+		)`,
+		`CREATE TABLE degron (
+			sample_id VARCHAR,
+			regulator_locus_tag VARCHAR,
+			target_locus_tag VARCHAR,
+			log2FoldChange DOUBLE,
+			padj DOUBLE,
+			responsive INTEGER
+		)`,
+		`CREATE TABLE regulator_display_names (
+			regulator_locus_tag VARCHAR,
+			display_name VARCHAR
+		)`,
+		// Binding: regulator R1 binds three targets. T_SHARED and T_RESP exist in
+		// perturbation; T_ONLY is binding-only (no perturbation row) yet ranks #1
+		// (smallest poisson_pval) — the pre-fix path would have given it a top_n
+		// slot. The intersecting_targets CTE must drop it.
+		`INSERT INTO callingcards VALUES
+			('B1','R1','T_ONLY',   0.0001),
+			('B1','R1','T_SHARED', 0.001),
+			('B1','R1','T_RESP',   0.002)`,
+		// Perturbation: T_SHARED (not responsive), T_RESP (responsive: big effect,
+		// small padj). T_ONLY deliberately absent.
+		`INSERT INTO degron VALUES
+			('P1','R1','T_SHARED', 0.10, 0.50, 0),
+			('P1','R1','T_RESP',   2.00, 0.01, 1)`,
+		`INSERT INTO regulator_display_names VALUES ('R1','Reg One')`,
+	}
+	for _, s := range stmts {
+		_, err := db.ExecContext(ctx, s)
+		require.NoErrorf(t, err, "ddl: %s", s)
+	}
+
+	tmpl := queries.Get("comparison/topn.sql")
+	srv := newServerWithFixtureWhitelist(t)
+	bcfg := bindingConfigs["callingcards"]
+	pcfg := pertConfigs["degron"]
+
+	// top_n=1 so that, pre-fix, the binding-only T_ONLY (rank #1) would steal the
+	// only slot. Post-fix the intersecting set is {T_SHARED, T_RESP}, both with
+	// rnk <= some cutoff once T_ONLY is removed; use top_n=2 to admit both
+	// intersecting targets (T_ONLY excluded purely by the intersect CTE, not by
+	// the rank cutoff) so the responsive_ratio over the intersection is well
+	// defined.
+	pairSQL, args, err := srv.buildOnePair(
+		tmpl, "callingcards", "degron", bcfg, pcfg,
+		2, 0.0, 0.05, "", domain.FiltersByDB{},
+	)
+	require.NoError(t, err)
+
+	// Mirror buildTopNResponse's single-pair execution: wrap in SELECT * FROM (...)
+	// exactly as the handler assembles each UNION branch.
+	full := "SELECT * FROM (" + pairSQL + ")"
+
+	type topNRow struct {
+		pairKey              string
+		bindingSampleID      string
+		regulatorLocusTag    string
+		regulatorDisplayName sql.NullString
+		perturbationSampleID string
+		n                    int64
+		nResponsive          int64
+		responsiveRatio      float64
+	}
+	rows, err := db.QueryContext(ctx, full, args...)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var got []topNRow
+	for rows.Next() {
+		var r topNRow
+		require.NoError(t, rows.Scan(
+			&r.pairKey, &r.bindingSampleID, &r.regulatorLocusTag,
+			&r.regulatorDisplayName, &r.perturbationSampleID,
+			&r.n, &r.nResponsive, &r.responsiveRatio,
+		))
+		got = append(got, r)
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, got, 1, "expected exactly one (sample,regulator) group")
+
+	row := got[0]
+	require.Equal(t, "callingcards__degron", row.pairKey)
+	// The intersecting targets are {T_SHARED, T_RESP}; T_ONLY is binding-only and
+	// MUST be excluded, so n counts 2 targets, not 3.
+	require.Equal(t, int64(2), row.n,
+		"n must count only intersecting targets (T_SHARED, T_RESP) — T_ONLY excluded")
+	require.Equal(t, int64(1), row.nResponsive, "only T_RESP is responsive")
+	require.InDelta(t, 0.5, row.responsiveRatio, 1e-9,
+		"responsive_ratio = 1 responsive / 2 intersecting targets")
 }
