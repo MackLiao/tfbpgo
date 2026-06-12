@@ -159,8 +159,14 @@ export function Select() {
       ),
     [data],
   );
-  const binding = datasets.filter((d) => d.dataType === "binding");
-  const perturbation = datasets.filter((d) => d.dataType === "perturbation");
+  // Variants (isPrimary=false, e.g. rossi_500bp, callingcards_intergenic) are
+  // comparison-only and hidden from the selector — mirrors reference
+  // PRIMARY_DATASETS gating. Display-name lookups below remain over ALL datasets
+  // so a variant that appears via a shared URL still gets a readable label.
+  const binding = datasets.filter((d) => d.dataType === "binding" && d.isPrimary);
+  const perturbation = datasets.filter(
+    (d) => d.dataType === "perturbation" && d.isPrimary,
+  );
   const displayNameByDb = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of datasets) m.set(d.dbName, d.displayName);

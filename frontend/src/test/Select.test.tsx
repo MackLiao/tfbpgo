@@ -48,6 +48,7 @@ const TWO_DATASETS = [
     sourceRepo: "",
     sampleIdField: "id",
     fields: [],
+    isPrimary: true,
   },
   {
     dbName: "hackett",
@@ -57,6 +58,7 @@ const TWO_DATASETS = [
     sourceRepo: "",
     sampleIdField: "sample_id",
     fields: [],
+    isPrimary: true,
   },
 ];
 const CONDITION_FIELD = {
@@ -135,6 +137,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "gm_id",
                 fields: [],
+                isPrimary: true,
               },
               {
                 dbName: "hackett",
@@ -144,6 +147,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "sample_id",
                 fields: [],
+                isPrimary: true,
               },
             ],
           };
@@ -183,6 +187,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "gm_id",
                 fields: [],
+                isPrimary: true,
               },
             ],
           };
@@ -235,6 +240,7 @@ describe("Select route", () => {
                 defaultActive: true,
                 defaultFilters: null,
                 conditionCols: [],
+                isPrimary: true,
               },
               {
                 dbName: "hackett",
@@ -249,6 +255,7 @@ describe("Select route", () => {
                   time: { type: "numeric", value: [45, 45] },
                 },
                 conditionCols: [],
+                isPrimary: true,
               },
               {
                 dbName: "other",
@@ -261,6 +268,7 @@ describe("Select route", () => {
                 defaultActive: false,
                 defaultFilters: null,
                 conditionCols: [],
+                isPrimary: true,
               },
             ],
           };
@@ -317,6 +325,7 @@ describe("Select route", () => {
                 defaultActive: true,
                 defaultFilters: null,
                 conditionCols: [],
+                isPrimary: true,
               },
               {
                 dbName: "hackett",
@@ -331,6 +340,7 @@ describe("Select route", () => {
                   time: { type: "numeric", value: [45, 45] },
                 },
                 conditionCols: [],
+                isPrimary: true,
               },
             ],
           };
@@ -374,6 +384,7 @@ describe("Select route", () => {
                 defaultActive: false,
                 defaultFilters: null,
                 conditionCols: ["condition"],
+                isPrimary: true,
               },
             ],
           };
@@ -434,6 +445,7 @@ describe("Select route", () => {
                 defaultActive: false,
                 defaultFilters: null,
                 conditionCols: ["condition"],
+                isPrimary: true,
               },
             ],
           };
@@ -505,6 +517,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "gm_id",
                 fields: [],
+                isPrimary: true,
               },
               {
                 dbName: "hackett",
@@ -514,6 +527,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "sample_id",
                 fields: [],
+                isPrimary: true,
               },
             ],
           };
@@ -571,6 +585,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "gm_id",
                 fields: [],
+                isPrimary: true,
               },
               {
                 dbName: "hackett",
@@ -580,6 +595,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "sample_id",
                 fields: [],
+                isPrimary: true,
               },
             ],
           };
@@ -625,6 +641,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "sample_id",
                 fields: [],
+                isPrimary: true,
               },
             ],
           };
@@ -666,6 +683,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "sample_id",
                 fields: [],
+                isPrimary: true,
               },
             ],
           };
@@ -897,9 +915,9 @@ describe("Select route", () => {
     // must still reach chec_m2025 because it keys off the persisted
     // applyToAll annotation, not the shrunk intersection.
     const THREE = [
-      { dbName: "harbison", dataType: "binding", assay: "chip", displayName: "Harbison", sourceRepo: "", sampleIdField: "id", fields: [] },
-      { dbName: "chec_m2025", dataType: "binding", assay: "chec", displayName: "ChEC M2025", sourceRepo: "", sampleIdField: "id", fields: [] },
-      { dbName: "rossi", dataType: "perturbation", assay: "rnaseq", displayName: "Rossi", sourceRepo: "", sampleIdField: "sample_id", fields: [] },
+      { dbName: "harbison", dataType: "binding", assay: "chip", displayName: "Harbison", sourceRepo: "", sampleIdField: "id", fields: [], isPrimary: true },
+      { dbName: "chec_m2025", dataType: "binding", assay: "chec", displayName: "ChEC M2025", sourceRepo: "", sampleIdField: "id", fields: [], isPrimary: true },
+      { dbName: "rossi", dataType: "perturbation", assay: "rnaseq", displayName: "Rossi", sourceRepo: "", sampleIdField: "sample_id", fields: [], isPrimary: true },
     ];
     const TREATMENT_FIELD = { field: "treatment", dbType: "VARCHAR", kind: "categorical", role: "experimental_condition", levels: ["Normal", "Stress"] };
     const preset = encodeURIComponent(
@@ -1129,6 +1147,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "gm_id",
                 fields: [],
+                isPrimary: true,
               },
               {
                 dbName: "hackett",
@@ -1138,6 +1157,7 @@ describe("Select route", () => {
                 sourceRepo: "",
                 sampleIdField: "sample_id",
                 fields: [],
+                isPrimary: true,
               },
             ],
           };
@@ -1220,5 +1240,75 @@ describe("Select route", () => {
       expect(screen.queryByTestId("badge-callingcards")).toBeNull();
       expect(screen.queryByTestId("badge-hackett")).toBeNull();
     });
+  });
+
+  it("hides non-primary (variant) datasets from the selector while primary datasets are shown", async () => {
+    // The backend returns one primary binding dataset and two variants
+    // (isPrimary=false). Only the primary dataset should appear as a
+    // selectable toggle in the sidebar. The variants are comparison-only
+    // and must not be renderable as checkboxes.
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch((url) => {
+        if (url.endsWith("/datasets")) {
+          return {
+            datasets: [
+              {
+                dbName: "callingcards",
+                dataType: "binding",
+                assay: "callingcards",
+                displayName: "Calling Cards",
+                sourceRepo: "",
+                sampleIdField: "gm_id",
+                fields: [],
+                isPrimary: true,
+              },
+              {
+                // variant — same base assay but a different promoter set
+                dbName: "callingcards_500bp",
+                dataType: "binding",
+                assay: "callingcards",
+                displayName: "Calling Cards (500bp)",
+                sourceRepo: "",
+                sampleIdField: "gm_id",
+                fields: [],
+                isPrimary: false,
+              },
+              {
+                // another variant
+                dbName: "callingcards_intergenic",
+                dataType: "binding",
+                assay: "callingcards",
+                displayName: "Calling Cards (Intergenic)",
+                sourceRepo: "",
+                sampleIdField: "gm_id",
+                fields: [],
+                isPrimary: false,
+              },
+            ],
+          };
+        }
+        return {};
+      }),
+    );
+    render(
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={["/select"]}>
+          <Select />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    // The primary dataset must appear in the sidebar.
+    await waitFor(() => {
+      expect(screen.getByText("Calling Cards")).toBeInTheDocument();
+    });
+    // The two variants must NOT be rendered as selectable rows.
+    expect(screen.queryByText("Calling Cards (500bp)")).toBeNull();
+    expect(screen.queryByText("Calling Cards (Intergenic)")).toBeNull();
+    // Confirm no checkbox is rendered for the variant db_names.
+    expect(document.getElementById("ds-callingcards_500bp")).toBeNull();
+    expect(document.getElementById("ds-callingcards_intergenic")).toBeNull();
+    // The primary dataset has a checkbox.
+    expect(document.getElementById("ds-callingcards")).not.toBeNull();
   });
 });
