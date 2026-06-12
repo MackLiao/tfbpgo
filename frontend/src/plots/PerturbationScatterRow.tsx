@@ -1,7 +1,7 @@
 // Mirrors plots/BindingScatterRow.tsx 1:1 with /perturbation/scatter.
 // Keep these in sync.
 import { useQueries } from "@tanstack/react-query";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { PerturbationScatterPair } from "./PerturbationScatterPair";
@@ -65,7 +65,7 @@ export function PerturbationScatterRow({
               className="flex-none rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700"
               style={{ width: 400, height: 400 }}
             >
-              {(q.error as Error).message}
+              {apiErrorMessage(q.error)}
             </div>
           );
         }

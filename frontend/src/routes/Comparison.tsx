@@ -455,7 +455,10 @@ export function Comparison() {
               Select page to render the Top-N comparison.
             </p>
           ) : null}
-          {topnQuery.error ? (
+          {/* The route-level topnQuery backs ONLY the Compare Datasets tab. Its
+              >12-pair 400 must not surface above the Promoter/Methods variant
+              tabs, which slice the selection to ≤12 pairs and render fine. */}
+          {tab === "datasets" && topnQuery.error ? (
             <p className="text-red-600">{apiErrorMessage(topnQuery.error)}</p>
           ) : null}
 

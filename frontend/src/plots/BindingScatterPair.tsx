@@ -59,7 +59,11 @@ export function BindingScatterPair({
           height: 400,
           margin: { l: 50, r: 20, t: 100, b: 50 },
           title: {
-            text: `${displayNameA}<br>vs<br>${displayNameB}`,
+            // Plotly renders title/axis `title.text` as HTML (same as
+            // hovertemplate), so escape the DB-sourced display names and the
+            // server-computed axis measures here too. The literal `<br>` stays
+            // (intentional layout markup). Mirrors the hovertemplate escaping.
+            text: `${safeA}<br>vs<br>${safeB}`,
             xanchor: "center",
             x: 0.5,
           },
@@ -67,8 +71,8 @@ export function BindingScatterPair({
           // backend (resp.axisLabelA/B), not the raw column, so under
           // col=log10pval it reads "-log10(p)" / "rank by p-value" matching the
           // plotted values. Mirrors reference workspace.py:1175-1189.
-          xaxis: { title: { text: `${displayNameA}: ${resp.axisLabelA}` } },
-          yaxis: { title: { text: `${displayNameB}: ${resp.axisLabelB}` } },
+          xaxis: { title: { text: `${safeA}: ${htmlEscape(resp.axisLabelA ?? "")}` } },
+          yaxis: { title: { text: `${safeB}: ${htmlEscape(resp.axisLabelB ?? "")}` } },
           showlegend: false,
           annotations: [
             {
