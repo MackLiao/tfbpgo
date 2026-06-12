@@ -2,6 +2,17 @@ import type { components } from "./generated";
 
 export type Schemas = components["schemas"];
 
+// MeasurementCol is the closed set of `col` query-param values accepted by the
+// binding/perturbation correlation + scatter endpoints. `log10pval` (added for
+// BIND-1/PERT-1) resolves to the dataset's most-direct -log10(p) source and
+// drives the scatter's server-side -log10(p) transform. Kept in one place so
+// the routes, sidebars, scatter rows, and api callers share one source of
+// truth. Matches openapi.yaml `enum: [effect, pvalue, log10pval]`.
+export type MeasurementCol = "effect" | "pvalue" | "log10pval";
+
+// CorrMethod is the closed set of `method` query-param values.
+export type CorrMethod = "pearson" | "spearman";
+
 let artifactVersion: string | null = null;
 
 export function setArtifactVersion(v: string): void {
@@ -194,8 +205,8 @@ export const api = {
   bindingCorr: (
     q: {
       datasets: string[];
-      method: "pearson" | "spearman";
-      col: "effect" | "pvalue";
+      method: CorrMethod;
+      col: MeasurementCol;
       filters?: string;
     },
     signal?: AbortSignal,
@@ -212,8 +223,8 @@ export const api = {
     q: {
       regulator: string;
       pair: [string, string];
-      method: "pearson" | "spearman";
-      col: "effect" | "pvalue";
+      method: CorrMethod;
+      col: MeasurementCol;
       filters?: string;
     },
     signal?: AbortSignal,
@@ -230,8 +241,8 @@ export const api = {
   perturbationCorrelations: (
     q: {
       datasets: string[];
-      method: "pearson" | "spearman";
-      col: "effect" | "pvalue";
+      method: CorrMethod;
+      col: MeasurementCol;
       filters?: string;
     },
     signal?: AbortSignal,
@@ -248,8 +259,8 @@ export const api = {
     q: {
       regulator: string;
       pair: [string, string];
-      method: "pearson" | "spearman";
-      col: "effect" | "pvalue";
+      method: CorrMethod;
+      col: MeasurementCol;
       filters?: string;
     },
     signal?: AbortSignal,

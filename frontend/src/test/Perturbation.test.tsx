@@ -79,16 +79,17 @@ describe("Perturbation route URL keys", () => {
     const corrCall = calls.find((u) => u.includes("/perturbation/correlations"));
     expect(corrCall).toBeDefined();
     expect(corrCall!).toContain("datasets=hackett%2Ckemmeren");
-    expect(corrCall!).toContain("method=pearson");
-    expect(corrCall!).toContain("col=effect");
+    // PERT-1: first-load defaults are now spearman + log10pval.
+    expect(corrCall!).toContain("method=spearman");
+    expect(corrCall!).toContain("col=log10pval");
   });
 
-  it("Spearman radio click writes ?corr=spearman to the URL", async () => {
+  it("Pearson radio click writes ?corr=pearson to the URL (spearman is the new default)", async () => {
     vi.stubGlobal(
       "fetch",
       fakeFetch((url) => {
         if (url.includes("/perturbation/correlations"))
-          return { method: "pearson", col: "effect", pairs: [] };
+          return { method: "spearman", col: "log10pval", pairs: [] };
         if (url.endsWith("/datasets")) return { datasets: [] };
         return {};
       }),
@@ -117,14 +118,39 @@ describe("Perturbation route URL keys", () => {
       </QueryClientProvider>,
     );
 
-    const spearman = screen.getByLabelText(/Spearman/i);
-    fireEvent.click(spearman);
+    // Spearman is the default now, so click Pearson to move OFF the default.
+    const pearson = screen.getByLabelText(/Pearson/i);
+    fireEvent.click(pearson);
 
     await waitFor(() => {
       expect(screen.getByTestId("loc-search").textContent).toMatch(
-        /corr=spearman/,
+        /corr=pearson/,
       );
     });
+  });
+
+  it("renders the -log10(p-value) measurement radio, selected by default", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fakeFetch((url) => {
+        if (url.includes("/perturbation/correlations"))
+          return { method: "spearman", col: "log10pval", pairs: [] };
+        if (url.endsWith("/datasets")) return { datasets: [] };
+        return {};
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={makeClient()}>
+        <MemoryRouter initialEntries={["/perturbation?perturbation=hackett,kemmeren"]}>
+          <Perturbation />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const log10 = screen.getByLabelText(/-log10\(p-value\)/i) as HTMLInputElement;
+    expect(log10).toBeInTheDocument();
+    expect(log10.checked).toBe(true);
   });
 
   it("renders the correlation boxplot trace + selected-regulator overlay when corr data is present", async () => {

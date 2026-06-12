@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api, apiErrorMessage } from "@/api/client";
+import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { ActivePairRegulatorPicker } from "@/components/ActivePairRegulatorPicker";
 import { PerturbationSidebar } from "@/components/PerturbationSidebar";
@@ -28,14 +29,18 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 //   4. Bottom: one Plotly scatter per active dataset pair, fixed 400x400 in
 //      a flex-wrap row.
 
-const DEFAULT_COL: "effect" | "pvalue" = "effect";
-const DEFAULT_METHOD: "pearson" | "spearman" = "pearson";
+// Defaults changed in the 2026-06-11 parity pass (PERT-1, mirroring BIND-5/
+// BIND-6): the perturbation module now first-loads on the -log10(p) measurement
+// with Spearman ranks, matching the reference. parseCol accepts all three
+// measurement kinds; anything else falls back to the new default.
+const DEFAULT_COL: MeasurementCol = "log10pval";
+const DEFAULT_METHOD: CorrMethod = "spearman";
 
-function parseCol(raw: string | null): "effect" | "pvalue" {
-  return raw === "pvalue" ? "pvalue" : DEFAULT_COL;
+function parseCol(raw: string | null): MeasurementCol {
+  return raw === "effect" || raw === "pvalue" || raw === "log10pval" ? raw : DEFAULT_COL;
 }
-function parseMethod(raw: string | null): "pearson" | "spearman" {
-  return raw === "spearman" ? "spearman" : DEFAULT_METHOD;
+function parseMethod(raw: string | null): CorrMethod {
+  return raw === "pearson" || raw === "spearman" ? raw : DEFAULT_METHOD;
 }
 
 export function Perturbation() {
@@ -77,12 +82,12 @@ export function Perturbation() {
     next.set("regulator", tag);
     setParams(next);
   };
-  const setCol = (next: "effect" | "pvalue"): void => {
+  const setCol = (next: MeasurementCol): void => {
     const np = new URLSearchParams(params);
     np.set("col", next);
     setParams(np);
   };
-  const setMethod = (next: "pearson" | "spearman"): void => {
+  const setMethod = (next: CorrMethod): void => {
     const np = new URLSearchParams(params);
     np.set("corr", next);
     setParams(np);

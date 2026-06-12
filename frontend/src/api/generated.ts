@@ -730,9 +730,13 @@ export interface paths {
                      * @description Measurement column kind. `effect` selects `dataset_manifest.effect_col`;
                      *     `pvalue` selects `dataset_manifest.pvalue_col` (falling back to
                      *     `effect_col` when the dataset has no p-value column, matching Shiny's
-                     *     `get_measurement_column`).
+                     *     `get_measurement_column`). `log10pval` selects the most-direct -log10(p)
+                     *     source (`neglog10p_col` > `log10p_col` > `pvalue_col` > `effect_col`);
+                     *     on the scatter, Pearson values are returned as the server-side
+                     *     -log10(clip(p, 1e-10)) transform (capped at 10) while Spearman returns
+                     *     ranks.
                      */
-                    col: "effect" | "pvalue";
+                    col: "effect" | "pvalue" | "log10pval";
                     /**
                      * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
                      *     string is capped at 16 KiB before unmarshal to prevent DoS.
@@ -804,7 +808,7 @@ export interface paths {
                      */
                     pair: string;
                     method: "pearson" | "spearman";
-                    col: "effect" | "pvalue";
+                    col: "effect" | "pvalue" | "log10pval";
                     /**
                      * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
                      *     string is capped at 16 KiB before unmarshal to prevent DoS.
@@ -867,7 +871,7 @@ export interface paths {
                      */
                     datasets: string;
                     method: "pearson" | "spearman";
-                    col: "effect" | "pvalue";
+                    col: "effect" | "pvalue" | "log10pval";
                     /**
                      * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
                      *     string is capped at 16 KiB before unmarshal to prevent DoS.
@@ -933,7 +937,7 @@ export interface paths {
                      */
                     pair: string;
                     method: "pearson" | "spearman";
-                    col: "effect" | "pvalue";
+                    col: "effect" | "pvalue" | "log10pval";
                     /**
                      * @description URL-encoded JSON object of shape `FiltersByDB` (see schema). The raw
                      *     string is capped at 16 KiB before unmarshal to prevent DoS.
@@ -1380,7 +1384,7 @@ export interface components {
             /** @enum {string} */
             method: "pearson" | "spearman";
             /** @enum {string} */
-            col: "effect" | "pvalue";
+            col: "effect" | "pvalue" | "log10pval";
             /**
              * @description One entry per `(dbA, dbB)` combination drawn from
              *     `sorted(datasets) choose 2`. Ordering is stable across param-order

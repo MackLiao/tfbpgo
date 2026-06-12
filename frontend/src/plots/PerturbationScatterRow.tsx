@@ -2,6 +2,7 @@
 // Keep these in sync.
 import { useQueries } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { PerturbationScatterPair } from "./PerturbationScatterPair";
 import { PlotSkeleton } from "@/components/PlotSkeleton";
@@ -16,8 +17,8 @@ import { PlotSkeleton } from "@/components/PlotSkeleton";
 export interface PerturbationScatterRowProps {
   regulator: string;
   datasets: string[];
-  method: "pearson" | "spearman";
-  col: "effect" | "pvalue";
+  method: CorrMethod;
+  col: MeasurementCol;
   filters: string;
   datasetDisplay: (dbName: string) => string;
 }

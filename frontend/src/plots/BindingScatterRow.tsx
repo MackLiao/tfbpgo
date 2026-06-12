@@ -1,5 +1,6 @@
 import { useQueries } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { qk } from "@/lib/query-keys";
 import { BindingScatterPair } from "./BindingScatterPair";
 import { PlotSkeleton } from "@/components/PlotSkeleton";
@@ -14,8 +15,8 @@ import { PlotSkeleton } from "@/components/PlotSkeleton";
 export interface BindingScatterRowProps {
   regulator: string;
   datasets: string[];
-  method: "pearson" | "spearman";
-  col: "effect" | "pvalue";
+  method: CorrMethod;
+  col: MeasurementCol;
   filters: string;
   datasetDisplay: (dbName: string) => string;
 }

@@ -1,11 +1,14 @@
 import type { ReactNode } from "react";
+import type { CorrMethod, MeasurementCol } from "@/api/client";
 import { RegulatorPicker } from "@/components/RegulatorPicker";
 
 // Sidebar for the Binding route. Mirrors
 // reference/tfbpshiny/modules/binding/server/sidebar.py:91-106:
 //   - Sidebar heading "Binding"
-//   - Column radio (Effect / P-value, default effect, inline)
-//   - Correlation radio (Pearson / Spearman, default pearson, inline)
+//   - Column radio (Effect / P-value / -log10(p-value), default -log10(p-value),
+//     inline) — the log10pval option + new default added in the 2026-06-11
+//     parity pass (BIND-1/BIND-5).
+//   - Correlation radio (Pearson / Spearman, default spearman, inline)
 //   - Regulator picker
 //
 // All three control values are URL-backed in Binding.tsx
@@ -14,10 +17,10 @@ import { RegulatorPicker } from "@/components/RegulatorPicker";
 export interface BindingSidebarProps {
   regulator: string | null;
   onRegulatorChange: (locusTag: string) => void;
-  col: "effect" | "pvalue";
-  method: "pearson" | "spearman";
-  onColChange: (col: "effect" | "pvalue") => void;
-  onMethodChange: (m: "pearson" | "spearman") => void;
+  col: MeasurementCol;
+  method: CorrMethod;
+  onColChange: (col: MeasurementCol) => void;
+  onMethodChange: (m: CorrMethod) => void;
   // Optional override for the Regulator picker. When provided (typically
   // an ActivePairRegulatorPicker bound to the loaded corr response), it
   // replaces the global RegulatorPicker. Mirrors Shiny's behavior of
@@ -61,6 +64,16 @@ export function BindingSidebar({
               onChange={() => onColChange("pvalue")}
             />
             <span>P-value</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="binding-col"
+              value="log10pval"
+              checked={col === "log10pval"}
+              onChange={() => onColChange("log10pval")}
+            />
+            <span>-log10(p-value)</span>
           </label>
         </div>
       </fieldset>

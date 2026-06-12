@@ -453,10 +453,14 @@ paths:
             Measurement column kind. `effect` selects `dataset_manifest.effect_col`;
             `pvalue` selects `dataset_manifest.pvalue_col` (falling back to
             `effect_col` when the dataset has no p-value column, matching Shiny's
-            `get_measurement_column`).
+            `get_measurement_column`). `log10pval` selects the most-direct -log10(p)
+            source (`neglog10p_col` > `log10p_col` > `pvalue_col` > `effect_col`);
+            on the scatter, Pearson values are returned as the server-side
+            -log10(clip(p, 1e-10)) transform (capped at 10) while Spearman returns
+            ranks.
           schema:
             type: string
-            enum: [effect, pvalue]
+            enum: [effect, pvalue, log10pval]
         - $ref: "#/components/parameters/Filters"
       responses:
         "200":
@@ -513,7 +517,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [effect, pvalue]
+            enum: [effect, pvalue, log10pval]
         - $ref: "#/components/parameters/Filters"
       responses:
         "200":
@@ -557,7 +561,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [effect, pvalue]
+            enum: [effect, pvalue, log10pval]
         - $ref: "#/components/parameters/Filters"
       responses:
         "200":
@@ -608,7 +612,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [effect, pvalue]
+            enum: [effect, pvalue, log10pval]
         - $ref: "#/components/parameters/Filters"
       responses:
         "200":
@@ -1208,7 +1212,7 @@ components:
           enum: [pearson, spearman]
         col:
           type: string
-          enum: [effect, pvalue]
+          enum: [effect, pvalue, log10pval]
         pairs:
           type: array
           description: |
