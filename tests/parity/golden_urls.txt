@@ -28,3 +28,12 @@
 /api/v/{V}/binding/scatter?regulator=YBR289W&pair=callingcards,callingcards&method=spearman&col=effect
 /api/v/{V}/perturbation/scatter?regulator=YBR289W&pair=hackett,hackett&method=pearson&col=effect
 /api/v/{V}/perturbation/scatter?regulator=YBR289W&pair=hackett,hackett&method=spearman&col=effect
+# log10pval measurement (BIND-1/PERT-1). callingcards has no log10p column so
+# log10pval resolves to poisson_pval (source="pval"); the Pearson scatter
+# applies the server-side -log10(clip(p, 1e-10)) transform (capped at 10),
+# while the Spearman scatter returns untransformed ranks. hackett has no
+# p-value, so its log10pval resolves to the effect col (source="none", no
+# transform) — covering the fallback path.
+/api/v/{V}/binding/scatter?regulator=YBR289W&pair=callingcards,callingcards&method=pearson&col=log10pval
+/api/v/{V}/binding/scatter?regulator=YBR289W&pair=callingcards,callingcards&method=spearman&col=log10pval
+/api/v/{V}/perturbation/scatter?regulator=YBR289W&pair=hackett,hackett&method=pearson&col=log10pval
