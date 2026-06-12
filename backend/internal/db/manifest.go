@@ -64,8 +64,9 @@ type DatasetRow struct {
 	// Log10PCol / NegLog10PCol: pre-computed log10 / -log10 p-value column
 	// names (mirror reference DATASET_COLUMNS). Non-empty only for the base
 	// rossi / chec_m2025 binding datasets (log_poisson_pval); '' elsewhere.
-	// Carried server-side for a later feature — NOT part of the wire
-	// contract.
+	// Consumed server-side by the col=log10pval scatter transform + axis-label
+	// resolution (api.resolveMeasurementCol / log10pSourceFor) — NOT part of
+	// the /datasets wire contract.
 	IsPrimary    bool   `db:"is_primary"`
 	Log10PCol    string `db:"log10p_col"`
 	NegLog10PCol string `db:"neglog10p_col"`

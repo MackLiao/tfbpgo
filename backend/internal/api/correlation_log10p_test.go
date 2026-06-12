@@ -254,6 +254,110 @@ func TestPerturbationScatter_Log10Pval_EffectFallback(t *testing.T) {
 	require.NotEmpty(t, resp.Points)
 }
 
+// ---------- log10pAxisLabel: per-side axis-label measure ----------
+
+func TestLog10PAxisLabel(t *testing.T) {
+	cases := []struct {
+		name        string
+		reqCol      string
+		method      string
+		resolvedCol string
+		src         log10pSource
+		want        string
+	}{
+		// col=log10pval, pearson, a p-value source → "-log10(p)".
+		{"pearson pval source", "log10pval", "pearson", "poisson_pval", srcPval, "-log10(p)"},
+		{"pearson log10p source", "log10pval", "pearson", "log_poisson_pval", srcLog10P, "-log10(p)"},
+		{"pearson neglog10p source", "log10pval", "pearson", "neg_lp", srcNegLog10P, "-log10(p)"},
+		// col=log10pval, pearson, effect-fallback side (source=none) → column name.
+		{"pearson none -> column", "log10pval", "pearson", "log2_shrunken_timecourses", srcNone, "log2_shrunken_timecourses"},
+		// col=log10pval, spearman → "rank by p-value" regardless of source.
+		{"spearman pval", "log10pval", "spearman", "poisson_pval", srcPval, "rank by p-value"},
+		{"spearman none", "log10pval", "spearman", "log2_shrunken_timecourses", srcNone, "rank by p-value"},
+		// col != log10pval → column name (current behavior), even for spearman.
+		{"effect pearson -> column", "effect", "pearson", "callingcards_enrichment", srcPval, "callingcards_enrichment"},
+		{"pvalue spearman -> column", "pvalue", "spearman", "poisson_pval", srcPval, "poisson_pval"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, log10pAxisLabel(c.reqCol, c.method, c.resolvedCol, c.src))
+		})
+	}
+}
+
+// TestBindingScatter_Log10Pval_Pearson_AxisLabels: the response must carry
+// "-log10(p)" as the axis-label measure for a p-value-source side under
+// pearson+log10pval (callingcards self-pair → poisson_pval, source=pval).
+func TestBindingScatter_Log10Pval_Pearson_AxisLabels(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{
+		"regulator": []string{"YBR289W"},
+		"pair":      []string{"callingcards,callingcards"},
+		"method":    []string{"pearson"},
+		"col":       []string{"log10pval"},
+	}
+	rr := doGET(t, s, scatterPath(s), q)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+	resp := decodeScatter(t, rr.Body.Bytes())
+	require.Equal(t, "-log10(p)", resp.AxisLabelA)
+	require.Equal(t, "-log10(p)", resp.AxisLabelB)
+}
+
+// TestBindingScatter_Log10Pval_Spearman_AxisLabels: under spearman+log10pval
+// the measure is "rank by p-value" on both sides.
+func TestBindingScatter_Log10Pval_Spearman_AxisLabels(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{
+		"regulator": []string{"YBR289W"},
+		"pair":      []string{"callingcards,callingcards"},
+		"method":    []string{"spearman"},
+		"col":       []string{"log10pval"},
+	}
+	rr := doGET(t, s, scatterPath(s), q)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+	resp := decodeScatter(t, rr.Body.Bytes())
+	require.Equal(t, "rank by p-value", resp.AxisLabelA)
+	require.Equal(t, "rank by p-value", resp.AxisLabelB)
+}
+
+// TestPerturbationScatter_Log10Pval_AxisLabel_EffectFallback: hackett has no
+// p-value, so under pearson+log10pval its source is "none" and the axis-label
+// measure falls back to the resolved column name (NOT "-log10(p)").
+func TestPerturbationScatter_Log10Pval_AxisLabel_EffectFallback(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{
+		"regulator": []string{"YBR289W"},
+		"pair":      []string{"hackett,hackett"},
+		"method":    []string{"pearson"},
+		"col":       []string{"log10pval"},
+	}
+	path := "/api/v/" + s.Manifests.Artifact.ArtifactVersion + "/perturbation/scatter"
+	rr := doGET(t, s, path, q)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+	resp := decodeScatter(t, rr.Body.Bytes())
+	require.Equal(t, "log2_shrunken_timecourses", resp.AxisLabelA,
+		"effect-fallback side keeps its column name, not -log10(p)")
+	require.Equal(t, "log2_shrunken_timecourses", resp.AxisLabelB)
+}
+
+// TestBindingScatter_Effect_AxisLabelIsColumn: with col=effect the axis-label
+// measure is the resolved column name (current/legacy behavior preserved).
+func TestBindingScatter_Effect_AxisLabelIsColumn(t *testing.T) {
+	s := newTestServer(t)
+	q := url.Values{
+		"regulator": []string{"YBR289W"},
+		"pair":      []string{"callingcards,callingcards"},
+		"method":    []string{"pearson"},
+		"col":       []string{"effect"},
+	}
+	rr := doGET(t, s, scatterPath(s), q)
+	require.Equal(t, 200, rr.Code, rr.Body.String())
+	resp := decodeScatter(t, rr.Body.Bytes())
+	require.Equal(t, "callingcards_enrichment", resp.AxisLabelA)
+	require.Equal(t, resp.ColA, resp.AxisLabelA)
+}
+
 func decodeScatter(t *testing.T, body []byte) domain.ScatterResponse {
 	t.Helper()
 	var resp domain.ScatterResponse

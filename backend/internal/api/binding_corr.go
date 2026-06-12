@@ -483,6 +483,11 @@ func (s *Server) buildScatterResponse(
 			Observe(elapsed.Seconds())
 	}
 
+	// Per-side -log10(p) source, used for both the display transform and the
+	// axis-label measure (a source=none side keeps its raw column name).
+	srcA := log10pSourceFor(rowA)
+	srcB := log10pSourceFor(rowB)
+
 	// log10pval display transform (BIND-3/PERT-1): for col=log10pval the scatter
 	// shows -log10(p), with each side transformed per its own dataset's source
 	// column. Applied ONLY for Pearson — Spearman scatter values are RANK()
@@ -491,18 +496,20 @@ func (s *Server) buildScatterResponse(
 	// returned `r` matches the reference, which computes r on the transformed
 	// series (workspace.py:1190). Correlation inputs in /corr stay UNtransformed.
 	if col == "log10pval" && method != "spearman" {
-		transformScatterPoints(points, log10pSourceFor(rowA), log10pSourceFor(rowB))
+		transformScatterPoints(points, srcA, srcB)
 	}
 
 	resp := domain.ScatterResponse{
-		Regulator: regulator,
-		DBA:       dbA,
-		DBB:       dbB,
-		ColA:      colA,
-		ColB:      colB,
-		Method:    method,
-		R:         domain.SafeFloat(pearsonR(points)),
-		Points:    points,
+		Regulator:  regulator,
+		DBA:        dbA,
+		DBB:        dbB,
+		ColA:       colA,
+		ColB:       colB,
+		AxisLabelA: log10pAxisLabel(col, method, colA, srcA),
+		AxisLabelB: log10pAxisLabel(col, method, colB, srcB),
+		Method:     method,
+		R:          domain.SafeFloat(pearsonR(points)),
+		Points:     points,
 	}
 	return json.Marshal(resp)
 }

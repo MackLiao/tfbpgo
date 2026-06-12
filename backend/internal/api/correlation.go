@@ -148,8 +148,11 @@ func orderExpr(side, col string) string {
 // reference/tfbpshiny/modules/binding/queries.py:23.
 const log10pFloor = 1e-10
 
-// log10pCap is the upper cap on the displayed -log10(p) value, = -log10(floor).
-const log10pCap = 10.0
+// log10pCap is the upper cap on the displayed -log10(p) value. Derived from the
+// floor (= -log10(floor) = 10) rather than hardcoded, so the two can never
+// drift apart if the floor is ever retuned. Mirrors the reference
+// `cap = -np.log10(LOG10P_FLOOR)` (workspace.py:521).
+var log10pCap = -math.Log10(log10pFloor)
 
 // log10pSource classifies how a dataset's resolved log10pval column relates to
 // the -log10(p) value the scatter wants to display. Mirrors get_log10p_source
@@ -182,6 +185,32 @@ func log10pSourceFor(row db.DatasetRow) log10pSource {
 	default:
 		return srcNone
 	}
+}
+
+// log10pAxisLabel is the measure part of the scatter axis label for one side —
+// the text the frontend prepends with "{displayName}: ". Mirrors
+// _apply_log10p_transform's label (reference workspace.py:523-534) and the
+// Spearman/else branches at :1182-1188:
+//
+//	col=log10pval, method != spearman, source != none  -> "-log10(p)"
+//	col=log10pval, method != spearman, source == none   -> the resolved column
+//	col=log10pval, method == spearman                   -> "rank by p-value"
+//	otherwise                                           -> the resolved column
+//
+// resolvedCol is the resolved measurement column for THIS side (colA or colB),
+// so the effect-fallback side (e.g. hackett, source=none) keeps showing its
+// column name while a pval-source side shows "-log10(p)".
+func log10pAxisLabel(reqCol, method, resolvedCol string, src log10pSource) string {
+	if reqCol != "log10pval" {
+		return resolvedCol
+	}
+	if method == "spearman" {
+		return "rank by p-value"
+	}
+	if src == srcNone {
+		return resolvedCol
+	}
+	return "-log10(p)"
 }
 
 // applyLog10PTransform maps one scanned scatter value to its -log10(p) display

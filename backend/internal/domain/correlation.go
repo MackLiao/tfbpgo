@@ -71,13 +71,22 @@ type ScatterPoint struct {
 // Spearman coefficient by construction. R is SafeFloat: pandas .corr() returns
 // NaN when an ±Inf value is present (B-1 inf-parity) or fewer than two finite
 // pairs remain, and that serializes as JSON `null`.
+//
+// AxisLabelA / AxisLabelB carry the per-side axis-label MEASURE (the text after
+// "{displayName}: "), computed server-side so the plotted quantity is named
+// correctly: under col=log10pval the values are -log10(p) ("-log10(p)") or
+// ranks ("rank by p-value"), not the raw column name. The frontend prepends the
+// dataset display name. Mirrors reference workspace.py:1175-1188; see
+// api.log10pAxisLabel.
 type ScatterResponse struct {
-	Regulator string         `json:"regulator"`
-	DBA       string         `json:"dbA"`
-	DBB       string         `json:"dbB"`
-	ColA      string         `json:"colA"`
-	ColB      string         `json:"colB"`
-	Method    string         `json:"method"`
-	R         SafeFloat      `json:"r"`
-	Points    []ScatterPoint `json:"points"`
+	Regulator  string         `json:"regulator"`
+	DBA        string         `json:"dbA"`
+	DBB        string         `json:"dbB"`
+	ColA       string         `json:"colA"`
+	ColB       string         `json:"colB"`
+	AxisLabelA string         `json:"axisLabelA"`
+	AxisLabelB string         `json:"axisLabelB"`
+	Method     string         `json:"method"`
+	R          SafeFloat      `json:"r"`
+	Points     []ScatterPoint `json:"points"`
 }
