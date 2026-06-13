@@ -55,19 +55,23 @@ services:
       DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-2GB}
       DUCKDB_MAX_TEMP_SIZE: ${DUCKDB_MAX_TEMP_SIZE:-2GB}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-2}
-      # DuckDB per-query thread cap. 2 (vs the §6.3 default of 1) uses BOTH
-      # vCPUs for a single heavy query — e.g. the all-pairs perturbation
-      # correlation (C(6,2)=15 self-join + corr() branches) that otherwise
-      # pegs one core and 504s past the 30s budget. Safe here: the t3.large has
-      # 2 vCPUs + RAM headroom, and tests/parity passes at DUCKDB_THREADS=2.
-      DUCKDB_THREADS: ${DUCKDB_THREADS:-2}
+      # DuckDB per-query thread cap. 4 uses all of the t3.xlarge's vCPUs for a
+      # single heavy query. The full Compare-Datasets matrix (4 binding × 6
+      # perturbation = 24 per-pair ranking queries) 504s past the 30s budget at
+      # threads=2 (CPU-bound, ~1.2s/pair cold) but loads in ~18s cold / instant
+      # warm at threads=4 (live-measured). comparison/topn ordering is
+      # thread-stable (RANK by a deterministic ORDER BY) so no parity impact.
+      # Tradeoff: the all-pairs correlation UNION spills a little more at
+      # threads=4 (~17s→24s, still <30s); raise DUCKDB_MEMORY_LIMIT to trim it.
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
       MAX_INFLIGHT_REQUESTS: ${MAX_INFLIGHT_REQUESTS:-128}
-      # Cap binding×perturbation pairs per comparison. Lower than the binary
-      # default (12) because the burstable t3.small runs the single-threaded
-      # B×P UNION ~3-5x slower; 6 pairs keeps a cold comparison inside the 30s
-      # budget. Pair with the comparison semaphore so even a slow one can't
-      # block the site. Raise on a bigger instance.
-      MAX_COMPARISON_PAIRS: ${MAX_COMPARISON_PAIRS:-6}
+      # Cap binding×perturbation pairs per /comparison/topn. 24 admits the full
+      # primary matrix (4 binding × 6 perturbation); the per-pair semaphore +
+      # cache keep a cold 24-pair load (~18s at threads=4) inside the 30s budget,
+      # and the cap still rejects API-abuse fan-outs (15 binding incl. variants ×
+      # 6 = 90 pairs) before any DB work. REQUIRES DUCKDB_THREADS=4 — at threads=2
+      # a cold 24-pair matrix 504s.
+      MAX_COMPARISON_PAIRS: ${MAX_COMPARISON_PAIRS:-24}
     volumes:
       - tfbp_data:/data:ro
       - tfbp_tmp:/tmp/duckdb
